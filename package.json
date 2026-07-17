@@ -1,0 +1,22 @@
+{
+  "name": "social-media-manager",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Autonomous Social Media Manager — owner-facing SMS Concierge + backend Operator, connected by a strict Task/Result contract.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @smm/contracts && npm run build --workspace @smm/backend",
+    "build:contracts": "npm run build --workspace @smm/contracts",
+    "build:backend": "npm run build --workspace @smm/backend",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:backend": "npm run start:dev --workspace @smm/backend",
+    "prisma:generate": "npm run prisma:generate --workspace @smm/backend"
+  }
+}

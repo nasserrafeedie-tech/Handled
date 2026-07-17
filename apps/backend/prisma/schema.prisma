@@ -1,0 +1,326 @@
+// §5 Data model — Postgres is the source of truth.
+// Enums mirror packages/contracts/src/enums.ts (the shared vocabulary).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────
+enum TrustLevel {
+  approve_all
+  auto_low_risk
+  full_auto
+}
+
+enum CustomerStatus {
+  onboarding
+  active
+  paused
+  cancelled
+}
+
+enum Platform {
+  instagram
+  facebook
+  tiktok
+  x
+  linkedin
+  threads
+  youtube
+}
+
+enum PostArchetype {
+  promo
+  behind_the_scenes
+  testimonial
+  educational_tip
+  product_spotlight
+  seasonal
+  ugc_repost
+  were_open
+}
+
+enum PostStatus {
+  draft
+  pending_approval
+  approved
+  scheduled
+  published
+  failed
+  cancelled
+}
+
+enum ApprovalState {
+  not_required
+  awaiting_owner
+  approved
+  rejected
+}
+
+enum ModerationState {
+  pending
+  passed
+  blocked
+}
+
+enum RiskLevel {
+  low
+  high
+}
+
+enum MediaKind {
+  image
+  video
+}
+
+enum MediaSource {
+  owner_upload
+  ai_generated
+  assembled
+}
+
+enum ShotListStatus {
+  requested
+  fulfilled
+  skipped
+  expired
+}
+
+enum MessageDirection {
+  inbound
+  outbound
+}
+
+enum TaskStatus {
+  emitted
+  running
+  done
+  needs_owner_input
+  pending_approval
+  failed
+}
+
+// ─── customers ───────────────────────────────────────────────────────────
+model Customer {
+  id              String         @id @default(uuid()) @db.Uuid
+  phone           String         @unique
+  businessName    String?
+  planTier        String         @default("starter")
+  trustLevel      TrustLevel     @default(approve_all) // §8: everyone starts here
+  status          CustomerStatus @default(onboarding)
+  stripeCustomerId String?       @unique
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  brandProfile     BrandProfile?
+  connectedAccounts ConnectedAccount[]
+  posts            Post[]
+  mediaAssets      MediaAsset[]
+  shotListRequests ShotListRequest[]
+  conversation     Conversation?
+  tasks            Task[]
+  metrics          Metric[]
+
+  @@map("customers")
+}
+
+// ─── connected_accounts (tokens encrypted at rest, §8) ───────────────────
+model ConnectedAccount {
+  id             String   @id @default(uuid()) @db.Uuid
+  customerId     String   @db.Uuid
+  platform       Platform
+  // Ciphertext only — never store plaintext tokens. Encryption in TokenCrypto.
+  accessTokenEnc String
+  refreshTokenEnc String?
+  scopes         String[]
+  postForMeRef   String?  // Post for Me account reference
+  externalHandle String?
+  revoked        Boolean  @default(false)
+  connectedAt    DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, platform])
+  @@index([customerId])
+  @@map("connected_accounts")
+}
+
+// ─── brand_profiles (persistent per-customer memory; cached into LLM calls) ─
+model BrandProfile {
+  id                 String   @id @default(uuid()) @db.Uuid
+  customerId         String   @unique @db.Uuid
+  businessType       String?
+  voiceTone          String?
+  targetCustomer     String?
+  offers             String[]
+  dosAndDonts        String[]
+  blackoutTopics     String[]
+  postingFrequency   Int      @default(3)
+  brandColors        String[]
+  logoRef            String?
+  referencePhotoRefs String[]
+  // Onboarding progress is tracked as which fields are filled, not a step
+  // counter (§6) — persisted so hours-long gaps resume cleanly.
+  onboardingComplete Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("brand_profiles")
+}
+
+// ─── posts ───────────────────────────────────────────────────────────────
+model Post {
+  id              String          @id @default(uuid()) @db.Uuid
+  customerId      String          @db.Uuid
+  archetype       PostArchetype
+  platform        Platform
+  caption         String?
+  hashtags        String[]
+  mediaRefs       String[]
+  scheduledTime   DateTime?
+  status          PostStatus      @default(draft)
+  approvalState   ApprovalState   @default(not_required)
+  moderationState ModerationState @default(pending)
+  riskLevel       RiskLevel       @default(low)
+  externalPostId  String?
+  failureReason   String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  customer Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  media    MediaAsset[]
+  metrics  Metric[]
+  shotList ShotListRequest[]
+
+  @@index([customerId, status])
+  @@index([status, scheduledTime])
+  @@map("posts")
+}
+
+// ─── media_assets (R2) ───────────────────────────────────────────────────
+model MediaAsset {
+  id          String      @id @default(uuid()) @db.Uuid
+  customerId  String      @db.Uuid
+  postId      String?     @db.Uuid
+  kind        MediaKind
+  source      MediaSource
+  r2Key       String      @unique
+  contentType String
+  width       Int?
+  height      Int?
+  createdAt   DateTime    @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  post     Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@map("media_assets")
+}
+
+// ─── shot_list_requests (outstanding asks to the owner) ──────────────────
+model ShotListRequest {
+  id          String         @id @default(uuid()) @db.Uuid
+  customerId  String         @db.Uuid
+  postId      String?        @db.Uuid
+  prompt      String
+  status      ShotListStatus @default(requested)
+  fulfilledBy String?        @db.Uuid // media_assets.id
+  askedAt     DateTime       @default(now())
+  fulfilledAt DateTime?
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  post     Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, status])
+  @@map("shot_list_requests")
+}
+
+// ─── metrics ─────────────────────────────────────────────────────────────
+model Metric {
+  id             String   @id @default(uuid()) @db.Uuid
+  postId         String   @db.Uuid
+  customerId     String   @db.Uuid
+  externalPostId String?
+  impressions    Int      @default(0)
+  likes          Int      @default(0)
+  comments       Int      @default(0)
+  shares         Int      @default(0)
+  saves          Int      @default(0)
+  fetchedAt      DateTime @default(now())
+
+  post     Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([customerId, fetchedAt])
+  @@map("metrics")
+}
+
+// ─── conversations / messages (Concierge SMS history + interview state) ──
+model Conversation {
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @unique @db.Uuid
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id             String           @id @default(uuid()) @db.Uuid
+  conversationId String           @db.Uuid
+  direction      MessageDirection
+  body           String?
+  mediaUrls      String[]
+  twilioSid      String?          @unique
+  createdAt      DateTime         @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+// ─── tasks / results (§4 audit log — every Task and Result is logged) ────
+model Task {
+  id               String     @id @default(uuid()) @db.Uuid
+  customerId       String     @db.Uuid
+  type             String
+  payload          Json
+  requiresApproval Boolean    @default(false)
+  createdBy        String // 'concierge' | 'cron'
+  status           TaskStatus @default(emitted)
+  createdAt        DateTime   @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  result   Result?
+
+  @@index([customerId, createdAt])
+  @@index([status])
+  @@map("tasks")
+}
+
+model Result {
+  id              String   @id @default(uuid()) @db.Uuid
+  taskId          String   @unique @db.Uuid
+  status          String
+  summaryForOwner String
+  data            Json?
+  error           Json?
+  createdAt       DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("results")
+}
