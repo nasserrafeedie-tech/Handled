@@ -54,7 +54,10 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
     }
 
     // Offline media store: write files locally. Swap for R2 upload in prod.
-    const mediaDir = process.env.MEDIA_DIR ?? join(process.cwd(), 'apps/backend/media');
+    // Anchored to this file's location (…/apps/backend) so it doesn't depend on
+    // the process working directory. __dirname = …/apps/backend/{src|dist}/operator/handlers.
+    const mediaDir =
+      process.env.MEDIA_DIR ?? join(__dirname, '..', '..', '..', 'media');
     const batch = randomUUID();
     const dir = join(mediaDir, task.customer_id, batch);
     mkdirSync(dir, { recursive: true });
