@@ -57,6 +57,40 @@ export class ConciergeService {
       return this.reply(customer.phone, conversation.id, result.summary_for_owner);
     }
 
+    // 1b. Plan keywords — deterministic, stateless, and advertised in our own
+    //     texts, so they must work even though they look like steady-state chat.
+    const kw = msg.body.trim().toLowerCase();
+    if (kw === 'upgrade') {
+      const site = process.env.PUBLIC_SITE_URL ?? 'https://aissm-web.vercel.app';
+      return this.reply(
+        customer.phone,
+        conversation.id,
+        `Happy to bump you up! Growth adds reels cut from your own clips, more posts, and more platforms — upgrade here: ${site}/billing`,
+      );
+    }
+    if (kw === 'autopilot') {
+      await this.prisma.customer.update({
+        where: { id: customer.id },
+        data: { trustLevel: 'auto_low_risk' },
+      });
+      return this.reply(
+        customer.phone,
+        conversation.id,
+        "Autopilot is on ✳ I'll post the routine stuff on schedule and only text you about promos, discounts, or anything sensitive. Reply MANUAL any time to go back to approving everything.",
+      );
+    }
+    if (kw === 'manual') {
+      await this.prisma.customer.update({
+        where: { id: customer.id },
+        data: { trustLevel: 'approve_all' },
+      });
+      return this.reply(
+        customer.phone,
+        conversation.id,
+        "Done — back to how it was: nothing goes out without your OK.",
+      );
+    }
+
     // 2. Media in → ingest each attachment, and aim it at whatever is waiting:
     //    the oldest open shot-list ask first, else the next upcoming post that
     //    has no photo yet. Without this linkage every photo landed as an
@@ -162,10 +196,11 @@ export class ConciergeService {
           result.summary_for_owner,
         );
         if (!more) {
+          const offer = await this.trustRampOffer(customerId);
           await this.reply(
             phone,
             conversationId,
-            `${result.summary_for_owner} That's everything for this week — I'll take it from here.`,
+            `${result.summary_for_owner} That's everything for this week — I'll take it from here.${offer}`,
           );
         }
         return;
@@ -243,6 +278,19 @@ export class ConciergeService {
       customer.conversation ??
       (await this.prisma.conversation.create({ data: { customerId } }));
     await this.reply(customer.phone, conversation.id, body);
+  }
+
+  /**
+   * We initiate: the post-payment welcome, which doubles as onboarding Q1.
+   * From here the owner's replies flow through the normal interview logic.
+   */
+  async beginOnboarding(customerId: string): Promise<void> {
+    const profile = await this.prisma.brandProfile.findUnique({
+      where: { customerId },
+    });
+    const first = this.onboarding.nextField(profile);
+    if (!first) return; // already fully onboarded (re-subscribe, plan change)
+    await this.notify(customerId, this.onboarding.question(first, profile));
   }
 
   /**
@@ -350,6 +398,34 @@ export class ConciergeService {
         `minutes: connect the accounts you want me to post to (secure link, ` +
         `we never see your passwords): ${site}/connect?c=${customerId}` +
         `\n\nMeanwhile — ${result.summary_for_owner}`,
+    );
+  }
+
+  /**
+   * The trust ramp (§8): after enough approvals with zero cancellations, offer
+   * autopilot once. Stateless — acceptance is the AUTOPILOT keyword, and the
+   * offer only fires while still on approve_all, so it can't nag forever.
+   */
+  private async trustRampOffer(customerId: string): Promise<string> {
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { trustLevel: true },
+    });
+    if (customer?.trustLevel !== 'approve_all') return '';
+    const [approved, rejected] = await Promise.all([
+      this.prisma.post.count({
+        where: { customerId, approvalState: 'approved' },
+      }),
+      this.prisma.post.count({
+        where: { customerId, approvalState: 'rejected' },
+      }),
+    ]);
+    // 10 green lights and fewer than 1-in-5 skips = they trust the output.
+    if (approved < 10 || rejected * 5 > approved) return '';
+    return (
+      "\n\nBy the way — you've approved everything I've sent for a while now. " +
+      'Want me to put the routine posts on autopilot and only check with you ' +
+      'on promos and anything sensitive? Reply AUTOPILOT to switch it on.'
     );
   }
 

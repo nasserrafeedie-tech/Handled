@@ -10,7 +10,15 @@ async function bootstrap() {
 
   // Twilio posts application/x-www-form-urlencoded webhooks.
   app.use(urlencoded({ extended: false }));
-  app.use(json());
+  // Keep the raw bytes: Stripe signs the exact payload, and a re-serialized
+  // JSON body will never verify.
+  app.use(
+    json({
+      verify: (req, _res, buf) => {
+        (req as { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
 
   // Offline media store, served read-only so reel/graphic preview links in
   // texts actually open. In production this becomes the R2 public bucket.

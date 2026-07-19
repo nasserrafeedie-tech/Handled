@@ -60,6 +60,10 @@ export class BillingService {
     form.set('success_url', `${siteUrl}/billing?status=success`);
     form.set('cancel_url', `${siteUrl}/billing?status=cancelled`);
     form.set('allow_promotion_codes', 'true');
+    // The phone number IS the account (§2) — without it the webhook can't
+    // start the SMS relationship. The plan rides along as metadata.
+    form.set('phone_number_collection[enabled]', 'true');
+    form.set('metadata[plan]', req.plan);
     if (req.email) form.set('customer_email', req.email);
 
     const res = await fetch('https://api.stripe.com/v1/checkout/sessions', {
