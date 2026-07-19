@@ -39,6 +39,20 @@ export class GraphicsService {
     return [];
   }
 
+  /**
+   * Turn a photo URL into the data URI a slide spec wants. The rasterizer can't
+   * reach the network, so the bytes have to be inlined before rendering.
+   */
+  async fetchPhoto(url: string): Promise<string> {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`photo fetch failed → ${res.status} ${res.statusText}`);
+    }
+    const type = res.headers.get('content-type') ?? 'image/jpeg';
+    const b64 = Buffer.from(await res.arrayBuffer()).toString('base64');
+    return `data:${type};base64,${b64}`;
+  }
+
   /** Render one slide spec to a PNG buffer (1080×1080). */
   renderSlide(spec: SlideSpec, theme: BrandTheme): Buffer {
     const svg = renderSlideSvg(spec, theme);

@@ -18,25 +18,25 @@ type Sample = {
 
 const SAMPLES: Sample[] = [
   {
-    file: 'promo.png',
+    file: 'promo.jpg',
     ask: 'make a promo for 50% off all lattes this Friday',
     reply: 'On it — here’s your Friday latte promo. Want me to schedule it for 8am?',
     brand: "Rosa's Coffee",
   },
   {
-    file: 'quote.png',
+    file: 'quote.jpg',
     ask: 'a quote card: the best ideas are brewed, not forced',
     reply: 'Love this one. Here’s a clean quote card in your colors.',
     brand: "Rosa's Coffee",
   },
   {
-    file: 'title.png',
+    file: 'title.jpg',
     ask: 'a graphic for our spring bouquet launch',
     reply: 'Spring is in the air 🌷 Here’s your launch graphic.',
     brand: 'Bloom & Stem',
   },
   {
-    file: 'cta.png',
+    file: 'cta.jpg',
     ask: 'a come-visit-us post with our hours',
     reply: 'Done — a warm “come say hi” post with your hours.',
     brand: 'Bloom & Stem',

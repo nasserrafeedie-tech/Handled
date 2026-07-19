@@ -12,6 +12,21 @@ export const CANVAS = 1080;
 
 export type SlideKind = 'title' | 'body' | 'quote' | 'promo' | 'cta';
 
+/**
+ * How a photo is used behind the type. Picking one per post is what keeps a
+ * feed from looking like the same template four times a week.
+ *   full — photo fills the frame, text sits on a dark scrim
+ *   card — photo fills the frame, text sits in a floating card
+ *   band — photo on top, solid brand color below
+ */
+export type PhotoLayout = 'full' | 'card' | 'band';
+
+/**
+ * Type personality. Each maps to a font pairing so a barber shop and a day spa
+ * don't get the same-looking graphics. All fonts are open-source (Google Fonts).
+ */
+export type BrandStyle = 'modern' | 'editorial' | 'bold' | 'luxe';
+
 export interface BrandTheme {
   /** Primary brand color, e.g. "#0F172A". Drives the background gradient. */
   primary: string;
@@ -21,6 +36,8 @@ export interface BrandTheme {
   text?: string;
   /** Business name shown in the footer. */
   brandName?: string;
+  /** Type personality. Defaults to 'modern'. */
+  style?: BrandStyle;
 }
 
 export interface SlideSpec {
@@ -28,11 +45,62 @@ export interface SlideSpec {
   headline: string;
   body?: string;
   footer?: string;
+  /**
+   * A photo to sit behind the design, as a data URI (data:image/jpeg;base64,…).
+   * GraphicsService.fetchPhoto() turns a URL into one. Omit for a solid
+   * gradient background.
+   */
+  photo?: string;
+  /** How the photo is composed with the type. Defaults to 'full'. */
+  photoLayout?: PhotoLayout;
 }
 
 /* ── fonts ─────────────────────────────────────────────────────────────── */
 const SANS = 'Poppins';
 const SERIF = "'Playfair Display'";
+const DISPLAY = 'Anton';
+const LUXE = 'Marcellus';
+
+interface TypeSet {
+  /** Face for big headlines. */
+  head: string;
+  headWeight: number;
+  /** Letter-spacing for headlines (Anton/Marcellus like a little air). */
+  headTracking: number;
+  /** Face for supporting copy, badges and footers. */
+  body: string;
+  /** Face for pull-quotes. */
+  quote: string;
+  quoteItalic: boolean;
+  /** Headlines set in all caps? (poster styles look better shouting.) */
+  headUpper: boolean;
+}
+
+function typeSet(style: BrandStyle | undefined): TypeSet {
+  switch (style) {
+    case 'editorial':
+      return {
+        head: SERIF, headWeight: 700, headTracking: 0,
+        body: SANS, quote: SERIF, quoteItalic: true, headUpper: false,
+      };
+    case 'bold':
+      return {
+        head: DISPLAY, headWeight: 400, headTracking: 1,
+        body: SANS, quote: SANS, quoteItalic: false, headUpper: true,
+      };
+    case 'luxe':
+      return {
+        head: LUXE, headWeight: 400, headTracking: 3,
+        body: SANS, quote: LUXE, quoteItalic: false, headUpper: false,
+      };
+    case 'modern':
+    default:
+      return {
+        head: SANS, headWeight: 800, headTracking: 0,
+        body: SANS, quote: SERIF, quoteItalic: true, headUpper: false,
+      };
+  }
+}
 
 /* ── color utilities ───────────────────────────────────────────────────── */
 type RGB = { r: number; g: number; b: number };
@@ -92,6 +160,18 @@ function wrap(text: string, fontSize: number, maxWidth: number, factor = 0.56): 
   }
   if (line) lines.push(line);
   return lines;
+}
+
+/**
+ * Hard ceiling on how many lines a block may occupy. Auto-fit shrinks type to
+ * make copy fit, but a genuinely long paragraph has to be cut somewhere —
+ * better a trimmed sentence than text running off the edge of the image.
+ */
+function clampLines(lines: string[], max: number): string[] {
+  if (lines.length <= max) return lines;
+  const kept = lines.slice(0, max);
+  kept[max - 1] = kept[max - 1].replace(/[\s,.;:]+$/, '') + '…';
+  return kept;
 }
 
 function tspansCentered(lines: string[], cx: number, startY: number, lineHeight: number): string {
@@ -159,8 +239,69 @@ function frame(p: Palette): string {
   `;
 }
 
+/**
+ * Photo background. The scrim is the whole trick: a real photo with a graduated
+ * wash of the brand color underneath the type keeps text readable on *any*
+ * image while still looking designed rather than slapped together.
+ */
+function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
+  const bandH = Math.round(CANVAS * 0.56);
+  const defs = `
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="${p.bgTop}"/>
+        <stop offset="1" stop-color="${p.bgBottom}"/>
+      </linearGradient>
+      <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0"    stop-color="${p.bgBottom}" stop-opacity="0.30"/>
+        <stop offset="0.42" stop-color="${p.bgBottom}" stop-opacity="0.55"/>
+        <stop offset="1"    stop-color="${p.bgBottom}" stop-opacity="0.92"/>
+      </linearGradient>
+      <linearGradient id="bandFade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="${p.bgBottom}" stop-opacity="0.15"/>
+        <stop offset="1" stop-color="${p.bgBottom}" stop-opacity="0.55"/>
+      </linearGradient>
+    </defs>`;
+
+  // preserveAspectRatio "slice" = cover: fills the square, crops the overflow.
+  const img = (y: number, h: number) =>
+    `<image href="${photo}" x="0" y="${y}" width="${CANVAS}" height="${h}" preserveAspectRatio="xMidYMid slice"/>`;
+
+  if (layout === 'band') {
+    return `${defs}
+      <rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>
+      ${img(0, bandH)}
+      <rect width="${CANVAS}" height="${bandH}" fill="url(#bandFade)"/>
+      <circle cx="${CANVAS - 90}" cy="${bandH + 150}" r="200" fill="${p.deco}" opacity="0.05"/>`;
+  }
+
+  if (layout === 'card') {
+    // Photo stays mostly clear; the type lives in its own panel.
+    return `${defs}
+      ${img(0, CANVAS)}
+      <rect width="${CANVAS}" height="${CANVAS}" fill="${p.bgBottom}" opacity="0.34"/>`;
+  }
+
+  // full — photo edge to edge with a graduated scrim for legibility.
+  return `${defs}
+    ${img(0, CANVAS)}
+    <rect width="${CANVAS}" height="${CANVAS}" fill="url(#scrim)"/>
+    <circle cx="${CANVAS - 60}" cy="60" r="230" fill="${p.deco}" opacity="0.05"/>`;
+}
+
+/** The floating panel used by the 'card' photo layout, sized to its content. */
+function cardPanel(p: Palette, y: number, h: number): string {
+  const m = 96;
+  const w = CANVAS - m * 2;
+  return `
+    <rect x="${m}" y="${y}" width="${w}" height="${h}" rx="36"
+          fill="${p.bgBottom}" opacity="0.90"/>
+    <rect x="${m}" y="${y}" width="${w}" height="${h}" rx="36"
+          fill="none" stroke="${p.fg}" stroke-opacity="0.14" stroke-width="2"/>`;
+}
+
 /** A rounded "pill" badge, horizontally centered on cx. */
-function pill(cx: number, cy: number, text: string, p: Palette): string {
+function pill(cx: number, cy: number, text: string, p: Palette, t: TypeSet): string {
   const fs = 30;
   const w = Math.round(text.length * fs * 0.66) + 72;
   const h = 62;
@@ -168,36 +309,36 @@ function pill(cx: number, cy: number, text: string, p: Palette): string {
   const y = cy - h / 2;
   return `
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h / 2}" fill="${p.accent}"/>
-    <text x="${cx}" y="${cy + fs * 0.35}" text-anchor="middle" font-family="${SANS}" font-size="${fs}" font-weight="600" letter-spacing="2" fill="${p.onAccent}">${esc(text.toUpperCase())}</text>
+    <text x="${cx}" y="${cy + fs * 0.35}" text-anchor="middle" font-family="${t.body}" font-size="${fs}" font-weight="600" letter-spacing="2" fill="${p.onAccent}">${esc(text.toUpperCase())}</text>
   `;
 }
 
 /** Centered brand footer with a small accent dot. */
-function footerCentered(text: string, p: Palette): string {
+function footerCentered(text: string, p: Palette, t: TypeSet): string {
   if (!text) return '';
   const fs = 32;
   const y = CANVAS - 92;
   return `
     <g>
       <circle cx="${CANVAS / 2 - text.length * fs * 0.31 - 20}" cy="${y - fs * 0.32}" r="8" fill="${p.accent}"/>
-      <text x="${CANVAS / 2 + 8}" y="${y}" text-anchor="middle" font-family="${SANS}" font-size="${fs}" font-weight="600" letter-spacing="1" fill="${p.fg}">${esc(text)}</text>
+      <text x="${CANVAS / 2 + 8}" y="${y}" text-anchor="middle" font-family="${t.body}" font-size="${fs}" font-weight="600" letter-spacing="1" fill="${p.fg}">${esc(text)}</text>
     </g>
   `;
 }
 
 /** Left-aligned brand footer with a small accent square to the left. */
-function footerLeft(text: string, x: number, p: Palette): string {
+function footerLeft(text: string, x: number, p: Palette, t: TypeSet): string {
   if (!text) return '';
   const fs = 32;
   const y = CANVAS - 92;
   return `
     <rect x="${x}" y="${y - fs * 0.66}" width="16" height="16" rx="4" fill="${p.accent}"/>
-    <text x="${x + 36}" y="${y}" font-family="${SANS}" font-size="${fs}" font-weight="600" letter-spacing="1" fill="${p.fg}">${esc(text)}</text>
+    <text x="${x + 36}" y="${y}" font-family="${t.body}" font-size="${fs}" font-weight="600" letter-spacing="1" fill="${p.fg}">${esc(text)}</text>
   `;
 }
 
 /** A pill-shaped call-to-action button with a cleanly drawn arrow. */
-function ctaButton(cx: number, cy: number, label: string, p: Palette): string {
+function ctaButton(cx: number, cy: number, label: string, p: Palette, t: TypeSet): string {
   const fs = 30;
   const upper = label.toUpperCase();
   const arrowW = 46;
@@ -209,109 +350,281 @@ function ctaButton(cx: number, cy: number, label: string, p: Palette): string {
   const ax = x + w - 56;
   return `
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h / 2}" fill="${p.accent}"/>
-    <text x="${textCx}" y="${cy + fs * 0.35}" text-anchor="middle" font-family="${SANS}" font-size="${fs}" font-weight="600" letter-spacing="2" fill="${p.onAccent}">${esc(upper)}</text>
+    <text x="${textCx}" y="${cy + fs * 0.35}" text-anchor="middle" font-family="${t.body}" font-size="${fs}" font-weight="600" letter-spacing="2" fill="${p.onAccent}">${esc(upper)}</text>
     <line x1="${ax - 16}" y1="${cy}" x2="${ax + 16}" y2="${cy}" stroke="${p.onAccent}" stroke-width="5" stroke-linecap="round"/>
     <path d="M ${ax} ${cy - 11} L ${ax + 17} ${cy} L ${ax} ${cy + 11}" fill="none" stroke="${p.onAccent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
   `;
 }
 
+/* ── stack layout ──────────────────────────────────────────────────────── */
+/**
+ * One element in the vertical stack. `render` is given the y of the block's
+ * top edge; `gap` is the breathing room that follows it. Measuring first and
+ * drawing second is what lets the same design center itself correctly whether
+ * it's on a full canvas, inside a card, or under a photo band.
+ */
+interface Block {
+  h: number;
+  gap: number;
+  render: (y: number) => string;
+}
+
+/** Total height of a stack: every block plus the gaps between them. */
+function measure(blocks: Block[]): number {
+  return blocks.reduce(
+    (sum, b, i) => sum + b.h + (i < blocks.length - 1 ? b.gap : 0),
+    0,
+  );
+}
+
+function stack(blocks: Block[], zoneTop: number, zoneBottom: number): string {
+  const total = measure(blocks);
+  let y = zoneTop + Math.max(0, (zoneBottom - zoneTop - total) / 2);
+  const out: string[] = [];
+  for (const b of blocks) {
+    out.push(b.render(y));
+    y += b.h + b.gap;
+  }
+  return out.join('');
+}
+
+
 /* ── main entry ────────────────────────────────────────────────────────── */
 export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   const p = palette(theme);
-  const pad = 110;
+  const t = typeSet(theme.style);
+  const layout: PhotoLayout | undefined = spec.photo
+    ? (spec.photoLayout ?? 'full')
+    : undefined;
+  const footer = spec.footer ?? theme.brandName ?? '';
+
+  const BAND_H = Math.round(CANVAS * 0.56);
+  const CARD_M = 96;
+  const CARD_PAD = 70;
+
+  // Text is confined to a zone so it never collides with the photo band or the
+  // edge of a card. 'card' gets its final zone after we measure the content.
+  const pad = layout === 'card' ? CARD_M + 56 : 110;
+  let zoneTop = 190;
+  let zoneBottom = CANVAS - 190;
+  if (layout === 'band') {
+    zoneTop = BAND_H + 62;
+    zoneBottom = CANVAS - 78;
+  }
+
+  const centered =
+    layout === 'card' ||
+    spec.kind === 'quote' ||
+    spec.kind === 'promo' ||
+    spec.kind === 'cta';
   const maxW = CANVAS - pad * 2;
   const cx = CANVAS / 2;
-  const footer = spec.footer ?? theme.brandName ?? '';
+  const anchor = centered ? ' text-anchor="middle"' : '';
+  const tsp = (lines: string[], startY: number, lh: number) =>
+    centered
+      ? tspansCentered(lines, cx, startY, lh)
+      : tspansLeft(lines, pad, startY, lh);
+
+  // For title/body the eyebrow already carries the brand name — repeating it in
+  // a footer just prints the business name twice.
+  const eyebrowIsBrand = spec.kind === 'title' || spec.kind === 'body';
+  // Band and card layouts have no room for a pinned footer, so it joins the
+  // stack instead of floating at the bottom of the canvas.
+  const footerInStack = layout === 'band' || layout === 'card';
+
+  /**
+   * Builds the slide's blocks at a given type scale. Called repeatedly by the
+   * auto-fit loop below: measure, and if the content is taller than its zone,
+   * step the type down and measure again. That's what guarantees a headline
+   * never runs off the bottom of the frame, however long the owner's text is.
+   */
+  const build = (scale: number): Block[] => {
+    const head = (s: string) => (t.headUpper ? s.toUpperCase() : s);
+    // Gaps shrink with the type, otherwise fixed whitespace eats the savings.
+    const g = (n: number) => Math.round(n * scale);
+    // Tight zones can hold fewer lines before they have to be trimmed.
+    const headMax = layout === 'band' ? 3 : layout === 'card' ? 3 : 4;
+    const bodyMax = layout === 'band' ? 2 : layout === 'card' ? 3 : 3;
+    const blocks: Block[] = [];
+
+    if (spec.kind === 'quote') {
+      const qFs = Math.round(78 * scale);
+      const qLines = clampLines(wrap(spec.headline, qFs, maxW, 0.5), 5);
+      const qLH = qFs * 1.28;
+      if (layout !== 'card') {
+        const mFs = Math.round(300 * scale);
+        blocks.push({
+          h: mFs * 0.42,
+          gap: g(4),
+          render: (y) =>
+            `<text x="${cx}" y="${y + mFs * 0.72}" text-anchor="middle" font-family="${t.quote}" font-size="${mFs}" font-weight="700" fill="${p.accent}" opacity="0.35">&#8220;</text>`,
+        });
+      }
+      blocks.push({
+        h: qLines.length * qLH,
+        gap: g(54),
+        render: (y) =>
+          `<text text-anchor="middle" font-family="${t.quote}" font-size="${qFs}"${t.quoteItalic ? ' font-style="italic"' : ''} font-weight="500" fill="${p.fg}" xml:space="preserve">${tspansCentered(qLines, cx, y + qFs * 0.8, qLH)}</text>`,
+      });
+      blocks.push({
+        h: 5,
+        gap: footer ? g(48) : 0,
+        render: (y) =>
+          `<rect x="${cx - 60}" y="${y}" width="120" height="5" rx="2.5" fill="${p.accent}"/>`,
+      });
+      if (footer) {
+        blocks.push({
+          h: 34,
+          gap: g(0),
+          render: (y) =>
+            `<text x="${cx}" y="${y + 28}" text-anchor="middle" font-family="${t.body}" font-size="34" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(footer)}</text>`,
+        });
+      }
+      return blocks;
+    }
+
+    if (spec.kind === 'promo') {
+      blocks.push({
+        h: 62,
+        gap: g(64),
+        render: (y) => pill(cx, y + 31, 'Special Offer', p, t),
+      });
+      const short = spec.headline.replace(/\s+/g, '').length <= 8;
+      const hFs = Math.round((short ? 190 : 124) * scale);
+      const hLines = clampLines(
+        wrap(head(spec.headline), hFs, maxW, t.head === DISPLAY ? 0.48 : 0.6),
+        headMax,
+      );
+      const hLH = hFs * 1.04;
+      blocks.push({
+        h: hLines.length * hLH,
+        gap: spec.body ? g(56) : g(0),
+        render: (y) =>
+          `<text text-anchor="middle" font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.fg}" xml:space="preserve">${tspansCentered(hLines, cx, y + hFs * 0.8, hLH)}</text>`,
+      });
+      if (spec.body) {
+        const bFs = Math.round(46 * scale);
+        const bLines = clampLines(wrap(spec.body, bFs, maxW, 0.54), bodyMax);
+        blocks.push({
+          h: bLines.length * bFs * 1.3,
+          gap: g(0),
+          render: (y) =>
+            `<text text-anchor="middle" font-family="${t.body}" font-size="${bFs}" font-weight="500" fill="${p.fgSoft}" xml:space="preserve">${tspansCentered(bLines, cx, y + bFs * 0.8, bFs * 1.3)}</text>`,
+        });
+      }
+    } else if (spec.kind === 'cta') {
+      const hFs = Math.round(88 * scale);
+      const hLines = clampLines(wrap(head(spec.headline), hFs, maxW, 0.58), headMax);
+      const hLH = hFs * 1.08;
+      blocks.push({
+        h: hLines.length * hLH,
+        gap: spec.body ? g(44) : g(66),
+        render: (y) =>
+          `<text text-anchor="middle" font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.fg}" xml:space="preserve">${tspansCentered(hLines, cx, y + hFs * 0.8, hLH)}</text>`,
+      });
+      if (spec.body) {
+        const bFs = Math.round(44 * scale);
+        const bLines = clampLines(wrap(spec.body, bFs, maxW, 0.54), bodyMax);
+        blocks.push({
+          h: bLines.length * bFs * 1.3,
+          gap: g(66),
+          render: (y) =>
+            `<text text-anchor="middle" font-family="${t.body}" font-size="${bFs}" font-weight="400" fill="${p.fgSoft}" xml:space="preserve">${tspansCentered(bLines, cx, y + bFs * 0.8, bFs * 1.3)}</text>`,
+        });
+      }
+      blocks.push({
+        h: 66,
+        gap: g(0),
+        render: (y) => ctaButton(cx, y + 33, 'Visit us', p, t),
+      });
+    } else {
+      // title / body — editorial, with an eyebrow and a rule under the headline.
+      const eyebrow = (theme.brandName || footer || 'New').toUpperCase();
+      blocks.push({
+        h: 30,
+        gap: g(50),
+        render: (y) =>
+          `<text x="${centered ? cx : pad}"${anchor} y="${y + 26}" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(eyebrow)}</text>`,
+      });
+      const hFs = Math.round((spec.kind === 'title' ? 104 : 82) * scale);
+      const hLines = clampLines(wrap(head(spec.headline), hFs, maxW, 0.58), headMax);
+      const hLH = hFs * 1.06;
+      blocks.push({
+        h: hLines.length * hLH,
+        gap: g(44),
+        render: (y) =>
+          `<text${anchor} font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.fg}" xml:space="preserve">${tsp(hLines, y + hFs * 0.8, hLH)}</text>`,
+      });
+      blocks.push({
+        h: 7,
+        gap: spec.body ? g(50) : g(0),
+        render: (y) =>
+          `<rect x="${centered ? cx - 70 : pad}" y="${y}" width="140" height="7" rx="3.5" fill="${p.accent}"/>`,
+      });
+      if (spec.body) {
+        const bFs = Math.round(44 * scale);
+        const bLines = clampLines(wrap(spec.body, bFs, maxW, 0.54), bodyMax);
+        blocks.push({
+          h: bLines.length * bFs * 1.35,
+          gap: g(0),
+          render: (y) =>
+            `<text${anchor} font-family="${t.body}" font-size="${bFs}" font-weight="400" fill="${p.fgSoft}" xml:space="preserve">${tsp(bLines, y + bFs * 0.8, bFs * 1.35)}</text>`,
+        });
+      }
+    }
+
+    if (footerInStack && footer && !eyebrowIsBrand) {
+      const last = blocks[blocks.length - 1];
+      if (last) last.gap = 48;
+      blocks.push({
+        h: 32,
+        gap: g(0),
+        render: (y) =>
+          `<text x="${cx}" y="${y + 26}" text-anchor="middle" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(footer)}</text>`,
+      });
+    }
+    return blocks;
+  };
+
+  // Auto-fit: start roomy, step down until the content fits its zone.
+  const startScale = layout === 'card' ? 0.82 : layout === 'band' ? 0.86 : 1;
+  const available = () => zoneBottom - zoneTop;
+  let blocks = build(startScale);
+  let cardBox: { y: number; h: number } | undefined;
+
+  if (layout === 'card') {
+    // The card sizes itself to the type rather than the type squeezing into a
+    // fixed box, so short posts don't get a half-empty panel.
+    const cardH = Math.min(
+      Math.max(measure(blocks) + CARD_PAD * 2, 360),
+      CANVAS - 160,
+    );
+    const cardY = (CANVAS - cardH) / 2;
+    zoneTop = cardY + CARD_PAD;
+    zoneBottom = cardY + cardH - CARD_PAD;
+    cardBox = { y: cardY, h: cardH };
+  }
+
+  for (
+    let s = startScale - 0.05;
+    measure(blocks) > available() && s >= 0.38;
+    s -= 0.05
+  ) {
+    blocks = build(s);
+  }
 
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS}" viewBox="0 0 ${CANVAS} ${CANVAS}">`,
-    frame(p),
+    spec.photo ? photoFrame(p, spec.photo, layout!) : frame(p),
   ];
+  if (cardBox) parts.push(cardPanel(p, cardBox.y, cardBox.h));
+  parts.push(stack(blocks, zoneTop, zoneBottom));
 
-  if (spec.kind === 'quote') {
-    // Elegant serif quote, big decorative quotation mark, centered.
+  // Pinned footer, only where there's room for one below the design.
+  if (!footerInStack && footer && !eyebrowIsBrand && spec.kind !== 'quote') {
     parts.push(
-      `<text x="${cx}" y="330" text-anchor="middle" font-family="${SERIF}" font-size="360" font-weight="700" fill="${p.accent}" opacity="0.35">&#8220;</text>`,
+      centered ? footerCentered(footer, p, t) : footerLeft(footer, pad, p, t),
     );
-    const qFs = 78;
-    const qLines = wrap(spec.headline, qFs, maxW, 0.5);
-    const startY = 560 - ((qLines.length - 1) * qFs * 1.28) / 2;
-    parts.push(
-      `<text text-anchor="middle" font-family="${SERIF}" font-size="${qFs}" font-style="italic" font-weight="500" fill="${p.fg}" xml:space="preserve">${tspansCentered(qLines, cx, startY, qFs * 1.28)}</text>`,
-    );
-    // divider
-    parts.push(
-      `<rect x="${cx - 60}" y="${startY + (qLines.length - 1) * qFs * 1.28 + 70}" width="120" height="5" rx="2.5" fill="${p.accent}"/>`,
-    );
-    if (footer) {
-      parts.push(
-        `<text x="${cx}" y="${startY + (qLines.length - 1) * qFs * 1.28 + 160}" text-anchor="middle" font-family="${SANS}" font-size="34" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(footer)}</text>`,
-      );
-    }
-  } else if (spec.kind === 'promo') {
-    // Poster-style offer: badge, huge headline, supporting line, footer.
-    parts.push(pill(cx, 250, 'Special Offer', p));
-    const short = spec.headline.replace(/\s+/g, '').length <= 8;
-    const hFs = short ? 200 : 128;
-    const hLines = wrap(spec.headline, hFs, maxW, 0.6);
-    const hLH = hFs * 1.02;
-    const blockH = hLines.length * hLH;
-    const centerY = spec.body ? 540 : 580;
-    const startY = centerY - blockH / 2 + hFs * 0.34;
-    parts.push(
-      `<text text-anchor="middle" font-family="${SANS}" font-size="${hFs}" font-weight="800" fill="${p.fg}" xml:space="preserve">${tspansCentered(hLines, cx, startY, hLH)}</text>`,
-    );
-    if (spec.body) {
-      const bFs = 48;
-      const bLines = wrap(spec.body, bFs, maxW, 0.54);
-      const bStart = centerY + blockH / 2 + 60;
-      parts.push(
-        `<text text-anchor="middle" font-family="${SANS}" font-size="${bFs}" font-weight="500" fill="${p.fgSoft}" xml:space="preserve">${tspansCentered(bLines, cx, bStart, bFs * 1.3)}</text>`,
-      );
-    }
-    parts.push(footerCentered(footer, p));
-  } else if (spec.kind === 'cta') {
-    // Centered call-to-action with a "button" pill.
-    const hFs = 88;
-    const hLines = wrap(spec.headline, hFs, maxW, 0.58);
-    const hLH = hFs * 1.08;
-    const startY = 420 - ((hLines.length - 1) * hLH) / 2;
-    parts.push(
-      `<text text-anchor="middle" font-family="${SANS}" font-size="${hFs}" font-weight="700" fill="${p.fg}" xml:space="preserve">${tspansCentered(hLines, cx, startY, hLH)}</text>`,
-    );
-    if (spec.body) {
-      const bFs = 46;
-      const bLines = wrap(spec.body, bFs, maxW, 0.54);
-      const bStart = startY + (hLines.length - 1) * hLH + 120;
-      parts.push(
-        `<text text-anchor="middle" font-family="${SANS}" font-size="${bFs}" font-weight="400" fill="${p.fgSoft}" xml:space="preserve">${tspansCentered(bLines, cx, bStart, bFs * 1.3)}</text>`,
-      );
-    }
-    parts.push(ctaButton(cx, 800, 'Visit us', p));
-    parts.push(footerCentered(footer, p));
-  } else {
-    // title / body — editorial left-aligned with eyebrow + underline.
-    const eyebrow = (theme.brandName || footer || 'New').toUpperCase();
-    parts.push(
-      `<text x="${pad}" y="230" font-family="${SANS}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(eyebrow)}</text>`,
-    );
-    const hFs = spec.kind === 'title' ? 108 : 84;
-    const hLines = wrap(spec.headline, hFs, maxW, 0.58);
-    const hLH = hFs * 1.06;
-    const startY = 340;
-    parts.push(
-      `<text x="${pad}" font-family="${SANS}" font-size="${hFs}" font-weight="700" fill="${p.fg}" xml:space="preserve">${tspansLeft(hLines, pad, startY, hLH)}</text>`,
-    );
-    const afterH = startY + (hLines.length - 1) * hLH;
-    parts.push(`<rect x="${pad}" y="${afterH + 46}" width="140" height="7" rx="3.5" fill="${p.accent}"/>`);
-    if (spec.body) {
-      const bFs = 46;
-      const bLines = wrap(spec.body, bFs, maxW, 0.54);
-      parts.push(
-        `<text x="${pad}" font-family="${SANS}" font-size="${bFs}" font-weight="400" fill="${p.fgSoft}" xml:space="preserve">${tspansLeft(bLines, pad, afterH + 140, bFs * 1.35)}</text>`,
-      );
-    }
-    parts.push(footerLeft(footer, pad, p));
   }
 
   parts.push(`</svg>`);

@@ -21,11 +21,13 @@ const STEPS = [
   },
 ] as const;
 
+// Rendered by the real graphics engine (scripts/make-samples.js) — same
+// templates and fonts a paying customer gets, not mockups.
 const SAMPLES = [
-  { file: 'promo.png', prompt: '“make a promo for 50% off all lattes this Friday”' },
-  { file: 'quote.png', prompt: '“a quote card: the best ideas are brewed, not forced”' },
-  { file: 'title.png', prompt: '“a graphic for our spring bouquet launch”' },
-  { file: 'cta.png', prompt: '“a come-visit-us post with our hours”' },
+  { file: 'promo.jpg', prompt: '“make a promo for 50% off all lattes this Friday”' },
+  { file: 'quote.jpg', prompt: '“a quote card: the best ideas are brewed, not forced”' },
+  { file: 'title.jpg', prompt: '“a graphic for our spring bouquet launch”' },
+  { file: 'cta.jpg', prompt: '“a come-visit-us post with our hours”' },
 ] as const;
 
 // The real questions owners ask before they trust us with their name online.
@@ -158,8 +160,9 @@ export default function Home() {
                 Real posts, spelled right.
               </h2>
               <p className="mt-3 max-w-lg text-ink/60">
-                Crisp graphics and carousels made to match your brand — not
-                blurry AI pictures with garbled text.
+                Your photos, laid out with real typography and your colors — not
+                blurry AI pictures with garbled text. These four were made by the
+                same engine that makes yours.
               </p>
             </div>
           </div>

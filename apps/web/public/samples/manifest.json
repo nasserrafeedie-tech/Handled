@@ -1,18 +1,18 @@
 [
   {
-    "file": "quote.png",
-    "prompt": "“make a quote card that says the best ideas are brewed, not forced”"
-  },
-  {
-    "file": "promo.png",
+    "file": "promo.jpg",
     "prompt": "“make a promo for 50% off all lattes this Friday”"
   },
   {
-    "file": "title.png",
-    "prompt": "“make a graphic for our spring bouquet launch”"
+    "file": "quote.jpg",
+    "prompt": "“a quote card: the best ideas are brewed, not forced”"
   },
   {
-    "file": "cta.png",
-    "prompt": "“make a come-visit-us post with our hours”"
+    "file": "title.jpg",
+    "prompt": "“a graphic for our spring bouquet launch”"
+  },
+  {
+    "file": "cta.jpg",
+    "prompt": "“a come-visit-us post with our hours”"
   }
 ]
