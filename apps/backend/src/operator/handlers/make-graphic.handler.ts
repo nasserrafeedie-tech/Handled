@@ -23,21 +23,36 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
   ) {}
 
   async handle(task: Extract<Task, { type: 'MAKE_GRAPHIC' }>): Promise<Result> {
-    const profile = await this.prisma.brandProfile.findUnique({
-      where: { customerId: task.customer_id },
-    });
+    const [profile, customer] = await Promise.all([
+      this.prisma.brandProfile.findUnique({
+        where: { customerId: task.customer_id },
+      }),
+      this.prisma.customer.findUnique({
+        where: { id: task.customer_id },
+        select: { businessName: true },
+      }),
+    ]);
 
     const theme: BrandTheme = {
-      primary: profile?.brandColors?.[0] ?? '#0F172A',
+      primary: profile?.brandColors?.[0] ?? '#2C3E50',
       secondary: profile?.brandColors?.[1],
-      brandName: profile?.businessType ?? undefined,
+      // The trading name, not the rambling sentence the owner typed at signup.
+      brandName: customer?.businessName ?? undefined,
+      style: (profile?.visualStyle as BrandTheme['style']) ?? undefined,
     };
 
-    const specs: SlideSpec[] = task.payload.slides.map((s) => ({
+    // Rotate the composition per post so this brand's own feed has rhythm.
+    // Seeded off the post count, not randomness, so a re-render of the same
+    // post is identical — regenerating a caption shouldn't reshuffle the art.
+    const made = await this.prisma.post.count({
+      where: { customerId: task.customer_id },
+    });
+    const specs: SlideSpec[] = task.payload.slides.map((s, i) => ({
       kind: s.kind,
       headline: s.headline,
       body: s.body,
       footer: s.footer,
+      variant: made + i,
     }));
 
     let pngs: Buffer[];

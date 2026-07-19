@@ -53,6 +53,12 @@ export interface SlideSpec {
   photo?: string;
   /** How the photo is composed with the type. Defaults to 'full'. */
   photoLayout?: PhotoLayout;
+  /**
+   * Seed for the decorative composition. Same brand colours and type, but the
+   * shapes behind them are arranged differently — so a customer's own feed
+   * doesn't read as the same card photocopied seven times. Stable per post.
+   */
+  variant?: number;
 }
 
 /* ── fonts ─────────────────────────────────────────────────────────────── */
@@ -219,8 +225,37 @@ function palette(theme: BrandTheme): Palette {
   };
 }
 
-/** <defs> + gradient background + tasteful decorative shapes. */
-function frame(p: Palette): string {
+/**
+ * Decorative arrangements. Identical palette and type, different composition —
+ * this is what stops a brand's own feed looking like one card printed over and
+ * over. Kept deliberately quiet: these sit behind the words, never compete.
+ */
+const COMPOSITIONS: ((p: Palette) => string)[] = [
+  // glow top-right, ring bottom-left
+  (p) => `
+    <circle cx="${CANVAS - 120}" cy="140" r="420" fill="url(#glow)"/>
+    <circle cx="${CANVAS - 60}" cy="60" r="230" fill="${p.deco}" opacity="0.06"/>
+    <circle cx="120" cy="${CANVAS - 90}" r="170" fill="none" stroke="${p.deco}" stroke-opacity="0.08" stroke-width="2"/>`,
+  // glow bottom-left, soft disc top-left
+  (p) => `
+    <circle cx="90" cy="${CANVAS - 120}" r="430" fill="url(#glow)"/>
+    <circle cx="140" cy="120" r="190" fill="${p.deco}" opacity="0.05"/>
+    <circle cx="${CANVAS - 130}" cy="${CANVAS - 150}" r="150" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2"/>`,
+  // wide glow across the top, horizon rule
+  (p) => `
+    <ellipse cx="${CANVAS / 2}" cy="-40" rx="620" ry="360" fill="url(#glow)"/>
+    <rect x="0" y="${CANVAS - 150}" width="${CANVAS}" height="2" fill="${p.deco}" opacity="0.10"/>
+    <circle cx="${CANVAS - 110}" cy="${CANVAS - 300}" r="120" fill="${p.deco}" opacity="0.05"/>`,
+  // two offset rings, glow low-right
+  (p) => `
+    <circle cx="${CANVAS - 80}" cy="${CANVAS - 60}" r="400" fill="url(#glow)"/>
+    <circle cx="${CANVAS - 200}" cy="200" r="260" fill="none" stroke="${p.deco}" stroke-opacity="0.07" stroke-width="2"/>
+    <circle cx="60" cy="${CANVAS / 2}" r="150" fill="${p.deco}" opacity="0.04"/>`,
+];
+
+/** <defs> + gradient background + a seeded decorative arrangement. */
+function frame(p: Palette, variant = 0): string {
+  const deco = COMPOSITIONS[Math.abs(variant) % COMPOSITIONS.length](p);
   return `
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -233,9 +268,7 @@ function frame(p: Palette): string {
       </radialGradient>
     </defs>
     <rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>
-    <circle cx="${CANVAS - 120}" cy="140" r="420" fill="url(#glow)"/>
-    <circle cx="${CANVAS - 60}" cy="60" r="230" fill="${p.deco}" opacity="0.06"/>
-    <circle cx="120" cy="${CANVAS - 90}" r="170" fill="none" stroke="${p.deco}" stroke-opacity="0.08" stroke-width="2"/>
+    ${deco}
   `;
 }
 
@@ -615,7 +648,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
 
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS}" viewBox="0 0 ${CANVAS} ${CANVAS}">`,
-    spec.photo ? photoFrame(p, spec.photo, layout!) : frame(p),
+    spec.photo ? photoFrame(p, spec.photo, layout!) : frame(p, spec.variant ?? 0),
   ];
   if (cardBox) parts.push(cardPanel(p, cardBox.y, cardBox.h));
   parts.push(stack(blocks, zoneTop, zoneBottom));

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { type Task, type Result } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import { BrandIdentityService } from '../branding/brand-identity.service';
 import { TaskHandler, ok } from './handler.interface';
 
 /**
@@ -14,7 +15,10 @@ export class UpdateBrandProfileHandler
 {
   readonly type = 'UPDATE_BRAND_PROFILE' as const;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly identity: BrandIdentityService,
+  ) {}
 
   async handle(
     task: Extract<Task, { type: 'UPDATE_BRAND_PROFILE' }>,
@@ -43,8 +47,12 @@ export class UpdateBrandProfileHandler
       update: clean,
     });
 
-    // Integration point: when synthesize_voice is true, run a Sonnet-5 pass to
-    // synthesize a durable voice_tone from accumulated answers (§6).
+    // Onboarding just finished: give this business its own look — palette,
+    // type personality, trading name — so its posts stop resembling everyone
+    // else's. Idempotent, so re-running never shifts an established brand.
+    if (task.payload.synthesize_voice) {
+      await this.identity.assign(task.customer_id);
+    }
 
     return ok(task.task_id, 'Got it — updated your profile.', 'done', {
       updated_fields: Object.keys(clean),

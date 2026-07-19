@@ -7,6 +7,7 @@ import { PublishGateService } from './guardrails/publish-gate.service';
 import { TokenCryptoService } from './security/token-crypto.service';
 import { PostForMeService } from './publishing/post-for-me.service';
 import { GraphicsService } from './graphics/graphics.service';
+import { BrandIdentityService } from './branding/brand-identity.service';
 import { PlanWeekHandler } from './handlers/plan-week.handler';
 import { DraftPostHandler } from './handlers/draft-post.handler';
 import { RegeneratePostHandler } from './handlers/regenerate-post.handler';
@@ -28,6 +29,7 @@ import { MakeGraphicHandler } from './handlers/make-graphic.handler';
     TokenCryptoService,
     PostForMeService,
     GraphicsService,
+    BrandIdentityService,
     // handlers
     PlanWeekHandler,
     DraftPostHandler,

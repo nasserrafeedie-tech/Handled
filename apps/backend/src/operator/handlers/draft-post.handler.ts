@@ -45,12 +45,34 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
 
     const { platform, archetype } = task.payload;
     const context = buildBrandContext(profile);
+
+    // Anti-repetition memory. Without this the model re-derives the same
+    // "safe" caption every week — same opening, same rhythm, same sign-off —
+    // and the playbook's own rules make that worse by giving every post an
+    // identical skeleton. Showing it what it already published is the cheapest
+    // fix that actually works.
+    const recent = await this.prisma.post.findMany({
+      where: { customerId: task.customer_id, caption: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      take: 8,
+      select: { caption: true, archetype: true },
+    });
     const prompt = [
       `Write one ${archetype} post for ${platform}.`,
       task.payload.prompt_notes ? `Notes: ${task.payload.prompt_notes}.` : '',
       '',
       // How this platform actually ranks content — see llm/playbook.ts.
       playbookFor(platform),
+      '',
+      recent.length
+        ? [
+            '',
+            'ALREADY POSTED for this business — do not repeat these. Vary the',
+            'opening line, the sentence rhythm, and the closing call to action.',
+            'Reuse of an opening or a sign-off from this list is a failure:',
+            ...recent.map((r) => `- (${r.archetype}) ${flatten(r.caption ?? '')}`),
+          ].join('\n')
+        : '',
       '',
       'Return JSON: {"caption": string, "hashtags": string[], "alt_text": string}.',
       'Caption in the brand voice. Hashtags without the # prefix.',
@@ -126,6 +148,12 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
 
     return ok(task.task_id, summary, status, data);
   }
+}
+
+/** One line per past caption keeps the prompt cheap and readable. */
+function flatten(caption: string): string {
+  const one = caption.replace(/\s+/g, ' ').trim();
+  return one.length > 140 ? `${one.slice(0, 137)}…` : one;
 }
 
 function preview(caption: string): string {

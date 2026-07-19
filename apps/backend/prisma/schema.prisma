@@ -170,6 +170,10 @@ model BrandProfile {
   // the interview think the question was already answered and skip it.
   postingFrequency   Int?
   brandColors        String[]
+  // Type personality for the graphics engine (modern | editorial | bold | luxe),
+  // derived from the business at the end of onboarding. Persisted so a brand
+  // looks the same every week.
+  visualStyle        String?
   logoRef            String?
   referencePhotoRefs String[]
   // Onboarding progress is tracked as which fields are filled, not a step
