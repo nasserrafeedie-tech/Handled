@@ -17,9 +17,10 @@ const STEPS = [
 ] as const;
 
 const SAMPLES = [
-  { tag: 'Quote card', tone: 'bg-clay-500', label: '“The best ideas are brewed, not forced.”' },
-  { tag: 'Promo', tone: 'bg-ink', label: '50% OFF — every latte, Friday only.' },
-  { tag: 'Carousel', tone: 'bg-sage', label: '5 reasons the regulars keep coming back →' },
+  { file: 'promo.png', prompt: '“make a promo for 50% off all lattes this Friday”' },
+  { file: 'quote.png', prompt: '“a quote card: the best ideas are brewed, not forced”' },
+  { file: 'title.png', prompt: '“a graphic for our spring bouquet launch”' },
+  { file: 'cta.png', prompt: '“a come-visit-us post with our hours”' },
 ] as const;
 
 export default function Home() {
@@ -96,21 +97,22 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <div className="mt-12 grid gap-5 sm:grid-cols-3">
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {SAMPLES.map((s) => (
               <div
-                key={s.tag}
+                key={s.file}
                 className="group overflow-hidden rounded-4xl border border-clay-100 bg-white shadow-soft"
               >
-                <div
-                  className={`flex aspect-square items-center justify-center p-8 ${s.tone}`}
-                >
-                  <p className="text-center font-display text-xl font-medium leading-snug text-white">
-                    {s.label}
-                  </p>
+                <div className="aspect-square overflow-hidden bg-clay-50">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`/samples/${s.file}`}
+                    alt={s.prompt}
+                    className="h-full w-full object-cover"
+                  />
                 </div>
-                <div className="px-5 py-4 text-sm font-medium text-ink/70">
-                  {s.tag}
+                <div className="px-5 py-4 text-sm leading-relaxed text-ink/70">
+                  {s.prompt}
                 </div>
               </div>
             ))}

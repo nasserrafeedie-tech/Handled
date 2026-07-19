@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Resvg } from '@resvg/resvg-js';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   renderSlideSvg,
   type SlideSpec,
@@ -10,15 +12,43 @@ import {
 /**
  * Turns slide specs into real PNG images. The SVG we build is always
  * pixel-crisp and correctly spelled; this service just rasterizes it.
+ *
+ * We bundle premium fonts (Poppins + Playfair Display) so the output looks
+ * professionally designed and identical in every environment — instead of
+ * whatever generic system font happens to be installed.
  */
 @Injectable()
 export class GraphicsService {
+  private readonly fontFiles: string[] = GraphicsService.loadBundledFonts();
+
+  /** Resolve the bundled font .ttf files (works from both src/ and dist/). */
+  private static loadBundledFonts(): string[] {
+    const candidates = [
+      join(__dirname, 'fonts'),
+      // dist build keeps .ts next to compiled output; fonts are copied by nest-cli assets.
+      join(__dirname, '..', '..', '..', 'src', 'operator', 'graphics', 'fonts'),
+    ];
+    for (const dir of candidates) {
+      if (existsSync(dir)) {
+        const files = readdirSync(dir)
+          .filter((f) => f.toLowerCase().endsWith('.ttf'))
+          .map((f) => join(dir, f));
+        if (files.length) return files;
+      }
+    }
+    return [];
+  }
+
   /** Render one slide spec to a PNG buffer (1080×1080). */
   renderSlide(spec: SlideSpec, theme: BrandTheme): Buffer {
     const svg = renderSlideSvg(spec, theme);
     const resvg = new Resvg(svg, {
       fitTo: { mode: 'width', value: CANVAS },
-      font: { loadSystemFonts: true },
+      font: {
+        fontFiles: this.fontFiles,
+        loadSystemFonts: this.fontFiles.length === 0, // fall back only if bundling failed
+        defaultFontFamily: 'Poppins',
+      },
       background: 'rgba(0,0,0,0)',
     });
     return Buffer.from(resvg.render().asPng());
