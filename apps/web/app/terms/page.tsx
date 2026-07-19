@@ -16,7 +16,7 @@ export default function TermsPage() {
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-16 leading-relaxed">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="font-display text-4xl font-semibold tracking-tight">
           Terms &amp; Conditions
         </h1>
         <p className="text-sm text-ink/50">Last updated: {UPDATED}</p>
