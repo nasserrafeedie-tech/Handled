@@ -8,6 +8,8 @@ import { TokenCryptoService } from './security/token-crypto.service';
 import { PostForMeService } from './publishing/post-for-me.service';
 import { GraphicsService } from './graphics/graphics.service';
 import { BrandIdentityService } from './branding/brand-identity.service';
+import { ReelService } from './video/reel.service';
+import { AssembleReelHandler } from './handlers/assemble-reel.handler';
 import { PlanWeekHandler } from './handlers/plan-week.handler';
 import { DraftPostHandler } from './handlers/draft-post.handler';
 import { RegeneratePostHandler } from './handlers/regenerate-post.handler';
@@ -30,6 +32,7 @@ import { MakeGraphicHandler } from './handlers/make-graphic.handler';
     PostForMeService,
     GraphicsService,
     BrandIdentityService,
+    ReelService,
     // handlers
     PlanWeekHandler,
     DraftPostHandler,
@@ -42,6 +45,7 @@ import { MakeGraphicHandler } from './handlers/make-graphic.handler';
     UpdateBrandProfileHandler,
     PauseCustomerHandler,
     MakeGraphicHandler,
+    AssembleReelHandler,
     // registry, exposed to the TaskBus under the abstract token
     OperatorService,
     { provide: OPERATOR_REGISTRY, useExisting: OperatorService },

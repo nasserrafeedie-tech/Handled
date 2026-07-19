@@ -80,7 +80,7 @@ export class CronService {
   async runWeeklyRhythm(customerId: string): Promise<number> {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
-      select: { timezone: true },
+      select: { timezone: true, planTier: true },
     });
     const tz = customer?.timezone ?? 'America/Los_Angeles';
 
@@ -118,6 +118,30 @@ export class CronService {
         `Morning! Your week is planned — ${drafted} post${drafted > 1 ? 's' : ''} ready for a look.`,
       );
     }
+
+    // Growth+ gets one reel a week. The ask goes out with the plan, but only
+    // if no video ask is already open — nagging twice about the same clips is
+    // how you teach an owner to ignore you.
+    if (customer?.planTier && customer.planTier !== 'starter') {
+      const openVideoAsk = await this.prisma.shotListRequest.findFirst({
+        where: { customerId, status: 'requested', prompt: { contains: 'clips' } },
+      });
+      if (!openVideoAsk) {
+        await this.prisma.shotListRequest.create({
+          data: {
+            customerId,
+            prompt:
+              'Reel clips: (1) your storefront from the street, (2) you doing the work, (3) a happy customer moment. 5-10 seconds each.',
+          },
+        });
+        const site = process.env.PUBLIC_SITE_URL ?? 'https://aissm-web.vercel.app';
+        await this.concierge.notify(
+          customerId,
+          `One more thing — film me 3 quick clips this week (your storefront, you at work, a happy customer) and I'll cut them into a reel. Upload here: ${site}/upload?c=${customerId}`,
+        );
+      }
+    }
+
     this.log.log(`${customerId}: planned ${slots.length}, drafted ${drafted}`);
     return drafted;
   }

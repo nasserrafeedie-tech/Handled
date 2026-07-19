@@ -115,6 +115,21 @@ export const IngestMediaPayload = z
   .strict();
 export type IngestMediaPayload = z.infer<typeof IngestMediaPayload>;
 
+// ── ASSEMBLE_REEL ──────────────────────────────────────────────────────────
+// Cut the owner's banked clips into a vertical reel (§7). No AI video — real
+// footage, normalized to 9:16, trimmed, hard-cut, branded end card. Growth+.
+export const AssembleReelPayload = z
+  .object({
+    /** Specific clips to use, oldest-first when omitted. */
+    media_asset_ids: z.array(uuid).max(6).optional(),
+    /** Text overlaid on the opening seconds — the watch-time hook. */
+    hook_text: z.string().max(80).optional(),
+    platform: Platform.default('instagram'),
+    scheduled_time: iso8601.optional(),
+  })
+  .strict();
+export type AssembleReelPayload = z.infer<typeof AssembleReelPayload>;
+
 // ── UPDATE_BRAND_PROFILE ───────────────────────────────────────────────────
 // Concierge learned something during onboarding / mid-relationship.
 // Partial patch — only the fields that changed. `.strip()`-free strict object.

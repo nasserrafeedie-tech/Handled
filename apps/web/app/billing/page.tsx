@@ -17,10 +17,15 @@ const PLANS: {
   {
     id: 'starter',
     name: 'Starter',
-    price: '$149',
+    price: '$99',
     cadence: '/mo',
     blurb: 'For a single location just getting consistent.',
-    features: ['3 posts / week', '1 platform', 'Text approval', 'Monthly recap'],
+    features: [
+      '3 posts / week',
+      '1 platform',
+      'Photos & branded graphics',
+      'Text approval',
+    ],
     highlight: false,
   },
   {
@@ -28,11 +33,11 @@ const PLANS: {
     name: 'Growth',
     price: '$349',
     cadence: '/mo',
-    blurb: 'The sweet spot — more posts, more places, less work for you.',
+    blurb: 'The sweet spot — more posts, more places, and video.',
     features: [
       '7 posts / week',
       'Up to 3 platforms',
-      'Carousels & graphics',
+      'Reels cut from your clips',
       'Weekly performance tuning',
     ],
     highlight: true,
@@ -46,7 +51,7 @@ const PLANS: {
     features: [
       'Daily posting',
       'All platforms',
-      'Priority drafts',
+      'Reels & priority drafts',
       'Auto-publish (once trusted)',
     ],
     highlight: false,

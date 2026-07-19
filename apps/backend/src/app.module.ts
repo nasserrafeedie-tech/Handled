@@ -8,6 +8,7 @@ import { ConciergeModule } from './concierge/concierge.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { BillingModule } from './billing/billing.module';
 import { ConnectModule } from './connect/connect.module';
+import { UploadsModule } from './uploads/uploads.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -28,6 +29,7 @@ import { HealthController } from './health/health.controller';
     SchedulerModule,
     BillingModule,
     ConnectModule,
+    UploadsModule,
   ],
   controllers: [HealthController],
 })
