@@ -96,6 +96,19 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     const risk = this.gate.classifyRisk(gen.caption);
     const decision = this.gate.decide(customer.trustLevel, risk);
 
+    // Owner photos beat anything we can generate (§7: owner photo > AI). Pull
+    // the oldest banked photo — one they texted in that no post has claimed —
+    // so real photography flows into the week automatically.
+    const bankedPhoto = await this.prisma.mediaAsset.findFirst({
+      where: {
+        customerId: task.customer_id,
+        postId: null,
+        kind: 'image',
+        source: 'owner_upload',
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
     const post = await this.prisma.post.create({
       data: {
         customerId: task.customer_id,
@@ -104,7 +117,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
         caption: gen.caption,
         altText: gen.alt_text ?? null,
         hashtags: gen.hashtags,
-        mediaRefs: [],
+        mediaRefs: bankedPhoto ? [bankedPhoto.r2Key] : [],
         scheduledTime: task.payload.scheduled_time
           ? new Date(task.payload.scheduled_time)
           : null,
@@ -118,6 +131,13 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
           : 'draft',
       },
     });
+
+    if (bankedPhoto) {
+      await this.prisma.mediaAsset.update({
+        where: { id: bankedPhoto.id },
+        data: { postId: post.id },
+      });
+    }
 
     if (!verdict.passed) {
       return fail(

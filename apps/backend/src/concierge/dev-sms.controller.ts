@@ -6,6 +6,8 @@ import { ConciergeService } from './concierge.service';
 const SimBody = z.object({
   from: z.string().min(3).describe('phone number, e.g. +15551234567'),
   body: z.string().default(''),
+  /** Simulate MMS attachments (any URL works offline). */
+  mediaUrls: z.array(z.string().url()).default([]),
 });
 
 /**
@@ -39,14 +41,14 @@ export class DevSmsController {
   @Post('sms')
   async simulate(@Body() body: unknown): Promise<{ replies: string[] }> {
     this.assertDevAllowed();
-    const { from, body: text } = SimBody.parse(body);
+    const { from, body: text, mediaUrls } = SimBody.parse(body);
     const t0 = new Date();
 
     await this.concierge.handleInbound({
       from,
       body: text,
-      mediaUrls: [],
-      mediaContentTypes: [],
+      mediaUrls,
+      mediaContentTypes: mediaUrls.map(() => 'image/jpeg'),
     });
 
     // Echo back what the Concierge sent since t0, in order.

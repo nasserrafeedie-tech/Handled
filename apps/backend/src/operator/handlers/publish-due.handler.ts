@@ -20,6 +20,23 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
     private readonly postForMe: PostForMeService,
   ) {}
 
+  /**
+   * mediaRefs store R2 keys ("owner/<customer>/<task>"), but the posting API
+   * needs fetchable URLs. Resolve through R2_PUBLIC_BASE_URL; anything that
+   * can't be resolved is dropped with a warning rather than sent — a bare
+   * storage key in the payload would fail the whole publish.
+   */
+  private resolveMediaUrls(postId: string, refs: string[]): string[] {
+    const base = process.env.R2_PUBLIC_BASE_URL?.replace(/\/+$/, '');
+    const urls: string[] = [];
+    for (const ref of refs) {
+      if (/^https?:\/\//.test(ref)) urls.push(ref);
+      else if (base) urls.push(`${base}/${ref}`);
+      else this.log.warn(`post ${postId}: dropping media ref "${ref}" (no R2_PUBLIC_BASE_URL)`);
+    }
+    return urls;
+  }
+
   async handle(task: Extract<Task, { type: 'PUBLISH_DUE' }>): Promise<Result> {
     const dueBefore = task.payload.due_before
       ? new Date(task.payload.due_before)
@@ -64,7 +81,7 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
           postForMeRef: account.postForMeRef,
           caption: post.caption ?? '',
           hashtags: post.hashtags,
-          mediaUrls: post.mediaRefs,
+          mediaUrls: this.resolveMediaUrls(post.id, post.mediaRefs),
         });
         await this.prisma.post.update({
           where: { id: post.id },

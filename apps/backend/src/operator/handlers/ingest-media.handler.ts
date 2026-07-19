@@ -33,11 +33,15 @@ export class IngestMediaHandler implements TaskHandler<'INGEST_MEDIA'> {
       },
     });
 
+    let fulfilledAsk = false;
+    let attachedPost: { platform: string } | null = null;
+
     if (shot_list_request_id) {
       await this.prisma.shotListRequest.update({
         where: { id: shot_list_request_id },
         data: { status: 'fulfilled', fulfilledBy: asset.id, fulfilledAt: new Date() },
       });
+      fulfilledAsk = true;
     }
     if (post_id) {
       const post = await this.prisma.post.findUnique({ where: { id: post_id } });
@@ -46,10 +50,23 @@ export class IngestMediaHandler implements TaskHandler<'INGEST_MEDIA'> {
           where: { id: post_id },
           data: { mediaRefs: [...post.mediaRefs, r2Key] },
         });
+        await this.prisma.mediaAsset.update({
+          where: { id: asset.id },
+          data: { postId: post.id },
+        });
+        attachedPost = { platform: post.platform };
       }
     }
 
-    return ok(task.task_id, 'Got the photo — thank you! I\'ll use it.', 'done', {
+    // Tell the owner where their photo actually went — "thanks" alone reads
+    // like it fell into a void, and the void is why owners stop sending photos.
+    const summary = attachedPost
+      ? fulfilledAsk
+        ? `Perfect — that's the shot I was waiting on. It's on your upcoming ${attachedPost.platform} post.`
+        : `Love it — I've added it to your upcoming ${attachedPost.platform} post.`
+      : 'Got it — saved to your photo library. I\'ll work it into an upcoming post.';
+
+    return ok(task.task_id, summary, 'done', {
       media_asset_id: asset.id,
     });
   }

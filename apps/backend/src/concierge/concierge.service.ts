@@ -57,17 +57,36 @@ export class ConciergeService {
       return this.reply(customer.phone, conversation.id, result.summary_for_owner);
     }
 
-    // 2. Media in → ingest each attachment.
+    // 2. Media in → ingest each attachment, and aim it at whatever is waiting:
+    //    the oldest open shot-list ask first, else the next upcoming post that
+    //    has no photo yet. Without this linkage every photo landed as an
+    //    orphan record and the "I'll need 1 quick photo" ask was never closed.
     if (msg.mediaUrls.length > 0) {
+      let lastSummary = 'Got it — thanks for the photo! 📸';
       for (let i = 0; i < msg.mediaUrls.length; i++) {
-        await this.bus.emit(
+        const openAsk = await this.prisma.shotListRequest.findFirst({
+          where: { customerId: customer.id, status: 'requested' },
+          orderBy: { askedAt: 'asc' },
+        });
+        const photolessPost = await this.prisma.post.findFirst({
+          where: {
+            customerId: customer.id,
+            status: { in: ['pending_approval', 'approved', 'scheduled'] },
+            mediaRefs: { isEmpty: true },
+          },
+          orderBy: { scheduledTime: 'asc' },
+        });
+        const result = await this.bus.emit(
           this.task(customer.id, 'INGEST_MEDIA', {
             source_url: msg.mediaUrls[i],
             content_type: msg.mediaContentTypes[i] ?? 'image/jpeg',
+            shot_list_request_id: openAsk?.id,
+            post_id: openAsk?.postId ?? photolessPost?.id,
           }),
         );
+        lastSummary = result.summary_for_owner;
       }
-      return this.reply(customer.phone, conversation.id, 'Got it — thanks for the photo! 📸');
+      return this.reply(customer.phone, conversation.id, lastSummary);
     }
 
     // 3. Onboarding interview (§6) — resume at the next empty profile field.
