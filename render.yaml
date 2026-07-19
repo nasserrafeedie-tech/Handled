@@ -1,0 +1,69 @@
+# Render Blueprint for the AISSM backend.
+# In Render: New → Blueprint → connect this repo. Render reads this file,
+# creates the service, and asks you to paste the secret values below.
+#
+# You'll need two free services first (their connection strings go in the
+# env vars marked "sync: false"):
+#   • Postgres  → Neon   (neon.tech)      → DATABASE_URL
+#   • Redis     → Upstash (upstash.com)   → REDIS_URL
+services:
+  - type: web
+    name: aissm-backend
+    runtime: node
+    plan: free
+    branch: main
+    # Build the shared contracts, generate the Prisma client, then compile.
+    buildCommand: >-
+      npm install &&
+      npm run build:contracts &&
+      npm --workspace @smm/backend run prisma:generate &&
+      npm run build:backend
+    # Apply DB migrations on each deploy, then start the compiled server.
+    startCommand: >-
+      npm --workspace @smm/backend exec -- prisma migrate deploy &&
+      node apps/backend/dist/main.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Cron heartbeat off until you're ready for autonomous posting.
+      - key: ENABLE_CRON
+        value: "0"
+      # Keep the AI/publishing in free offline mode until you add keys.
+      - key: LLM_FAKE
+        value: "1"
+      # ── Paste these in the Render dashboard (kept out of git) ──────────
+      - key: DATABASE_URL          # Neon Postgres connection string
+        sync: false
+      - key: REDIS_URL             # Upstash Redis connection string (rediss://)
+        sync: false
+      - key: PUBLIC_BASE_URL       # this service's own https URL (for Twilio)
+        sync: false
+      - key: PUBLIC_SITE_URL       # your marketing site URL
+        sync: false
+      - key: TOKEN_ENCRYPTION_KEY  # 32-byte base64 secret (for token storage)
+        sync: false
+      # ── Optional: fill these later to flip paid features on ────────────
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: POST_FOR_ME_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PRICE_STARTER
+        sync: false
+      - key: STRIPE_PRICE_GROWTH
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: TWILIO_MESSAGING_SERVICE_SID
+        sync: false

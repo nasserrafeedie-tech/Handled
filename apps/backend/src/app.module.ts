@@ -7,6 +7,7 @@ import { OperatorModule } from './operator/operator.module';
 import { ConciergeModule } from './concierge/concierge.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { BillingModule } from './billing/billing.module';
+import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [
@@ -26,5 +27,6 @@ import { BillingModule } from './billing/billing.module';
     SchedulerModule,
     BillingModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}
