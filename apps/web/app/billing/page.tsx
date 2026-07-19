@@ -154,6 +154,13 @@ export default function BillingPage() {
           <p className="text-center text-sm text-clay-700">{note}</p>
         )}
 
+        <p className="text-center text-sm text-ink/60">
+          Not sure which fits?{' '}
+          <span className="text-clay-700">
+            Text us — a real person will help you pick.
+          </span>
+        </p>
+
         <p className="text-center text-xs text-ink/45">
           Payments are processed securely by Stripe. We never store your card
           details.

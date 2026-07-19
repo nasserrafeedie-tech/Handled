@@ -235,8 +235,27 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Why we built this — a personal, founder-voiced note */}
+      <section className="border-y border-clay-100 bg-clay-50/40">
+        <div className="mx-auto max-w-3xl px-6 py-20">
+          <p className="font-display text-xs uppercase tracking-[0.18em] text-clay-500">
+            Why we built this
+          </p>
+          <p className="mt-6 font-display text-2xl leading-relaxed text-ink sm:text-[1.7rem]">
+            I kept watching people I admire — the baker two doors down, the
+            florist who knows every regular by name — pour everything into their
+            craft, then feel a little guilty every time their Instagram went
+            quiet for a month. Marketing shouldn’t be a second full-time job you
+            never signed up for. So we built the quiet partner we wished
+            existed: one you can just text, and then get back to the work you
+            actually love.
+          </p>
+          <p className="mt-8 text-sm text-ink/55">— Nasser, founder</p>
+        </div>
+      </section>
+
       {/* CTA */}
-      <section className="mx-auto max-w-5xl px-6 pb-24">
+      <section className="mx-auto max-w-5xl px-6 py-24">
         <div className="rounded-4xl bg-ink px-8 py-14 text-center text-paper sm:px-16">
           <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
             Ready to stop worrying about posting?
