@@ -44,6 +44,11 @@ import { MakeGraphicHandler } from './handlers/make-graphic.handler';
     OperatorService,
     { provide: OPERATOR_REGISTRY, useExisting: OperatorService },
   ],
-  exports: [OPERATOR_REGISTRY, TokenCryptoService, GraphicsService],
+  exports: [
+    OPERATOR_REGISTRY,
+    TokenCryptoService,
+    GraphicsService,
+    PostForMeService,
+  ],
 })
 export class OperatorModule {}
