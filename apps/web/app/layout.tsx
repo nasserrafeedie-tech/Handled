@@ -59,6 +59,9 @@ function Header() {
           <a className="hover:text-ink" href="/billing">
             Pricing
           </a>
+          <a className="hover:text-ink" href="/about">
+            About
+          </a>
           <a className="hover:text-ink" href="/connect">
             Connect
           </a>
@@ -87,6 +90,9 @@ function Footer() {
           </a>
           <a className="hover:text-ink" href="/billing">
             Pricing
+          </a>
+          <a className="hover:text-ink" href="/about">
+            About
           </a>
           <a className="hover:text-ink" href="/privacy">
             Privacy
