@@ -61,13 +61,13 @@ export default function ConnectCallbackPage() {
   }, [api]);
 
   return (
-    <main className="mx-auto flex max-w-lg flex-col items-center gap-6 px-6 py-24 text-center">
+    <main className="mx-auto flex max-w-lg flex-col items-center gap-6 px-6 py-28 text-center">
       {phase === 'working' && (
         <>
-          <div className="grid h-12 w-12 place-items-center rounded-full bg-clay-50 text-xl">
+          <div className="grid h-12 w-12 place-items-center rounded-full bg-parchment text-xl">
             ⏳
           </div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">
+          <h1 className="font-display text-4xl font-semibold tracking-tight">
             Finishing up…
           </h1>
           <p className="text-ink/60">
@@ -81,7 +81,7 @@ export default function ConnectCallbackPage() {
           <div className="grid h-12 w-12 place-items-center rounded-full bg-clay-500 text-xl text-white">
             ✓
           </div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">
+          <h1 className="font-display text-4xl font-semibold tracking-tight">
             You’re connected.
           </h1>
           {accounts.length > 0 ? (
@@ -101,7 +101,7 @@ export default function ConnectCallbackPage() {
           )}
           <a
             href="/connect"
-            className="mt-2 rounded-full border border-ink/15 px-6 py-3 text-sm font-semibold text-ink transition hover:border-ink/40"
+            className="mt-2 rounded-full border border-ink/15 px-6 py-3 text-sm font-semibold text-ink transition-all duration-300 ease-out hover:border-clay-500 hover:text-clay-600"
           >
             Connect another account
           </a>
@@ -110,10 +110,10 @@ export default function ConnectCallbackPage() {
 
       {phase === 'demo' && (
         <>
-          <div className="grid h-12 w-12 place-items-center rounded-full bg-clay-50 text-xl">
+          <div className="grid h-12 w-12 place-items-center rounded-full bg-parchment text-xl">
             👋
           </div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">
+          <h1 className="font-display text-4xl font-semibold tracking-tight">
             This is a preview.
           </h1>
           <p className="text-ink/60">
@@ -123,7 +123,7 @@ export default function ConnectCallbackPage() {
           </p>
           <a
             href="/connect"
-            className="mt-2 rounded-full border border-ink/15 px-6 py-3 text-sm font-semibold text-ink transition hover:border-ink/40"
+            className="mt-2 rounded-full border border-ink/15 px-6 py-3 text-sm font-semibold text-ink transition-all duration-300 ease-out hover:border-clay-500 hover:text-clay-600"
           >
             Back to connect
           </a>
@@ -132,10 +132,10 @@ export default function ConnectCallbackPage() {
 
       {phase === 'error' && (
         <>
-          <div className="grid h-12 w-12 place-items-center rounded-full bg-clay-50 text-xl">
+          <div className="grid h-12 w-12 place-items-center rounded-full bg-parchment text-xl">
             🤔
           </div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">
+          <h1 className="font-display text-4xl font-semibold tracking-tight">
             Hmm, we couldn’t confirm that.
           </h1>
           <p className="text-ink/60">
@@ -144,7 +144,7 @@ export default function ConnectCallbackPage() {
           </p>
           <a
             href="/connect"
-            className="mt-2 rounded-full border border-ink/15 px-6 py-3 text-sm font-semibold text-ink transition hover:border-ink/40"
+            className="mt-2 rounded-full border border-ink/15 px-6 py-3 text-sm font-semibold text-ink transition-all duration-300 ease-out hover:border-clay-500 hover:text-clay-600"
           >
             Back to connect
           </a>

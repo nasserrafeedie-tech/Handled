@@ -15,11 +15,12 @@ const UPDATED = 'July 18, 2026';
 export default function PrivacyPage() {
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-16 leading-relaxed">
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-3">
+        <p className="eyebrow">✳ The fine print</p>
         <h1 className="font-display text-4xl font-semibold tracking-tight">
           Privacy Policy
         </h1>
-        <p className="text-sm text-ink/50">Last updated: {UPDATED}</p>
+        <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink/45">Last updated: {UPDATED}</p>
       </div>
 
       <p className="text-ink/75">

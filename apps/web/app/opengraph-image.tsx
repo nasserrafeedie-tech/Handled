@@ -16,7 +16,7 @@ export default function OpengraphImage() {
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
-          backgroundColor: '#FBF7F0',
+          backgroundColor: '#F8F3EA',
           padding: '72px',
           fontFamily: 'sans-serif',
         }}
@@ -30,7 +30,7 @@ export default function OpengraphImage() {
               width: '52px',
               height: '52px',
               borderRadius: '999px',
-              backgroundColor: '#C25E33',
+              backgroundColor: '#BE5B2D',
               color: 'white',
               fontSize: '28px',
               fontWeight: 700,
@@ -38,7 +38,7 @@ export default function OpengraphImage() {
           >
             A
           </div>
-          <div style={{ fontSize: '30px', fontWeight: 700, color: '#211D18' }}>
+          <div style={{ fontSize: '30px', fontWeight: 700, color: '#1A140D' }}>
             AISSM
           </div>
         </div>
@@ -50,13 +50,13 @@ export default function OpengraphImage() {
               fontSize: '78px',
               fontWeight: 700,
               lineHeight: 1.05,
-              color: '#211D18',
+              color: '#1A140D',
               letterSpacing: '-0.02em',
             }}
           >
             Your social media, handled.
           </div>
-          <div style={{ display: 'flex', fontSize: '32px', color: '#6B625A' }}>
+          <div style={{ display: 'flex', fontSize: '32px', color: '#6d6357' }}>
             Done-for-you posts for small businesses — run entirely over text.
           </div>
         </div>
@@ -67,7 +67,7 @@ export default function OpengraphImage() {
             alignItems: 'center',
             gap: '12px',
             fontSize: '24px',
-            color: '#A54A26',
+            color: '#A0481F',
             fontWeight: 600,
           }}
         >
@@ -76,7 +76,7 @@ export default function OpengraphImage() {
               width: '10px',
               height: '10px',
               borderRadius: '999px',
-              backgroundColor: '#C25E33',
+              backgroundColor: '#BE5B2D',
               display: 'flex',
             }}
           />

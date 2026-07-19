@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Reveal, RisingWords } from '../_components/motion';
 
 /**
  * "See it work" demo. There's no dashboard in the real product — everything
@@ -58,123 +59,161 @@ export default function DemoPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-16">
-      <div className="max-w-2xl">
-        <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-clay-200 bg-white/70 px-3 py-1 text-xs font-medium text-clay-700">
-          <span className="h-1.5 w-1.5 rounded-full bg-clay-500" />
-          Live sample — no sign-up
-        </p>
-        <h1 className="font-display text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
-          Text a request. <span className="italic text-clay-600">Get a post.</span>
-        </h1>
-        <p className="mt-5 text-lg leading-relaxed text-ink/70">
-          This is the whole product. You send a plain-English text; we send back a
-          finished, on-brand graphic. Tap one below to watch it happen — these are
-          real graphics from our engine, not mockups.
-        </p>
-      </div>
-
-      <div className="mt-12 grid items-start gap-10 lg:grid-cols-[1fr_360px]">
-        {/* Prompt chooser */}
-        <div className="order-2 lg:order-1">
-          <h2 className="font-display text-lg font-medium text-ink/80">
-            Try one of these
-          </h2>
-          <div className="mt-4 flex flex-col gap-3">
-            {SAMPLES.map((s) => {
-              const on = s.file === active.file;
-              return (
-                <button
-                  key={s.file}
-                  onClick={() => run(s)}
-                  className={`rounded-3xl border px-5 py-4 text-left transition ${
-                    on
-                      ? 'border-clay-300 bg-clay-50 shadow-soft'
-                      : 'border-clay-100 bg-white hover:border-clay-200'
-                  }`}
-                >
-                  <span className="block text-sm font-medium text-ink">
-                    “{s.ask}”
-                  </span>
-                  <span className="mt-1 block text-xs text-ink/50">{s.brand}</span>
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-6 text-sm text-ink/50">
-            In the real thing you can also just describe what’s going on this week
-            and we’ll come up with the ideas for you.
+    <main className="overflow-x-clip bg-warm-radial">
+      <div className="mx-auto max-w-6xl px-6 pb-28 pt-14 sm:pt-20">
+        <div className="max-w-2xl">
+          <p className="eyebrow mb-6 animate-fade-in">
+            ✳ Live sample — no sign-up
+          </p>
+          <h1 className="font-display text-[clamp(2.6rem,7vw,4.2rem)] font-semibold leading-[1.02] tracking-tight">
+            <RisingWords text="Text a request." />{' '}
+            <span className="wonk italic text-clay-600">
+              <RisingWords text="Get a post." startDelay={240} />
+            </span>
+          </h1>
+          <p
+            className="mt-6 max-w-xl animate-fade-in text-lg leading-relaxed text-ink/70"
+            style={{ animationDelay: '600ms' }}
+          >
+            This is the whole product. You send a plain-English text; we send
+            back a finished, on-brand graphic. Tap one below to watch it happen
+            — these are real graphics from our engine, not mockups.
           </p>
         </div>
 
-        {/* Phone mockup */}
-        <div className="order-1 mx-auto lg:order-2">
-          <div className="w-[320px] overflow-hidden rounded-[2.5rem] border-[10px] border-ink bg-paper shadow-soft">
-            {/* status bar */}
-            <div className="flex items-center justify-between bg-ink px-6 py-2 text-[11px] text-paper/80">
-              <span>9:41</span>
-              <span className="font-medium text-paper">AISSM</span>
-              <span>•••</span>
+        <div className="mt-14 grid items-start gap-12 lg:grid-cols-[1fr_360px]">
+          {/* Prompt chooser */}
+          <Reveal className="order-2 lg:order-1">
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink/50">
+              Try one of these
+            </h2>
+            <div className="mt-5 flex flex-col gap-3">
+              {SAMPLES.map((s) => {
+                const on = s.file === active.file;
+                return (
+                  <button
+                    key={s.file}
+                    onClick={() => run(s)}
+                    className={`group rounded-3xl border px-6 py-4 text-left transition-all duration-300 ease-out ${
+                      on
+                        ? 'border-clay-500/60 bg-white shadow-lift'
+                        : 'border-ink/10 bg-white/70 hover:border-clay-300 hover:bg-white hover:shadow-soft'
+                    }`}
+                  >
+                    <span className="block text-[15px] font-medium text-ink">
+                      “{s.ask}”
+                    </span>
+                    <span className="mt-1.5 block font-mono text-[10px] uppercase tracking-[0.16em] text-ink/45">
+                      {s.brand}
+                      {on && <span className="ml-2 text-clay-500">— playing</span>}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+            <p className="mt-7 max-w-md text-sm leading-relaxed text-ink/55">
+              In the real thing you can also just describe what’s going on this
+              week and we’ll come up with the ideas for you.
+            </p>
+          </Reveal>
 
-            <div className="flex h-[560px] flex-col gap-3 overflow-y-auto bg-clay-50/40 px-4 py-5">
-              {/* owner's message */}
-              <div className="self-end max-w-[80%] rounded-2xl rounded-br-md bg-clay-500 px-4 py-2.5 text-sm text-white shadow-soft">
-                {active.ask}
-              </div>
-
-              {/* typing indicator */}
-              {phase === 'typing' && (
-                <div className="self-start rounded-2xl rounded-bl-md bg-white px-4 py-3 shadow-soft">
-                  <span className="flex gap-1">
-                    <Dot /> <Dot /> <Dot />
+          {/* Phone mockup */}
+          <Reveal delay={150} className="order-1 mx-auto lg:order-2">
+            <div className="relative">
+              <div
+                aria-hidden
+                className="absolute -inset-8 -z-10 rounded-full bg-clay-200/40 blur-3xl"
+              />
+              <div className="w-[320px] overflow-hidden rounded-[2.4rem] border border-ink/10 bg-paper shadow-lift">
+                {/* status bar */}
+                <div className="flex items-center justify-between bg-ink px-6 py-2.5 font-mono text-[10px] tracking-wider text-paper/70">
+                  <span>9:41</span>
+                  <span className="font-sans text-[11px] font-medium tracking-normal text-paper">
+                    AISSM ✳
                   </span>
+                  <span>•••</span>
                 </div>
-              )}
 
-              {/* reply + graphic */}
-              {phase === 'done' && (
-                <>
-                  <div className="self-start max-w-[85%] rounded-2xl rounded-bl-md bg-white px-4 py-2.5 text-sm text-ink shadow-soft">
-                    {active.reply}
+                <div className="flex h-[560px] flex-col gap-3 overflow-y-auto bg-parchment/50 px-4 py-5">
+                  {/* owner's message */}
+                  <div className="max-w-[80%] self-end rounded-2xl rounded-br-md bg-clay-500 px-4 py-2.5 text-sm text-white shadow-soft">
+                    {active.ask}
                   </div>
-                  <div className="self-start w-[85%] overflow-hidden rounded-2xl border border-clay-100 bg-white shadow-soft">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/samples/${active.file}`}
-                      alt={active.ask}
-                      className="w-full"
-                    />
-                  </div>
-                  <div className="self-end max-w-[80%] rounded-2xl rounded-br-md bg-clay-500 px-4 py-2.5 text-sm text-white shadow-soft">
-                    love it 👍
-                  </div>
-                </>
-              )}
+
+                  {/* typing indicator */}
+                  {phase === 'typing' && (
+                    <div className="self-start rounded-2xl rounded-bl-md bg-white px-4 py-3 shadow-soft">
+                      <span className="flex gap-1">
+                        <Dot d="0ms" />
+                        <Dot d="150ms" />
+                        <Dot d="300ms" />
+                      </span>
+                    </div>
+                  )}
+
+                  {/* reply + graphic */}
+                  {phase === 'done' && (
+                    <>
+                      <div className="max-w-[85%] animate-fade-in self-start rounded-2xl rounded-bl-md bg-white px-4 py-2.5 text-sm text-ink shadow-soft">
+                        {active.reply}
+                      </div>
+                      <div
+                        className="w-[85%] animate-fade-in self-start overflow-hidden rounded-2xl border border-ink/10 bg-white shadow-soft"
+                        style={{ animationDelay: '200ms' }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`/samples/${active.file}`}
+                          alt={active.ask}
+                          className="w-full"
+                        />
+                      </div>
+                      <div
+                        className="animate-fade-in self-end rounded-2xl rounded-br-md bg-clay-500 px-4 py-2.5 text-sm text-white shadow-soft"
+                        style={{ animationDelay: '900ms' }}
+                      >
+                        love it 👍
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+              <p className="mt-4 text-center font-mono text-[10px] uppercase tracking-[0.18em] text-ink/50">
+                Tap a request to replay
+              </p>
             </div>
-          </div>
-          <p className="mt-4 text-center text-xs text-ink/40">
-            Tap a request to replay the conversation
-          </p>
+          </Reveal>
         </div>
-      </div>
 
-      {/* CTA */}
-      <div className="mt-20 rounded-4xl bg-ink px-8 py-12 text-center text-paper sm:px-16">
-        <h2 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
-          This is what shows up in your messages every week.
-        </h2>
-        <a
-          href="/billing"
-          className="mt-7 inline-block rounded-full bg-clay-500 px-7 py-3 text-sm font-semibold text-white transition hover:bg-clay-400"
-        >
-          See plans
-        </a>
+        {/* CTA */}
+        <Reveal>
+          <div className="relative mt-24 overflow-hidden rounded-4xl bg-ink px-8 py-16 text-center text-paper sm:px-16">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -top-28 left-1/2 h-64 w-[32rem] -translate-x-1/2 rounded-full bg-clay-500/25 blur-3xl"
+            />
+            <h2 className="mx-auto max-w-xl font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+              This is what shows up in your messages{' '}
+              <span className="italic text-clay-300">every week.</span>
+            </h2>
+            <a href="/billing" className="btn-clay mt-9">
+              See plans
+              <span aria-hidden className="btn-arrow">
+                →
+              </span>
+            </a>
+          </div>
+        </Reveal>
       </div>
     </main>
   );
 }
 
-function Dot() {
-  return <span className="h-2 w-2 animate-bounce rounded-full bg-ink/30" />;
+function Dot({ d }: { d: string }) {
+  return (
+    <span
+      className="h-2 w-2 animate-dot-pulse rounded-full bg-ink/40"
+      style={{ animationDelay: d }}
+    />
+  );
 }

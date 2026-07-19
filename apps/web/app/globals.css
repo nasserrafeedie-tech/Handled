@@ -3,24 +3,147 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     background-color: theme('colors.paper');
     color: theme('colors.ink');
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
   /* Warm text selection */
   ::selection {
-    background-color: theme('colors.clay.200');
-    color: theme('colors.ink');
+    background-color: theme('colors.clay.500');
+    color: theme('colors.paper');
+  }
+
+  /* One consistent, visible focus treatment everywhere */
+  :focus-visible {
+    outline: 2px solid theme('colors.clay.500');
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  /* Film grain over everything — makes flat color feel like paper stock.
+     A tiny tiled SVG noise, fixed so it doesn't scroll with content. */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    opacity: 0.05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 220 220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.86' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}
+
+@layer components {
+  /* Editorial label: mono, tracked out */
+  .eyebrow {
+    @apply font-mono text-[11px] uppercase tracking-[0.22em] text-clay-600;
+  }
+  .eyebrow-dark {
+    @apply font-mono text-[11px] uppercase tracking-[0.22em] text-clay-300;
+  }
+
+  /* Primary button: ink pill, arrow nudges right on hover */
+  .btn-primary {
+    @apply inline-flex items-center gap-2.5 rounded-full bg-ink px-6 py-3.5 text-sm font-medium text-paper transition-all duration-300 ease-out hover:bg-clay-600 hover:shadow-lift active:scale-[0.98];
+  }
+  .btn-primary .btn-arrow,
+  .btn-clay .btn-arrow {
+    @apply transition-transform duration-300 ease-out;
+  }
+  .btn-primary:hover .btn-arrow,
+  .btn-clay:hover .btn-arrow {
+    transform: translateX(4px);
+  }
+
+  /* Clay variant for dark backgrounds */
+  .btn-clay {
+    @apply inline-flex items-center gap-2.5 rounded-full bg-clay-500 px-6 py-3.5 text-sm font-medium text-white transition-all duration-300 ease-out hover:bg-clay-400 hover:shadow-glow active:scale-[0.98];
+  }
+
+  /* Quiet link with a drawing underline */
+  .link-draw {
+    @apply relative inline-block;
+    background-image: linear-gradient(currentColor, currentColor);
+    background-size: 0% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    transition: background-size 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .link-draw:hover {
+    background-size: 100% 1px;
   }
 }
 
 @layer utilities {
-  /* Subtle warm wash used behind hero sections */
+  /* Warm wash used behind hero sections */
   .bg-warm-radial {
     background:
-      radial-gradient(1200px 600px at 15% -10%, #F7E7D8 0%, transparent 55%),
-      radial-gradient(1000px 500px at 100% 0%, #F0EAD8 0%, transparent 50%);
+      radial-gradient(1100px 560px at 12% -8%, #f2e2cd 0%, transparent 55%),
+      radial-gradient(900px 480px at 98% 2%, #ece4cd 0%, transparent 50%);
+  }
+
+  /* Scroll-reveal base state; .is-revealed added by the Reveal component */
+  .reveal {
+    opacity: 0;
+    transform: translateY(26px);
+    filter: blur(5px);
+    transition:
+      opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+      filter 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: opacity, transform, filter;
+  }
+  .reveal.is-revealed {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+
+  /* Clipping wrapper for the rising-words headline */
+  .clip-line {
+    display: inline-block;
+    overflow: hidden;
+    vertical-align: bottom;
+    padding-bottom: 0.08em;
+    margin-bottom: -0.08em;
+  }
+
+  /* Pause any animation on hover (marquee etiquette) */
+  .pause-on-hover:hover * {
+    animation-play-state: paused;
+  }
+
+  /* Fraunces party trick: max out the SOFT + WONK axes for hand-drawn,
+     slightly tipsy letterforms. Hero italics only — it's a strong flavor. */
+  .wonk {
+    font-variation-settings:
+      'SOFT' 100,
+      'WONK' 1;
+  }
+}
+
+/* Accessibility: kill all decorative motion for users who ask for less */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+    filter: none;
   }
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Reveal, RisingWords } from '../_components/motion';
 
 type PlanId = 'starter' | 'growth' | 'pro';
 
@@ -86,84 +87,114 @@ export default function BillingPage() {
   }
 
   return (
-    <main className="bg-warm-radial">
-      <div className="mx-auto flex max-w-5xl flex-col gap-10 px-6 py-20">
-        <div className="flex flex-col gap-3 text-center">
-          <h1 className="font-display text-4xl font-semibold tracking-tight sm:text-5xl">
-            Simple plans, plain pricing.
+    <main className="overflow-x-clip bg-warm-radial">
+      <div className="mx-auto flex max-w-6xl flex-col px-6 pb-28 pt-14 sm:pt-20">
+        <div className="text-center">
+          <p className="eyebrow mb-6 animate-fade-in">✳ Plans</p>
+          <h1 className="font-display text-[clamp(2.6rem,7vw,4.5rem)] font-semibold leading-[1.02] tracking-tight">
+            <RisingWords text="Simple plans," />{' '}
+            <span className="wonk italic text-clay-600">
+              <RisingWords text="plain pricing." startDelay={180} />
+            </span>
           </h1>
-          <p className="mx-auto max-w-md text-ink/60">
+          <p
+            className="mx-auto mt-6 max-w-md animate-fade-in text-ink/60"
+            style={{ animationDelay: '600ms' }}
+          >
             Cancel anytime. Everything after checkout happens over text — no
             dashboard to learn.
           </p>
         </div>
 
-        <ul className="grid gap-5 md:grid-cols-3">
-          {PLANS.map((plan) => (
-            <li
-              key={plan.id}
-              className={`flex flex-col rounded-4xl border p-7 shadow-soft transition ${
-                plan.highlight
-                  ? 'border-clay-300 bg-white ring-2 ring-clay-400'
-                  : 'border-clay-100 bg-white/80'
-              }`}
-            >
-              {plan.highlight && (
-                <span className="mb-3 w-fit rounded-full bg-clay-500 px-3 py-0.5 text-xs font-medium text-white">
-                  Most popular
-                </span>
-              )}
-              <h2 className="font-display text-2xl font-medium">{plan.name}</h2>
-              <div className="mt-2 flex items-baseline gap-1">
-                <span className="font-display text-4xl font-semibold tracking-tight">
-                  {plan.price}
-                </span>
-                <span className="text-sm text-ink/45">{plan.cadence}</span>
-              </div>
-              <p className="mt-3 text-sm text-ink/60">{plan.blurb}</p>
-              <ul className="mt-6 flex flex-col gap-2.5 text-sm text-ink/75">
-                {plan.features.map((f) => (
-                  <li key={f} className="flex items-start gap-2.5">
-                    <span
-                      aria-hidden
-                      className="mt-0.5 grid h-4 w-4 place-items-center rounded-full bg-clay-100 text-[10px] text-clay-600"
-                    >
-                      ✓
-                    </span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <button
-                type="button"
-                onClick={() => choose(plan.id)}
-                disabled={busy !== null}
-                className={`mt-8 w-full rounded-full px-4 py-3 text-sm font-semibold transition disabled:opacity-60 ${
+        <ul className="mt-16 grid items-stretch gap-6 md:grid-cols-3">
+          {PLANS.map((plan, i) => (
+            <Reveal key={plan.id} delay={i * 120} className="h-full">
+              <li
+                className={`flex h-full flex-col rounded-4xl p-8 transition-shadow duration-500 ${
                   plan.highlight
-                    ? 'bg-clay-500 text-white hover:bg-clay-600'
-                    : 'border border-ink/15 text-ink hover:border-ink/40'
+                    ? 'relative bg-ink text-paper shadow-lift md:-my-4 md:py-12'
+                    : 'border border-ink/10 bg-white shadow-soft hover:shadow-lift'
                 }`}
               >
-                {busy === plan.id ? 'Starting…' : `Choose ${plan.name}`}
-              </button>
-            </li>
+                {plan.highlight && (
+                  <>
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute -top-20 left-1/2 h-44 w-72 -translate-x-1/2 rounded-full bg-clay-500/25 blur-3xl"
+                    />
+                    <span className="mb-4 w-fit rounded-full bg-clay-500 px-3.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-white">
+                      Most popular
+                    </span>
+                  </>
+                )}
+                <h2 className="font-display text-2xl font-medium">
+                  {plan.name}
+                </h2>
+                <div className="mt-3 flex items-baseline gap-1">
+                  <span className="font-display text-5xl font-semibold tracking-tight">
+                    {plan.price}
+                  </span>
+                  <span
+                    className={`font-mono text-xs ${
+                      plan.highlight ? 'text-paper/50' : 'text-ink/45'
+                    }`}
+                  >
+                    {plan.cadence}
+                  </span>
+                </div>
+                <p
+                  className={`mt-4 text-sm leading-relaxed ${
+                    plan.highlight ? 'text-paper/65' : 'text-ink/60'
+                  }`}
+                >
+                  {plan.blurb}
+                </p>
+                <ul
+                  className={`mt-7 flex flex-col gap-3 text-sm ${
+                    plan.highlight ? 'text-paper/85' : 'text-ink/75'
+                  }`}
+                >
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex items-start gap-3">
+                      <span aria-hidden className="mt-px text-clay-500">
+                        ✳
+                      </span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-auto pt-9">
+                  <button
+                    type="button"
+                    onClick={() => choose(plan.id)}
+                    disabled={busy !== null}
+                    className={`w-full rounded-full px-4 py-3.5 text-sm font-semibold transition-all duration-300 ease-out active:scale-[0.98] disabled:opacity-60 ${
+                      plan.highlight
+                        ? 'bg-clay-500 text-white hover:bg-clay-400 hover:shadow-glow'
+                        : 'border border-ink/15 text-ink hover:border-clay-500 hover:text-clay-600'
+                    }`}
+                  >
+                    {busy === plan.id ? 'Starting…' : `Choose ${plan.name}`}
+                  </button>
+                </div>
+              </li>
+            </Reveal>
           ))}
         </ul>
 
         {note && (
-          <p className="text-center text-sm text-clay-700">{note}</p>
+          <p className="mt-8 text-center text-sm text-clay-700">{note}</p>
         )}
 
-        <p className="text-center text-sm text-ink/60">
+        <p className="mt-10 text-center text-sm text-ink/60">
           Not sure which fits?{' '}
-          <span className="text-clay-700">
+          <span className="font-medium text-clay-700">
             Text us — a real person will help you pick.
           </span>
         </p>
 
-        <p className="text-center text-xs text-ink/45">
-          Payments are processed securely by Stripe. We never store your card
-          details.
+        <p className="mt-3 text-center font-mono text-[11px] uppercase tracking-[0.16em] text-ink/55">
+          Payments handled securely by Stripe — we never see your card
         </p>
       </div>
     </main>
