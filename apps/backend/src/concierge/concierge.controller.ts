@@ -30,8 +30,7 @@ export class ConciergeController {
     @Headers('x-twilio-signature') signature: string | undefined,
     @Body() body: Record<string, string>,
   ): Promise<void> {
-    const url = `${process.env.PUBLIC_BASE_URL ?? ''}/webhooks/twilio/sms`;
-    if (!this.twilio.validateSignature(signature, url, body)) {
+    if (!this.twilio.validateInbound(signature, candidateUrls(req), body)) {
       throw new ForbiddenException('invalid Twilio signature');
     }
 
@@ -53,4 +52,28 @@ export class ConciergeController {
       twilioSid: body.MessageSid,
     });
   }
+}
+
+/**
+ * Every spelling of "the URL Twilio just called" that we're willing to check a
+ * signature against. Render terminates TLS at its proxy, so the request Express
+ * sees is plain http — signing against that alone would reject real messages
+ * whenever PUBLIC_BASE_URL is unset or slightly off.
+ */
+function candidateUrls(req: Request): string[] {
+  const path = req.originalUrl || '/webhooks/twilio/sms';
+  const urls: string[] = [];
+
+  const configured = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, '');
+  if (configured) urls.push(`${configured}${path}`);
+
+  const host = req.get('x-forwarded-host') ?? req.get('host');
+  if (host) {
+    const proto = req.get('x-forwarded-proto') ?? req.protocol ?? 'https';
+    urls.push(`${proto}://${host}${path}`);
+    // Same host over the other scheme, in case a proxy header is missing.
+    urls.push(`${proto === 'https' ? 'http' : 'https'}://${host}${path}`);
+  }
+
+  return [...new Set(urls)];
 }

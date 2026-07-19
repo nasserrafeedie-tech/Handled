@@ -26,15 +26,42 @@ export class TwilioService {
     });
   }
 
-  /** Validate the X-Twilio-Signature header against the request. */
-  validateSignature(
+  /**
+   * Validate the X-Twilio-Signature header (§8 — this is the only thing
+   * stopping a stranger from impersonating an owner over the webhook).
+   *
+   * Fails CLOSED in production: if TWILIO_AUTH_TOKEN is missing we reject
+   * rather than trust, so a half-finished deploy is a loud outage instead of a
+   * silently open door. Locally (no NODE_ENV=production) an unsigned request is
+   * still allowed so the dev SMS simulator keeps working.
+   *
+   * Twilio signs the exact URL it called, so we accept a match against any
+   * plausible spelling of it: the configured PUBLIC_BASE_URL, and the URL
+   * rebuilt from proxy headers. Behind Render the two can disagree (http vs
+   * https) and a mismatch would reject every real message.
+   */
+  validateInbound(
     signature: string | undefined,
-    url: string,
+    candidateUrls: string[],
     params: Record<string, string>,
   ): boolean {
     const token = process.env.TWILIO_AUTH_TOKEN;
-    if (!token) return true; // dev: no token configured, skip
+
+    if (!token) {
+      if (process.env.NODE_ENV === 'production') {
+        this.log.error(
+          'TWILIO_AUTH_TOKEN is not set — refusing inbound webhook. ' +
+            'Set it in the environment to accept real messages.',
+        );
+        return false;
+      }
+      this.log.warn('No TWILIO_AUTH_TOKEN (dev) — skipping signature check');
+      return true;
+    }
+
     if (!signature) return false;
-    return twilio.validateRequest(token, signature, url, params);
+    return candidateUrls.some((url) =>
+      twilio.validateRequest(token, signature, url, params),
+    );
   }
 }

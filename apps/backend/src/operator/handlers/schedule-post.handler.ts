@@ -28,14 +28,24 @@ export class SchedulePostHandler implements TaskHandler<'SCHEDULE_POST'> {
     if (post.moderationState !== 'passed') {
       return fail(task.task_id, "That post hasn't cleared review yet.", 'not_moderated', post.id);
     }
-    if (post.approvalState === 'awaiting_owner') {
+    // The owner's "yes" arrives on the Task itself — record it, then proceed.
+    // Without it, an un-approved post can never reach the queue.
+    const approved =
+      post.approvalState !== 'awaiting_owner' || task.payload.owner_approved;
+    if (!approved) {
       return fail(task.task_id, 'That post still needs your OK first.', 'awaiting_approval', post.id);
     }
 
     const when = new Date(task.payload.scheduled_time);
     await this.prisma.post.update({
       where: { id: post.id },
-      data: { scheduledTime: when, status: 'scheduled' },
+      data: {
+        scheduledTime: when,
+        status: 'scheduled',
+        ...(task.payload.owner_approved
+          ? { approvalState: 'approved' as const }
+          : {}),
+      },
     });
     await this.queue.schedule({ postId: post.id, customerId: task.customer_id }, when);
 

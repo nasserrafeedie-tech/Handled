@@ -64,6 +64,12 @@ export const SchedulePostPayload = z
   .object({
     post_id: uuid,
     scheduled_time: iso8601,
+    /**
+     * The owner just said yes over SMS. Carrying the approval on the Task
+     * (rather than letting the Concierge mutate the post directly) keeps the
+     * §3 boundary intact and leaves the approval in the §4 audit log.
+     */
+    owner_approved: z.boolean().default(false),
   })
   .strict();
 export type SchedulePostPayload = z.infer<typeof SchedulePostPayload>;

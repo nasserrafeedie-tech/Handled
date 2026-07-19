@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
 import { OnboardingService } from './onboarding.service';
+import { IntentService } from './intent.service';
 
 export interface InboundSms {
   from: string; // E.164
@@ -32,6 +33,7 @@ export class ConciergeService {
     private readonly bus: TaskBus,
     private readonly twilio: TwilioService,
     private readonly onboarding: OnboardingService,
+    private readonly intent: IntentService,
   ) {}
 
   async handleInbound(msg: InboundSms): Promise<void> {
@@ -84,14 +86,91 @@ export class ConciergeService {
       return this.reply(customer.phone, conversation.id, result.summary_for_owner);
     }
 
-    // 5. Steady-state intent (approve / regenerate / question).
-    //    Integration point: Haiku intent classification → emit the right Task.
-    //    Until wired, acknowledge so the owner is never left hanging.
-    await this.reply(
-      customer.phone,
-      conversation.id,
-      "Thanks! I'll take a look and get back to you.",
-    );
+    // 5. Steady-state loop (§6): approve / revise / cancel / question.
+    return this.handleSteadyState(customer.id, customer.phone, conversation.id, msg.body);
+  }
+
+  /**
+   * The everyday conversation. Almost always the owner is reacting to a draft
+   * we texted them, so we resolve "the post they mean" first — the one still
+   * waiting on their OK — then act on what they said.
+   */
+  private async handleSteadyState(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    body: string,
+  ): Promise<void> {
+    const pending = await this.prisma.post.findFirst({
+      where: { customerId, status: 'pending_approval' },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const { intent, feedback } = await this.intent.classify(body, Boolean(pending));
+
+    // Nothing waiting on them — don't pretend we changed something.
+    if (!pending && (intent === 'approve' || intent === 'revise' || intent === 'cancel')) {
+      return this.reply(
+        phone,
+        conversationId,
+        "Nothing's waiting on your OK right now — I'll text you as soon as your next post is ready.",
+      );
+    }
+
+    switch (intent) {
+      case 'approve': {
+        // Keep the planned time if it has one; otherwise go out tomorrow 9am.
+        const when = pending!.scheduledTime ?? tomorrowMorning();
+        const result = await this.bus.emit(
+          this.task(customerId, 'SCHEDULE_POST', {
+            post_id: pending!.id,
+            scheduled_time: when.toISOString(),
+            owner_approved: true,
+          }),
+        );
+        return this.reply(phone, conversationId, result.summary_for_owner);
+      }
+
+      case 'revise': {
+        const result = await this.bus.emit(
+          this.task(customerId, 'REGENERATE_POST', {
+            post_id: pending!.id,
+            owner_feedback: feedback?.slice(0, 1000) || body.slice(0, 1000),
+            regenerate_caption: true,
+            regenerate_media: false,
+          }),
+        );
+        return this.reply(phone, conversationId, result.summary_for_owner);
+      }
+
+      case 'cancel': {
+        const result = await this.bus.emit(
+          this.task(customerId, 'CANCEL_POST', {
+            post_id: pending!.id,
+            reason: 'owner declined over SMS',
+          }),
+        );
+        return this.reply(phone, conversationId, result.summary_for_owner);
+      }
+
+      case 'question':
+        return this.reply(
+          phone,
+          conversationId,
+          pending
+            ? "Happy to help — and whenever you're ready, just reply “yes” to send that draft out."
+            : "Happy to help! Ask away, or text me anything you'd like posted this week.",
+        );
+
+      default:
+        return this.reply(
+          phone,
+          conversationId,
+          pending
+            ? "Got it. Reply “yes” to send that draft, or tell me what you'd like changed."
+            : "Got it — I'll keep that in mind. Text me any time you want something posted.",
+        );
+    }
   }
 
   private isGraphicRequest(body: string): boolean {
@@ -250,6 +329,14 @@ function stripCommand(text: string): string {
     )
     .replace(/^["“]|["”]$/g, '')
     .trim();
+}
+
+/** Default send time when an approved draft has no planned slot. */
+function tomorrowMorning(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(9, 0, 0, 0);
+  return d;
 }
 
 function nextMonday(): string {
