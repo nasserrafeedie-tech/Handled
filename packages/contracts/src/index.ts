@@ -61,7 +61,9 @@ export class LlmJsonError extends Error {
   }
 }
 
-export function parseLlmJson<T>(schema: z.ZodType<T>, raw: string): T {
+// Input type is deliberately loose: schemas may transform (e.g. coerce an
+// array into a string), so parse input and output need not match.
+export function parseLlmJson<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, raw: string): T {
   const cleaned = stripCodeFences(raw).trim();
   let json: unknown;
   try {

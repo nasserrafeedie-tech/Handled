@@ -40,7 +40,7 @@ export class LlmService {
    */
   async completeJson<T>(
     req: LlmJsonRequest,
-    schema: z.ZodType<T>,
+    schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   ): Promise<T> {
     try {
       return parseLlmJson(schema, await this.rawComplete(req));
