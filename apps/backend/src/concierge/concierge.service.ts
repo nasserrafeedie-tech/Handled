@@ -66,7 +66,7 @@ export class ConciergeService {
     //     texts, so they must work even though they look like steady-state chat.
     const kw = msg.body.trim().toLowerCase();
     if (kw === 'upgrade') {
-      const site = process.env.PUBLIC_SITE_URL ?? 'https://aissm-web.vercel.app';
+      const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
       return this.reply(
         customer.phone,
         conversation.id,
@@ -82,7 +82,7 @@ export class ConciergeService {
           data: { referralCode: code },
         });
       }
-      const site = process.env.PUBLIC_SITE_URL ?? 'https://aissm-web.vercel.app';
+      const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
       return this.reply(
         customer.phone,
         conversation.id,
@@ -483,7 +483,7 @@ export class ConciergeService {
     });
 
     // Send the connect link and kick off week 1 (§6).
-    const site = process.env.PUBLIC_SITE_URL ?? 'https://aissm-web.vercel.app';
+    const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
     const result = await this.bus.emit(
       this.task(customerId, 'PLAN_WEEK', { week_start: nextMonday() }, 'concierge'),
     );

@@ -142,7 +142,7 @@ export class CronService {
             prompt: `Reel clips (${v.key}): (1) ${v.reelClips[0]}, (2) ${v.reelClips[1]}, (3) ${v.reelClips[2]}. 5-10 seconds each.`,
           },
         });
-        const site = process.env.PUBLIC_SITE_URL ?? 'https://aissm-web.vercel.app';
+        const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
         await this.concierge.notify(
           customerId,
           `One more thing — film me 3 quick clips this week: (1) ${v.reelClips[0]}, (2) ${v.reelClips[1]}, (3) ${v.reelClips[2]}. 5-10 seconds each, don't overthink it. Upload here: ${site}/upload?c=${customerId}`,

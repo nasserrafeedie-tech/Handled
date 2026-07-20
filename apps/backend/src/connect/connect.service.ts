@@ -43,7 +43,7 @@ export class ConnectService {
   ) {}
 
   private get siteUrl(): string {
-    return process.env.PUBLIC_SITE_URL ?? 'https://aissm-web.vercel.app';
+    return process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
   }
 
   /** Step 1: hand the browser a link to go authorize a platform. */

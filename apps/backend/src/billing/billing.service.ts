@@ -40,7 +40,7 @@ export class BillingService {
 
   async createCheckout(req: CheckoutRequest): Promise<CheckoutResult> {
     const secret = process.env.STRIPE_SECRET_KEY;
-    const siteUrl = process.env.PUBLIC_SITE_URL ?? 'https://aissm-web.vercel.app';
+    const siteUrl = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
 
     if (!secret) {
       this.log.warn(
