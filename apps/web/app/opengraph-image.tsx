@@ -22,22 +22,17 @@ export default function OpengraphImage() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '52px',
-              height: '52px',
-              borderRadius: '999px',
-              backgroundColor: '#BE5B2D',
-              color: 'white',
-              fontSize: '28px',
-              fontWeight: 700,
-            }}
-          >
-            H
-          </div>
+          <svg width="48" height="48" viewBox="-36 -36 72 72">
+            {[0, 60, 120, 180, 240, 300].map((a) => (
+              <path
+                key={a}
+                d="M0,-1 C7.5,-9 7.5,-25 0,-33 C-7.5,-25 -7.5,-9 0,-1 Z"
+                fill="#8C2F39"
+                transform={`rotate(${a})`}
+              />
+            ))}
+            <circle r="4.6" fill="#8C2F39" />
+          </svg>
           <div style={{ fontSize: '30px', fontWeight: 700, color: '#1A140D' }}>
             Handled
           </div>
@@ -67,7 +62,7 @@ export default function OpengraphImage() {
             alignItems: 'center',
             gap: '12px',
             fontSize: '24px',
-            color: '#A0481F',
+            color: '#74232D',
             fontWeight: 600,
           }}
         >
@@ -76,7 +71,7 @@ export default function OpengraphImage() {
               width: '10px',
               height: '10px',
               borderRadius: '999px',
-              backgroundColor: '#BE5B2D',
+              backgroundColor: '#8C2F39',
               display: 'flex',
             }}
           />

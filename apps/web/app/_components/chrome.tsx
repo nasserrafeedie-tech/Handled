@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import { Fleuron } from './fleuron';
 
 const NAV = [
   { href: '/#how', label: 'How it works' },
@@ -46,9 +47,9 @@ export function SiteHeader() {
           Handled
           <span
             aria-hidden
-            className="inline-block text-clay-500 transition-transform duration-700 ease-out group-hover:rotate-180 motion-safe:animate-spin-slow"
+            className="inline-block h-[0.7em] w-[0.7em] self-center text-clay-500 transition-transform duration-700 ease-out group-hover:rotate-180 motion-safe:animate-spin-slow"
           >
-            ✳
+            <Fleuron className="h-full w-full" />
           </span>
         </a>
 
@@ -95,7 +96,10 @@ export function SiteFooter() {
               aria-hidden
               className="select-none font-display text-[17vw] font-semibold leading-none tracking-tight text-ink/[0.08] sm:text-[8rem]"
             >
-              Handled<span className="text-clay-500/30">✳</span>
+              Handled
+              <span className="ml-[0.04em] inline-block h-[0.62em] w-[0.62em] text-clay-500/30">
+                <Fleuron className="h-full w-full" />
+              </span>
             </p>
             <p className="mt-2 font-display text-lg italic text-ink/70">
               Your social media, handled.

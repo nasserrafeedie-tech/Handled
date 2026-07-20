@@ -62,9 +62,12 @@ export default function PrivacyPage() {
         <p className="text-ink/75">
           We use your information to create and schedule social media content,
           send you the messages described above, process your subscription, and
-          improve the service. We use trusted providers (such as our messaging,
-          hosting, and payment processors) strictly to deliver the service, and
-          they are not permitted to use your information for their own purposes.
+          improve the service. The messages and materials you send us are
+          processed by AI services (including Anthropic) to draft content in
+          your voice — that is how the service works. We use trusted providers
+          (messaging, payments, AI, publishing, and hosting) strictly to deliver
+          the service, and they are not permitted to use your information for
+          their own purposes. We do not sell your personal information.
         </p>
       </section>
 

@@ -40,6 +40,34 @@ export default function TermsPage() {
       </section>
 
       <section className="flex flex-col gap-2">
+        <h2 className="font-display text-xl font-medium">Your content &amp; our license</h2>
+        <p className="text-ink/75">
+          Your photos, videos, brand, and social accounts are yours, and content
+          we create for you is yours once published or paid for. You grant
+          Handled a license to use the business name, logos, photos, videos, and
+          other materials you send us solely to create and publish content on
+          your behalf. We never hold your social media passwords — accounts are
+          connected through a secure authorization link and can be disconnected
+          by you at any time. Don&rsquo;t send us materials you don&rsquo;t have
+          the right to use; you are responsible for third-party claims arising
+          from materials you supply.
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="font-display text-xl font-medium">Approvals &amp; autopilot</h2>
+        <p className="text-ink/75">
+          In standard mode, nothing is published until you approve it — replying
+          &ldquo;yes&rdquo; to a draft confirms the content is accurate and
+          approves publication, so check prices, dates, and offers. If you
+          enable AUTOPILOT, you authorize Handled to publish low-risk content
+          without individual approval; anything involving prices, percentages,
+          dates, or promotions still always requires your explicit approval.
+          Text MANUAL at any time to return to approve-everything mode.
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-2">
         <h2 className="font-display text-xl font-medium">SMS messaging terms</h2>
         <p className="text-ink/75">
           By providing your mobile number, you consent to receive
@@ -49,7 +77,19 @@ export default function TermsPage() {
           per week). <strong>Message and data rates may apply.</strong> Reply{' '}
           <strong>STOP</strong> at any time to opt out, or <strong>HELP</strong>{' '}
           for assistance. Carriers are not liable for delayed or undelivered
-          messages.
+          messages. Marketing messages are sent only with your separate,
+          explicit consent, and that consent is never a condition of purchase.
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="font-display text-xl font-medium">The platforms aren&rsquo;t ours</h2>
+        <p className="text-ink/75">
+          Instagram, Facebook, TikTok, and other platforms are third parties. We
+          are not responsible for platform outages, publishing failures on their
+          side, changes to reach or algorithms, or account restrictions they
+          impose, and we do not guarantee followers, engagement, or revenue. We
+          promise consistent, on-brand publishing and honest reporting.
         </p>
       </section>
 
@@ -76,7 +116,9 @@ export default function TermsPage() {
         <p className="text-ink/75">
           The Service is provided &ldquo;as is.&rdquo; To the extent permitted by
           law, we are not liable for indirect or consequential damages arising
-          from use of the Service.
+          from use of the Service, and our total liability is limited to the
+          amounts you paid us in the three months before the claim. These terms
+          are governed by California law.
         </p>
       </section>
 
