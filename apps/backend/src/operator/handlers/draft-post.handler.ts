@@ -77,6 +77,11 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
           ].join('\n')
         : '',
       '',
+      'HARD RULES: Never invent a named customer, patient, or a specific',
+      'story about one. For a testimonial archetype with no real quote in the',
+      'notes, write general sentiment ("our regulars tell us…") or an',
+      'invitation — a fabricated review is a firing offense. Hashtags are',
+      'single words: no spaces, no # prefix.',
       'Return JSON: {"caption": string, "hashtags": string[], "alt_text": string}.',
       'Caption in the brand voice. Hashtags without the # prefix.',
       ALT_TEXT_RULE,

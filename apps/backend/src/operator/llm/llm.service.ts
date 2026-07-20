@@ -47,9 +47,11 @@ export class LlmService {
     } catch (err) {
       if (!(err instanceof LlmJsonError)) throw err;
       this.log.warn(`LLM JSON malformed on ${req.tier}; retrying once`);
+      // Tell the model exactly what was wrong with its first try — a bare
+      // "return valid JSON" nudge makes it repeat the same shape mistake.
       const retry = await this.rawComplete({
         ...req,
-        prompt: `${req.prompt}\n\nReturn ONLY valid minified JSON. No prose, no markdown fences.`,
+        prompt: `${req.prompt}\n\nYour previous reply was rejected: ${err.message}. Return ONLY valid minified JSON in exactly the requested shape — no prose, no markdown fences, every field the exact type asked for.`,
       });
       return parseLlmJson(schema, retry);
     }

@@ -18,7 +18,16 @@ export const CalendarSlot = z
     platform: Platform,
     best_time: z.string().regex(/^\d{2}:\d{2}$/, 'HH:MM'),
     needs_asset: z.boolean(),
-    shot_list: z.string().max(500).optional(),
+    // Models often return a shot LIST as an actual list — accept both shapes
+    // and store one string.
+    shot_list: z
+      .union([z.string(), z.array(z.string())])
+      .optional()
+      .transform((v) =>
+        v === undefined
+          ? undefined
+          : (Array.isArray(v) ? v.join('; ') : v).slice(0, 500),
+      ),
   })
   .strict();
 export type CalendarSlot = z.infer<typeof CalendarSlot>;
@@ -99,7 +108,15 @@ export type MakeGraphicResult = z.infer<typeof MakeGraphicResult>;
 export const CaptionLlmOutput = z
   .object({
     caption: z.string().min(1),
-    hashtags: z.array(z.string()),
+    // Models sometimes emit "#cosmetic dentistry" — a broken tag on every
+    // platform. Normalize at the boundary: strip '#', remove spaces, drop empties.
+    hashtags: z
+      .array(z.string())
+      .transform((tags) =>
+        tags
+          .map((t) => t.replace(/^#+/, '').replace(/\s+/g, ''))
+          .filter((t) => t.length > 0),
+      ),
     /**
      * Screen-reader description of the image (<125 chars). Doubles as a real
      * ranking input — the platforms read it to understand what's in the frame —

@@ -61,7 +61,8 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
             .join(', ')}. Lean into what worked.`
         : 'No performance history yet — plan a balanced first week.',
       'Return JSON: {"slots":[{"date","archetype","platform","best_time",',
-      '"needs_asset","shot_list"}]}. Dates YYYY-MM-DD, best_time HH:MM.',
+      '"needs_asset","shot_list"}]}. Dates YYYY-MM-DD, best_time HH:MM,',
+      'needs_asset boolean, shot_list ONE string (semicolons between shots).',
     ].join(' ');
 
     const planned = await this.llm.completeJson(
