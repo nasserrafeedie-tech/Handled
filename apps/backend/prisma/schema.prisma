@@ -130,12 +130,57 @@ model Customer {
   posts            Post[]
   mediaAssets      MediaAsset[]
   shotListRequests ShotListRequest[]
+  // Which playbook archetype plans this business's weeks, and how sure the
+  // classifier was. Null = not yet classified (or research still running).
+  archetypeSlug       String?
+  archetypeConfidence Float?
+
   conversation     Conversation?
   tasks            Task[]
   metrics          Metric[]
   queuedTexts      QueuedText[]
 
   @@map("customers")
+}
+
+// The Playbook Engine's source of truth: one row per business archetype
+// ("cafes-coffee-shops"), holding the strategy Handled plans with. Seeded from
+// social-playbook.md, extended automatically when a novel business type signs
+// up, and refreshed when it goes stale. The Markdown doc is a rendered mirror
+// of this table, never the other way round.
+model PlaybookArchetype {
+  id            String   @id @default(uuid()) @db.Uuid
+  slug          String   @unique
+  title         String
+  // Synonyms the classifier matches against ("espresso bar", "juice bar").
+  mapsFrom      String[]
+  // Structured strategy. Json rather than columns because the shape is the
+  // playbook's, and it evolves with the research — see PlaybookFields.
+  platforms     Json
+  pillars       Json
+  topFormats    Json
+  cadence       Json
+  reels         Json
+  photoStyle    String
+  captionHooks  Json
+  discovery     Json
+  offers        Json
+  seasonal      Json
+  mistakes      Json
+  revenueMetric String
+  // URLs backing the research pass — every claim stays auditable.
+  sources       Json     @default("[]")
+  confidence    Float    @default(1)
+  // seed | researched | needs_review
+  status        String   @default("seed")
+  researchedAt  DateTime @default(now())
+  // How many customers plan from this archetype — drives refresh priority.
+  usageCount    Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+  @@map("playbook_archetypes")
 }
 
 // Unprompted texts held for the recipient's 8:00–21:00 local window (TCPA
@@ -230,6 +275,11 @@ model Post {
   riskLevel       RiskLevel       @default(low)
   externalPostId  String?
   failureReason   String?
+  // Which playbook archetype this post was planned from. Named `playbookSlug`
+  // and not `archetypeSlug` because `archetype` above is the POST's format
+  // (promo, behind_the_scenes) — a different axis entirely. Stamped at draft
+  // time so per-archetype performance can be aggregated later (engine Flow 4).
+  playbookSlug    String?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 

@@ -117,10 +117,18 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       orderBy: { createdAt: 'asc' },
     });
 
+    // Stamp which playbook archetype this post was planned from, so
+    // per-archetype performance can be aggregated later (engine Flow 4).
+    const planned = await this.prisma.customer.findUnique({
+      where: { id: task.customer_id },
+      select: { archetypeSlug: true },
+    });
+
     const post = await this.prisma.post.create({
       data: {
         customerId: task.customer_id,
         archetype,
+        playbookSlug: planned?.archetypeSlug ?? null,
         platform,
         caption: gen.caption,
         altText: gen.alt_text ?? null,

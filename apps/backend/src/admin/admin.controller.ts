@@ -16,7 +16,7 @@ export class AdminController {
     const expected = process.env.ADMIN_TOKEN;
     if (!expected || token !== expected) throw new NotFoundException();
 
-    const [leads, customers, recentPosts, failedPosts] = await Promise.all([
+    const [leads, customers, recentPosts, failedPosts, archetypes] = await Promise.all([
       this.prisma.lead.findMany({ orderBy: { createdAt: 'desc' }, take: 100 }),
       this.prisma.customer.findMany({
         orderBy: { createdAt: 'desc' },
@@ -33,6 +33,19 @@ export class AdminController {
         orderBy: { updatedAt: 'desc' },
         take: 25,
         select: { id: true, customerId: true, failureReason: true, updatedAt: true },
+      }),
+      // The playbook, so new archetypes the engine researched are reviewable
+      // (engine Flow 2 step 6) and stale ones are visible.
+      this.prisma.playbookArchetype.findMany({
+        orderBy: [{ usageCount: 'desc' }, { slug: 'asc' }],
+        select: {
+          slug: true,
+          title: true,
+          status: true,
+          confidence: true,
+          usageCount: true,
+          researchedAt: true,
+        },
       }),
     ]);
 
@@ -51,9 +64,10 @@ export class AdminController {
         onboarded: c.brandProfile?.onboardingComplete ?? false,
         referralCode: c.referralCode, referredBy: c.referredByCode,
         strategy: c.brandProfile?.contentStrategy ?? null,
+        archetype: c.archetypeSlug,
         created: c.createdAt,
       })),
-      recentPosts, failedPosts,
+      recentPosts, failedPosts, archetypes,
     };
   }
 }

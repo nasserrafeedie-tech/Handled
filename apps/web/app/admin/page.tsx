@@ -389,6 +389,47 @@ export default function AdminPage() {
         )}
       </section>
 
+      {/* The playbook — which strategies exist, and which need a look */}
+      {data.archetypes?.length > 0 && (
+        <section className="mt-10">
+          <h2 className="mb-3 font-display text-xl font-medium">
+            Playbook ({data.archetypes.length} business types)
+          </h2>
+          <p className="mb-3 text-[13px] text-ink/55">
+            How Handled plans for each kind of business. New ones get researched
+            automatically when someone signs up with a trade we haven’t seen.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {data.archetypes.map((a: any) => (
+              <li
+                key={a.slug}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink/10 bg-white px-5 py-3.5 text-sm shadow-soft"
+              >
+                <span>
+                  <strong className="font-medium">{a.title}</strong>
+                  <span className="text-ink/50">
+                    {' '}
+                    · {a.usageCount} customer{a.usageCount === 1 ? '' : 's'}
+                    {a.status !== 'seed'
+                      ? ` · researched ${timeAgo(a.researchedAt)}`
+                      : ''}
+                  </span>
+                </span>
+                {a.status === 'needs_review' ? (
+                  <Chip tone="warn">Needs your review</Chip>
+                ) : a.status === 'researched' ? (
+                  <Chip tone="good">
+                    Auto-researched · {Math.round(a.confidence * 100)}% confident
+                  </Chip>
+                ) : (
+                  <Chip tone="wait">Original</Chip>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* Recent posts */}
       <section className="mt-10">
         <h2 className="mb-3 font-display text-xl font-medium">

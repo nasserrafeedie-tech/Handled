@@ -8,6 +8,12 @@ import { TwilioService } from './twilio.service';
 import { OnboardingService } from './onboarding.service';
 import { IntentService } from './intent.service';
 import { LlmService } from '../operator/llm/llm.service';
+import { PlaybookService } from '../playbook/playbook.service';
+import {
+  ArchetypeClassifier,
+  CONFIDENT,
+} from '../playbook/archetype-classifier.service';
+import { ArchetypeResearchService } from '../playbook/archetype-research.service';
 import {
   formatInZone,
   inTextingWindow,
@@ -47,6 +53,9 @@ export class ConciergeService {
     private readonly onboarding: OnboardingService,
     private readonly intent: IntentService,
     private readonly llm: LlmService,
+    private readonly playbook: PlaybookService,
+    private readonly classifier: ArchetypeClassifier,
+    private readonly research: ArchetypeResearchService,
   ) {}
 
   async handleInbound(msg: InboundSms): Promise<void> {
@@ -463,6 +472,54 @@ export class ConciergeService {
   }
 
   /**
+   * Engine Flow 1 + 2. Classify the finished profile against the playbook;
+   * attach a confident match, and research a new archetype when nothing fits.
+   *
+   * Never throws into the onboarding path: a customer with no archetype still
+   * gets planned from the static vertical playbook, which is exactly how the
+   * product behaved before the engine existed.
+   */
+  private async assignArchetype(
+    customerId: string,
+    profile: {
+      businessType: string | null;
+      voiceTone: string | null;
+      targetCustomer: string | null;
+      offers: string[];
+    } | null,
+  ): Promise<void> {
+    if (!profile?.businessType) return;
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { businessName: true },
+    });
+    const verdict = await this.classifier.classify(profile, customer?.businessName);
+
+    if (verdict.slug && verdict.confidence >= CONFIDENT) {
+      await this.playbook.attach(customerId, verdict.slug, verdict.confidence);
+      return;
+    }
+
+    // Novel business type — research it, then plan from it (Flow 2).
+    this.log.log(
+      `no confident archetype for "${profile.businessType}" ` +
+        `(best ${verdict.slug ?? 'none'} @ ${verdict.confidence.toFixed(2)}) — researching`,
+    );
+    const researched = await this.research.ensureArchetypeFor(profile.businessType);
+    if (researched) {
+      await this.playbook.attach(customerId, researched.slug, researched.confidence);
+      return;
+    }
+
+    // Research failed. Fall back to the closest partial match rather than
+    // nothing — a 0.5 archetype still beats generic planning.
+    if (verdict.slug) {
+      await this.playbook.attach(customerId, verdict.slug, verdict.confidence);
+    }
+  }
+
+  /**
    * A real answer to a real question — grounded in this customer's actual
    * state so the model can't invent features. Replaces the canned "Happy to
    * help!" that used to dead-end every question (and repeat itself).
@@ -627,6 +684,14 @@ export class ConciergeService {
         this.onboarding.summary(done, named?.businessName),
       );
     }
+
+    // Decide WHICH playbook plans this business before planning anything
+    // (engine Flow 1). A novel business type researches its own archetype
+    // first — the wait sits between two texts, so the owner reads it as the
+    // machine working, and their very first plan is already specialist-grade.
+    await this.assignArchetype(customerId, done).catch((e) =>
+      this.log.warn(`archetype assignment failed for ${customerId}: ${String(e)}`),
+    );
 
     // Send the connect link and kick off week 1 (§6).
     const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';

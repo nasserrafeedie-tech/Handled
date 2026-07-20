@@ -6,6 +6,7 @@ import type { CalendarSlot } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
+import { ArchetypeResearchService } from '../playbook/archetype-research.service';
 import { zonedToUtc } from '../common/time';
 import { resolveStrategy } from '../operator/llm/vertical-playbook';
 
@@ -30,6 +31,7 @@ export class CronService {
     private readonly prisma: PrismaService,
     private readonly bus: TaskBus,
     private readonly concierge: ConciergeService,
+    private readonly research: ArchetypeResearchService,
   ) {}
 
   private get enabled(): boolean {
@@ -169,6 +171,27 @@ export class CronService {
   /** Dev-endpoint passthrough: drain the queue regardless of ENABLE_CRON. */
   async flushQueuedTextsNow(): Promise<number> {
     return this.concierge.flushQueuedTexts();
+  }
+
+  /**
+   * Weekly (Sun 03:00): keep the playbook current. Algorithms shift, so a
+   * stale archetype is a slowly-wrong strategy — see refreshStale for why
+   * web-sourced rows are flagged rather than silently re-drafted.
+   */
+  @Cron('0 3 * * 0')
+  async refreshPlaybook(): Promise<void> {
+    if (!this.enabled) return;
+    const { refreshed, flagged } = await this.research
+      .refreshStale()
+      .catch((e) => {
+        this.log.warn(`playbook refresh failed: ${e.message}`);
+        return { refreshed: [], flagged: [] };
+      });
+    if (refreshed.length || flagged.length) {
+      this.log.log(
+        `playbook freshness: refreshed ${refreshed.length}, flagged ${flagged.length} for review`,
+      );
+    }
   }
 
   /** Hourly: publish anything now due (belt-and-suspenders with BullMQ). */

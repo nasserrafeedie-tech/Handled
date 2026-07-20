@@ -10,6 +10,7 @@ import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
 import { resolveStrategy, strategyPlanningBlock } from '../llm/vertical-playbook';
 import { TaskHandler, ok, fail } from './handler.interface';
+import { archetypePlanningBlock } from '../../playbook/archetype-context';
 
 /**
  * PLAN_WEEK (§7). Read brand_profile + recent metrics → produce a week's
@@ -31,6 +32,17 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     const profile = await this.prisma.brandProfile.findUnique({
       where: { customerId: task.customer_id },
     });
+    // The archetype is this business's STRATEGY — which formats, cadence, and
+    // local-discovery moves actually work in its trade (engine task 15).
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: task.customer_id },
+      select: { archetypeSlug: true },
+    });
+    const archetype = customer?.archetypeSlug
+      ? await this.prisma.playbookArchetype.findUnique({
+          where: { slug: customer.archetypeSlug },
+        })
+      : null;
     if (!profile) {
       return fail(
         task.task_id,
@@ -54,6 +66,7 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
       'Mix archetypes across the week (promo, behind_the_scenes, testimonial,',
       'educational_tip, product_spotlight, seasonal, ugc_repost, were_open).',
       'Prefer slots that use the owner\'s real photos.',
+      archetype ? archetypePlanningBlock(archetype) : '',
       strategyPlanningBlock(resolveStrategy(profile)),
       recentMetrics.length
         ? `Recent performance signal (impressions): ${recentMetrics
