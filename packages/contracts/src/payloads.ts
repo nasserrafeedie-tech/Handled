@@ -137,6 +137,7 @@ export const UpdateBrandProfilePayload = z
   .object({
     patch: z
       .object({
+        business_name: z.string().max(120).optional(),
         business_type: z.string().max(200).optional(),
         voice_tone: z.string().max(300).optional(),
         target_customer: z.string().max(300).optional(),

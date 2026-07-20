@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { Task } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,12 +7,17 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
 import { OnboardingService } from './onboarding.service';
 import { IntentService } from './intent.service';
+import { LlmService } from '../operator/llm/llm.service';
 import {
   formatInZone,
   inTextingWindow,
   nextTextingWindowOpen,
   tomorrowMorningInZone,
 } from '../common/time';
+import { z } from 'zod';
+
+/** Shape of a grounded question-answer from the LLM. */
+const AnswerOutput = z.object({ reply: z.string().min(1).max(600) });
 
 export interface InboundSms {
   from: string; // E.164
@@ -40,6 +46,7 @@ export class ConciergeService {
     private readonly twilio: TwilioService,
     private readonly onboarding: OnboardingService,
     private readonly intent: IntentService,
+    private readonly llm: LlmService,
   ) {}
 
   async handleInbound(msg: InboundSms): Promise<void> {
@@ -111,6 +118,42 @@ export class ConciergeService {
         "Done — back to how it was: nothing goes out without your OK.",
       );
     }
+    // RESET: wipe the brand profile and redo the interview from the top.
+    // Scheduled posts stay put; only the profile (and its strategy) resets.
+    if (kw === 'reset') {
+      await this.prisma.brandProfile.updateMany({
+        where: { customerId: customer.id },
+        data: {
+          businessType: null,
+          voiceTone: null,
+          targetCustomer: null,
+          offers: [],
+          dosAndDonts: [],
+          postingFrequency: null,
+          brandColors: [],
+          visualStyle: null,
+          contentStrategy: Prisma.DbNull,
+          onboardingComplete: false,
+        },
+      });
+      await this.prisma.customer.update({
+        where: { id: customer.id },
+        data: { status: 'onboarding', businessName: null },
+      });
+      return this.reply(
+        customer.phone,
+        conversation.id,
+        `Fresh start ✳ Let's redo your profile from the top. ${this.onboarding.question('business_type')}`,
+      );
+    }
+    // "can we restart" / "start over" — don't guess; confirm with the keyword.
+    if (/\b(restart|start over|redo (my |the )?(profile|setup|onboarding)|from scratch)\b/i.test(msg.body)) {
+      return this.reply(
+        customer.phone,
+        conversation.id,
+        'Want me to rebuild your profile from scratch? Reply RESET and we start over — anything already scheduled stays put.',
+      );
+    }
 
     // 2. Media in → ingest each attachment, and aim it at whatever is waiting:
     //    the oldest open shot-list ask first, else the next upcoming post that
@@ -149,7 +192,7 @@ export class ConciergeService {
       where: { customerId: customer.id },
     });
     if (!this.onboarding.isComplete(profile)) {
-      return this.continueOnboarding(customer.id, customer.phone, conversation.id, msg.body, profile);
+      return this.continueOnboarding(customer.id, customer.phone, conversation.id, msg.body, profile, customer.businessName);
     }
 
     // 4. Graphic request ("make a graphic/carousel/quote card/promo...").
@@ -263,13 +306,7 @@ export class ConciergeService {
       }
 
       case 'question':
-        return this.reply(
-          phone,
-          conversationId,
-          pending
-            ? "Happy to help — and whenever you're ready, just reply “yes” to send that draft out."
-            : "Happy to help! Ask away, or text me anything you'd like posted this week.",
-        );
+        return this.answerQuestion(customerId, phone, conversationId, body, pending);
 
       default:
         return this.reply(
@@ -380,9 +417,13 @@ export class ConciergeService {
     const first = this.onboarding.nextField(profile);
     if (!first) return; // already fully onboarded (re-subscribe, plan change)
     // The owner just checked out and is watching their phone for this text.
-    await this.notify(customerId, this.onboarding.question(first, profile), {
-      promptedByOwner: true,
-    });
+    await this.notify(
+      customerId,
+      first === 'business_type'
+        ? this.onboarding.welcome()
+        : this.onboarding.question(first),
+      { promptedByOwner: true },
+    );
   }
 
   /**
@@ -421,6 +462,68 @@ export class ConciergeService {
     return true;
   }
 
+  /**
+   * A real answer to a real question — grounded in this customer's actual
+   * state so the model can't invent features. Replaces the canned "Happy to
+   * help!" that used to dead-end every question (and repeat itself).
+   */
+  private async answerQuestion(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    body: string,
+    pending: { caption: string | null } | null,
+  ): Promise<void> {
+    const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
+    try {
+      const [profile, customer, openAsks] = await Promise.all([
+        this.prisma.brandProfile.findUnique({ where: { customerId } }),
+        this.prisma.customer.findUnique({ where: { id: customerId } }),
+        this.prisma.shotListRequest.findMany({
+          where: { customerId, status: 'requested' },
+          orderBy: { askedAt: 'asc' },
+          take: 3,
+        }),
+      ]);
+      const facts = [
+        `Business: ${customer?.businessName ?? 'not named'} — ${profile?.businessType ?? 'unknown'}.`,
+        `Plan: ${customer?.planTier}, ${profile?.postingFrequency ?? 3} posts/week.`,
+        pending
+          ? `A draft is waiting for their approval (they reply "yes" to schedule it): "${(pending.caption ?? '').slice(0, 120)}"`
+          : 'No drafts are waiting on them right now.',
+        openAsks.length
+          ? `Open photo/video asks they still owe: ${openAsks.map((a) => a.prompt).join(' | ')}. They upload at ${site}/upload?c=${customerId}`
+          : 'No photo asks are open right now.',
+        `They connect social accounts at ${site}/connect?c=${customerId} (we never see passwords).`,
+        'Keywords that always work: STOP, HELP, UPGRADE, REFER, AUTOPILOT, MANUAL, RESET (redo profile).',
+      ].join('\n');
+      const { reply } = await this.llm.completeJson(
+        {
+          tier: 'bulk',
+          cachedContext:
+            "You are Handled's SMS concierge — warm, plain-English, brief " +
+            '(1-3 short sentences, this is a text message). Answer the ' +
+            "owner's question using ONLY the facts provided. Never invent " +
+            'features, prices, or dates. If the facts do not cover it, say ' +
+            "you'll check and get back to them.",
+          prompt: `FACTS:\n${facts}\n\nOwner's question: <<<${body.slice(0, 500)}>>>\n\nReturn JSON: {"reply": string}`,
+          maxTokens: 300,
+        },
+        AnswerOutput,
+      );
+      return this.reply(phone, conversationId, reply);
+    } catch (err) {
+      this.log.warn(`answerQuestion fell back: ${String(err)}`);
+      return this.reply(
+        phone,
+        conversationId,
+        pending
+          ? 'Good question — I\'ll get you an answer. Meanwhile that draft is ready whenever you are: reply "yes" to send it.'
+          : "Good question — I'll check and get back to you. Anything you text me can also just become a post.",
+      );
+    }
+  }
+
   private isGraphicRequest(body: string): boolean {
     return /\b(graphic|carousel|slide|quote card|quote graphic|promo|flyer|make (?:me )?a post)\b/i.test(
       body,
@@ -433,23 +536,45 @@ export class ConciergeService {
     conversationId: string,
     answer: string,
     profile: Awaited<ReturnType<PrismaService['brandProfile']['findUnique']>>,
+    businessName?: string | null,
   ): Promise<void> {
-    // First contact: we haven't asked anything yet, so this message ("hi",
-    // "I just signed up") isn't an answer. Welcome them and ask question one.
+    // First contact with just a hello → welcome + question one. But a first
+    // message that actually describes the business IS the first answer —
+    // throwing it away and greeting them anyway reads as not listening.
     const outboundCount = await this.prisma.message.count({
       where: { conversationId, direction: 'outbound' },
     });
-    if (outboundCount === 0) {
-      const first = this.onboarding.nextField(profile)!;
-      return this.reply(phone, conversationId, this.onboarding.question(first, profile));
+    if (outboundCount === 0 && this.onboarding.isGreetingOnly(answer)) {
+      return this.reply(phone, conversationId, this.onboarding.welcome());
     }
 
     // Interpret the answer to whichever field we asked about last (§6 — one
     // chatty answer may fill several fields; Haiku handles that when keyed,
     // deterministic parsing covers the asked field offline).
-    const asked = this.onboarding.nextField(profile);
+    const asked =
+      outboundCount === 0
+        ? ('business_type' as const)
+        : this.onboarding.nextField(profile);
+    let ack = '';
     if (asked) {
-      const patch = await this.onboarding.interpret(asked, answer, profile);
+      const patch = await this.onboarding.interpret(
+        asked,
+        answer,
+        profile,
+        businessName,
+      );
+      // Belt and suspenders against re-emission: a "new" value identical to
+      // what we already have is neither stored again nor re-acknowledged.
+      if (patch.business_name && patch.business_name === businessName) {
+        delete patch.business_name;
+      }
+      if (
+        patch.brand_colors &&
+        JSON.stringify(patch.brand_colors) ===
+          JSON.stringify(profile?.brandColors ?? [])
+      ) {
+        delete patch.brand_colors;
+      }
       if (Object.keys(patch).length > 0) {
         await this.bus.emit(
           this.task(customerId, 'UPDATE_BRAND_PROFILE', {
@@ -458,6 +583,9 @@ export class ConciergeService {
             synthesize_voice: this.onboarding.wouldComplete(profile, patch),
           }),
         );
+        ack = this.onboarding.ack(patch);
+      } else {
+        ack = "Sorry — didn't quite catch that.";
       }
     }
 
@@ -467,7 +595,8 @@ export class ConciergeService {
     });
     const next = this.onboarding.nextField(fresh);
     if (next) {
-      return this.reply(phone, conversationId, this.onboarding.question(next, fresh));
+      const q = this.onboarding.question(next);
+      return this.reply(phone, conversationId, ack ? `${ack} ${q}` : q);
     }
 
     // Checklist complete → the customer is now live. Without this they stay
@@ -482,6 +611,23 @@ export class ConciergeService {
       data: { onboardingComplete: true },
     });
 
+    // Read the profile back first — the cheapest way to catch a wrong
+    // extraction is to say what we heard while the owner is still here.
+    const done = await this.prisma.brandProfile.findUnique({
+      where: { customerId },
+    });
+    const named = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { businessName: true },
+    });
+    if (done) {
+      await this.reply(
+        phone,
+        conversationId,
+        this.onboarding.summary(done, named?.businessName),
+      );
+    }
+
     // Send the connect link and kick off week 1 (§6).
     const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
     const result = await this.bus.emit(
@@ -490,10 +636,9 @@ export class ConciergeService {
     await this.reply(
       phone,
       conversationId,
-      `That's everything I need ✳ One last thing, whenever you have two ` +
-        `minutes: connect the accounts you want me to post to (secure link, ` +
-        `we never see your passwords): ${site}/connect?c=${customerId}` +
-        `\n\nMeanwhile — ${result.summary_for_owner}`,
+      `Next, whenever you have two minutes: connect the accounts you want ` +
+        `me to post to (secure link, we never see your passwords): ` +
+        `${site}/connect?c=${customerId}\n\nMeanwhile — ${result.summary_for_owner}`,
     );
   }
 

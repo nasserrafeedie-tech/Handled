@@ -177,14 +177,22 @@ export class BrandIdentityService {
     // they typed. Pull it out if we can; harmless if we can't.
     const name = await this.extractName(profile.businessType ?? '');
 
+    // Owner-stated colors and name always win over derived ones — "teal"
+    // said in onboarding must survive this step (bug caught in live testing).
     await this.prisma.brandProfile.update({
       where: { customerId },
       data: {
-        brandColors: [identity.primary, identity.secondary],
+        ...(profile.brandColors.length > 0
+          ? {}
+          : { brandColors: [identity.primary, identity.secondary] }),
         visualStyle: identity.style,
       },
     });
-    if (name) {
+    const existing = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { businessName: true },
+    });
+    if (name && !existing?.businessName) {
       await this.prisma.customer.update({
         where: { id: customerId },
         data: { businessName: name },

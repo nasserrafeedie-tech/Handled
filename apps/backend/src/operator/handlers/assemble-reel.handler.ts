@@ -15,6 +15,7 @@ import { ReelService } from '../video/reel.service';
 import { TaskHandler, ok, fail } from './handler.interface';
 import { StorageService } from '../../common/storage.service';
 import { resolveStrategy } from '../llm/vertical-playbook';
+import { toSvgColors } from '../graphics/color.util';
 
 /**
  * ASSEMBLE_REEL (§7, Growth+). Take the owner's banked clips, cut them into a
@@ -90,8 +91,8 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
 
     // Brand end card + hook, from the identity assigned at onboarding.
     const theme: BrandTheme = {
-      primary: profile.brandColors?.[0] ?? '#2C3E50',
-      secondary: profile.brandColors?.[1],
+      primary: toSvgColors(profile.brandColors ?? [])[0] ?? '#2C3E50',
+      secondary: toSvgColors(profile.brandColors ?? [])[1],
       brandName: customer.businessName ?? undefined,
       style: (profile.visualStyle as BrandTheme['style']) ?? undefined,
     };
@@ -115,7 +116,7 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
           task.payload.hook_text ??
           resolveStrategy(profile).reel_hook,
         endCardPng,
-        accentHex: profile.brandColors?.[1],
+        accentHex: toSvgColors(profile.brandColors ?? [])[1],
         fontPath: bundledFont(),
       });
     } catch (err) {

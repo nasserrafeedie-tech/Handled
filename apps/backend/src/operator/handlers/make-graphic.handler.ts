@@ -8,6 +8,7 @@ import { GraphicsService } from '../graphics/graphics.service';
 import { CANVAS, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
 import { TaskHandler, ok, fail } from './handler.interface';
 import { StorageService } from '../../common/storage.service';
+import { toSvgColors } from '../graphics/color.util';
 
 /**
  * MAKE_GRAPHIC (§7). Render text slides / carousels to crisp PNGs (SVG→PNG, no
@@ -36,8 +37,8 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
     ]);
 
     const theme: BrandTheme = {
-      primary: profile?.brandColors?.[0] ?? '#2C3E50',
-      secondary: profile?.brandColors?.[1],
+      primary: toSvgColors(profile?.brandColors ?? [])[0] ?? '#2C3E50',
+      secondary: toSvgColors(profile?.brandColors ?? [])[1],
       // The trading name, not the rambling sentence the owner typed at signup.
       brandName: customer?.businessName ?? undefined,
       style: (profile?.visualStyle as BrandTheme['style']) ?? undefined,

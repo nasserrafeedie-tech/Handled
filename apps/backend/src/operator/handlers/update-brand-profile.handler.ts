@@ -47,6 +47,15 @@ export class UpdateBrandProfileHandler
       update: clean,
     });
 
+    // The business's proper name lives on Customer, not the profile — the
+    // owner stating it during onboarding beats anything we'd derive later.
+    if (p.business_name) {
+      await this.prisma.customer.update({
+        where: { id: task.customer_id },
+        data: { businessName: p.business_name },
+      });
+    }
+
     // Onboarding just finished: give this business its own look — palette,
     // type personality, trading name — so its posts stop resembling everyone
     // else's. Idempotent, so re-running never shifts an established brand.
