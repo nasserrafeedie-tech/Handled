@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Platform } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConciergeService } from '../concierge/concierge.service';
+import { platformName } from '../operator/publishing/platform-names';
 
 /**
  * Asking owners to reconnect before their posting stops.
@@ -91,7 +92,7 @@ export class ReauthService {
   private message(platform: Platform, expired: boolean, customerId: string): string {
     const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
     const link = `${site}/connect?customer=${customerId}`;
-    const name = PLATFORM_NAMES[platform] ?? platform;
+    const name = platformName(platform);
 
     return expired
       ? `${name} has disconnected — that's their 60-day limit, not anything you did. ` +
@@ -103,13 +104,3 @@ export class ReauthService {
   }
 }
 
-/** How owners refer to these, not how the API does. */
-const PLATFORM_NAMES: Partial<Record<Platform, string>> = {
-  instagram: 'Instagram',
-  facebook: 'Facebook',
-  tiktok: 'TikTok',
-  threads: 'Threads',
-  linkedin: 'LinkedIn',
-  youtube: 'YouTube',
-  x: 'X',
-};

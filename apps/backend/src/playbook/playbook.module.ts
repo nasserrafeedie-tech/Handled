@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PlaybookService } from './playbook.service';
 import { ArchetypeClassifier } from './archetype-classifier.service';
 import { ArchetypeResearchService } from './archetype-research.service';
+import { ArchetypePerformanceService } from './archetype-performance.service';
 import { LlmService } from '../operator/llm/llm.service';
 
 /**
@@ -17,8 +18,14 @@ import { LlmService } from '../operator/llm/llm.service';
     PlaybookService,
     ArchetypeClassifier,
     ArchetypeResearchService,
+    ArchetypePerformanceService,
     LlmService,
   ],
-  exports: [PlaybookService, ArchetypeClassifier, ArchetypeResearchService],
+  exports: [
+    PlaybookService,
+    ArchetypeClassifier,
+    ArchetypeResearchService,
+    ArchetypePerformanceService,
+  ],
 })
 export class PlaybookModule {}

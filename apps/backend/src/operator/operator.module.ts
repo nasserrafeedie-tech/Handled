@@ -6,6 +6,7 @@ import { ModerationService } from './guardrails/moderation.service';
 import { PublishGateService } from './guardrails/publish-gate.service';
 import { TokenCryptoService } from './security/token-crypto.service';
 import { PostForMeService } from './publishing/post-for-me.service';
+import { PlaybookModule } from '../playbook/playbook.module';
 import { GraphicsService } from './graphics/graphics.service';
 import { ImageGenService } from './graphics/image-gen.service';
 import { BrandIdentityService } from './branding/brand-identity.service';
@@ -26,6 +27,7 @@ import { MakeGraphicHandler } from './handlers/make-graphic.handler';
 import { GenerateImageHandler } from './handlers/generate-image.handler';
 
 @Module({
+  imports: [PlaybookModule],
   providers: [
     // cross-cutting
     LlmService,

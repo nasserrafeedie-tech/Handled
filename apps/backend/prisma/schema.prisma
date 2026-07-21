@@ -189,6 +189,36 @@ model PlaybookArchetype {
   @@map("playbook_archetypes")
 }
 
+// ─── archetype_performance (Flow 4: what actually worked) ────────────────
+// The research pass says what should work for a kind of business. This says
+// what did — measured from real posts, pooled across every customer on the
+// same archetype, so the tenth coffee shop plans from nine shops' results
+// instead of from the same starting guess.
+//
+// Sums rather than averages: an average cannot be updated incrementally
+// without keeping the sample anyway, and rates computed from stored totals
+// stay correct when a late metric arrives.
+//
+// Pooled only in aggregate. No caption, no customer, and nothing identifying
+// crosses between businesses — just the counts.
+model ArchetypePerformance {
+  id            String   @id @default(uuid()) @db.Uuid
+  // Which playbook archetype (the kind of business).
+  archetypeSlug String
+  // Which post format within it (promo, behind_the_scenes, …).
+  postArchetype String
+  platform      String
+  // How many posts back this row. Below MIN_SAMPLES it is not acted on.
+  samples       Int      @default(0)
+  impressions   BigInt   @default(0)
+  engagements   BigInt   @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@unique([archetypeSlug, postArchetype, platform])
+  @@index([archetypeSlug])
+  @@map("archetype_performance")
+}
+
 // Unprompted texts held for the recipient's 8:00–21:00 local window (TCPA
 // quiet hours). Replies to an active conversation bypass this entirely.
 model QueuedText {

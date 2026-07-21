@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { type Task, type Result } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PostForMeService } from '../publishing/post-for-me.service';
+import {
+  classifyPublishFailure,
+  isRetryable,
+} from '../publishing/publish-failure';
+import { platformName } from '../publishing/platform-names';
 import { TaskHandler, ok } from './handler.interface';
 
 /**
@@ -55,6 +60,8 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
 
     let published = 0;
     let skipped = 0;
+    let failed = 0;
+    const notices: { customer_id: string; message: string }[] = [];
     for (const post of posts) {
       // §8 publish-time gate: never publish un-approved / un-moderated / paused.
       const blocked =
@@ -93,11 +100,35 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
         });
         published++;
       } catch (err) {
-        this.log.warn(`publish failed for ${post.id}: ${String(err)}`);
+        // Read the failure before reacting to it. An expired connection, a
+        // caption the platform refused, and a rate limit all used to end the
+        // same way: status='failed', nobody told, the owner finding out from
+        // their own empty feed.
+        const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
+        const failure = classifyPublishFailure(
+          err,
+          platformName(post.platform),
+          `${site}/connect?customer=${post.customerId}`,
+        );
+        this.log.warn(`publish failed for ${post.id} [${failure.kind}]: ${failure.detail}`);
+
         await this.prisma.post.update({
           where: { id: post.id },
-          data: { status: 'failed', failureReason: String(err) },
+          data: {
+            // A transient failure goes back to scheduled so the reconciliation
+            // sweep picks it up; only a settled failure is marked failed.
+            status: isRetryable(failure.kind) ? 'scheduled' : 'failed',
+            failureReason: `[${failure.kind}] ${failure.detail}`,
+          },
         });
+
+        // Reported, not sent. §3 keeps the Operator out of the owner's text
+        // thread — the Concierge owns that conversation, so the caller does
+        // the telling.
+        if (failure.ownerMessage) {
+          notices.push({ customer_id: post.customerId, message: failure.ownerMessage });
+        }
+        failed++;
       }
     }
 
@@ -105,7 +136,7 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
       task.task_id,
       published ? `Posted ${published} update${published > 1 ? 's' : ''}.` : 'Nothing was due to post.',
       'done',
-      { published, skipped },
+      { published, skipped, failed, notices },
     );
   }
 }

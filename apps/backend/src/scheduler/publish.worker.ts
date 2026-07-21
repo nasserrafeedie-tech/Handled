@@ -12,6 +12,12 @@ import type { Task } from '@smm/contracts';
 import { REDIS_CONNECTION } from './redis.provider';
 import { PUBLISH_QUEUE, type PublishJobData } from './queue.constants';
 import { TaskBus } from '../tasks/task-bus.service';
+import { ConciergeService } from '../concierge/concierge.service';
+
+/** What PUBLISH_DUE hands back for the owner's thread. */
+interface PublishNotices {
+  notices?: { customer_id: string; message: string }[];
+}
 
 /**
  * Consumes the publish queue. When a post's scheduled time arrives, the job
@@ -29,6 +35,7 @@ export class PublishWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(REDIS_CONNECTION) private readonly connection: Redis,
     private readonly bus: TaskBus,
+    private readonly concierge: ConciergeService,
   ) {}
 
   onModuleInit(): void {
@@ -45,6 +52,13 @@ export class PublishWorker implements OnModuleInit, OnModuleDestroy {
           created_at: new Date().toISOString(),
         };
         const result = await this.bus.emit(task);
+
+        // The handler reports what the owner should hear but does not say it
+        // — §3 keeps the Operator out of the text thread. Delivering it here
+        // is what turns a failed publish from a silent non-event into
+        // something the owner can act on.
+        await this.deliverNotices(result);
+
         if (result.status === 'failed' && result.error?.retryable) {
           throw new Error(result.error.message); // let BullMQ retry
         }
@@ -54,6 +68,16 @@ export class PublishWorker implements OnModuleInit, OnModuleDestroy {
     this.worker.on('failed', (job, err) =>
       this.log.warn(`publish job ${job?.id} failed: ${err.message}`),
     );
+  }
+
+  /** Text each owner whose post could not go out, and why. */
+  private async deliverNotices(result: { data?: unknown }): Promise<void> {
+    const notices = (result?.data as PublishNotices | undefined)?.notices ?? [];
+    for (const n of notices) {
+      await this.concierge
+        .notify(n.customer_id, n.message)
+        .catch((e) => this.log.warn(`notice to ${n.customer_id} failed: ${String(e)}`));
+    }
   }
 
   async onModuleDestroy(): Promise<void> {

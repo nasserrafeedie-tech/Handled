@@ -11,6 +11,7 @@ import { buildBrandContext } from '../llm/brand-context';
 import { resolveStrategy, strategyPlanningBlock } from '../llm/vertical-playbook';
 import { TaskHandler, ok, fail } from './handler.interface';
 import { archetypePlanningBlock } from '../../playbook/archetype-context';
+import { ArchetypePerformanceService } from '../../playbook/archetype-performance.service';
 
 /**
  * PLAN_WEEK (§7). Read brand_profile + recent metrics → produce a week's
@@ -26,6 +27,7 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
+    private readonly performance: ArchetypePerformanceService,
   ) {}
 
   async handle(task: Extract<Task, { type: 'PLAN_WEEK' }>): Promise<Result> {
@@ -54,11 +56,12 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
 
     const frequency =
       task.payload.posting_frequency ?? profile.postingFrequency ?? 3;
-    const recentMetrics = await this.prisma.metric.findMany({
-      where: { customerId: task.customer_id },
-      orderBy: { fetchedAt: 'desc' },
-      take: 20,
-    });
+    // Flow 4: what has actually worked for this kind of business, pooled
+    // across every customer on the same archetype. Null until there is enough
+    // evidence, which is the honest answer for a new archetype.
+    const measured = customer?.archetypeSlug
+      ? await this.performance.planningHint(customer.archetypeSlug)
+      : null;
 
     const context = buildBrandContext(profile);
     const prompt = [
@@ -68,11 +71,10 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
       'Prefer slots that use the owner\'s real photos.',
       archetype ? archetypePlanningBlock(archetype) : '',
       strategyPlanningBlock(resolveStrategy(profile)),
-      recentMetrics.length
-        ? `Recent performance signal (impressions): ${recentMetrics
-            .map((m) => m.impressions)
-            .join(', ')}. Lean into what worked.`
-        : 'No performance history yet — plan a balanced first week.',
+      // A bare list of impression counts used to sit here. It told the model
+      // that some numbers had happened without saying which post earned them,
+      // so "lean into what worked" was unactionable. This names the format.
+      measured ?? 'No measured results for this kind of business yet — plan a balanced week.',
       'Return JSON: {"slots":[{"date","archetype","platform","best_time",',
       '"needs_asset","shot_list"}]}. Dates YYYY-MM-DD, best_time HH:MM,',
       'needs_asset boolean, shot_list ONE string (semicolons between shots).',

@@ -8,6 +8,8 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import { ArchetypeResearchService } from '../playbook/archetype-research.service';
 import { ReauthService } from '../connect/reauth.service';
+import { ReconcileService } from './reconcile.service';
+import { ArchetypePerformanceService } from '../playbook/archetype-performance.service';
 import { zonedToUtc } from '../common/time';
 import { resolveStrategy } from '../operator/llm/vertical-playbook';
 
@@ -19,7 +21,8 @@ type PlanResult = { data?: { slots?: CalendarSlot[] } };
  * TaskBus so they get the same validation + audit trail as owner-triggered work:
  *   • weekly  — PLAN_WEEK for every active customer (Mon 08:00)
  *   • hourly  — PUBLISH_DUE sweep (safety net beside the per-post BullMQ jobs)
- *   • daily   — FETCH_METRICS so planning learns from what worked (06:00)
+ *   • daily   — FETCH_METRICS, then the Flow 4 recompute that turns those
+ *               numbers into per-format results the next plan reads (06:00)
  *
  * Disabled when ENABLE_CRON=0 (e.g. local dev / tests) so it never fires
  * unexpectedly. Paused customers are skipped — the kill switch stays honored.
@@ -34,6 +37,8 @@ export class CronService {
     private readonly concierge: ConciergeService,
     private readonly research: ArchetypeResearchService,
     private readonly reauth: ReauthService,
+    private readonly reconcile: ReconcileService,
+    private readonly performance: ArchetypePerformanceService,
   ) {}
 
   private get enabled(): boolean {
@@ -203,6 +208,27 @@ export class CronService {
       .catch((e) => this.log.warn(`reauth sweep failed: ${e.message}`));
   }
 
+  /**
+   * Every 30 minutes: find posts whose moment passed but that never went out.
+   *
+   * The scheduled job firing is what publishes a post, and a job can be lost —
+   * Redis evicted, a worker restarted mid-window. Without this the post simply
+   * never happens and the owner finds out from their own feed. See
+   * ReconcileService.
+   */
+  @Cron('*/30 * * * *')
+  async reconcileStranded(): Promise<void> {
+    if (!this.enabled) return;
+    await this.reconcile
+      .sweep()
+      .catch((e) => this.log.warn(`reconciliation failed: ${e.message}`));
+  }
+
+  /** Dev-endpoint passthrough: run reconciliation regardless of ENABLE_CRON. */
+  async reconcileNow(): Promise<{ requeued: number; stale: number }> {
+    return this.reconcile.sweep();
+  }
+
   /** Dev-endpoint passthrough: run the reauth sweep regardless of ENABLE_CRON. */
   async askForReauthNow(): Promise<number> {
     const { asked } = await this.reauth.sweep();
@@ -287,6 +313,18 @@ export class CronService {
         this.log.warn(`FETCH_METRICS failed for ${id}: ${e.message}`),
       );
     }
+
+    // Flow 4, immediately after: the numbers just landed, so this is the one
+    // moment the pooled per-format results are certainly current. Monday's
+    // planning reads them.
+    await this.performance
+      .recompute()
+      .catch((e) => this.log.warn(`Flow 4 recompute failed: ${e.message}`));
+  }
+
+  /** Dev-endpoint passthrough: rebuild Flow 4 regardless of ENABLE_CRON. */
+  async recomputePerformanceNow(): Promise<{ rows: number; posts: number }> {
+    return this.performance.recompute();
   }
 }
 

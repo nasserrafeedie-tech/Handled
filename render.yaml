@@ -10,7 +10,11 @@ services:
   - type: web
     name: aissm-backend
     runtime: node
-    plan: free
+    # Starter, not free: a free service sleeps after ~15 minutes idle and takes
+    # ~51 seconds to wake (measured). Twilio abandons a webhook at 15 seconds,
+    # so the first text anyone sends after a quiet spell is the one most likely
+    # to be dropped. ~$7/month buys a service that is always awake.
+    plan: starter
     branch: main
     # Build the shared contracts, generate the Prisma client, then compile.
     # --include=dev is required: NODE_ENV=production otherwise makes npm skip
