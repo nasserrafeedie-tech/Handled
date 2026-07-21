@@ -26,17 +26,17 @@ const STEPS = [
   {
     n: '01',
     title: 'Tell us about your business',
-    body: 'A quick text conversation — what you do, your vibe, who you serve. No forms, no onboarding calls.',
+    body: 'Five questions over text. Takes about four minutes and there is no form to fill in.',
   },
   {
     n: '02',
     title: 'We plan, write & design',
-    body: 'Every week we draft your posts and make the graphics. You get a text to look them over.',
+    body: 'We write the week of posts and make the graphics, then text you what we came up with.',
   },
   {
     n: '03',
     title: 'You reply “yes”',
-    body: 'Approve with a word and we publish on schedule. Too busy? Let us post on autopilot once you trust us.',
+    body: 'It goes out at the hour your customers are actually looking. Once you stop wanting to check, tell us and we will just post.',
   },
 ];
 
@@ -60,17 +60,39 @@ const VOICES = [
 const FAQS = [
   {
     q: 'Do I need to install or learn anything?',
-    a: 'No. There’s no app and no dashboard — everything happens right in your text messages. If you can text a friend, you can use this.',
+    a: 'No. It all happens in your text messages, the same way you text anyone else. There is no app and nothing to sign into.',
   },
   {
     q: 'What if I don’t like a post?',
-    a: 'Just say so. Text back “make it warmer” or “swap the photo” and we’ll redo it. Nothing goes out until you’re happy with it.',
+    a: 'Tell us what is off — “too formal”, “use the other photo”, “cut the last line” — and we will redo it. Nothing posts until you say so.',
   },
   {
     q: 'Do you need my passwords?',
-    a: 'Never. You connect your accounts through a secure service, and we only ever get permission to post — not to see your login.',
+    a: 'Never. You connect your accounts through a secure service that hands us permission to post and nothing else. Your login stays yours.',
   },
 ];
+
+
+/**
+ * Sample captions ship with their hashtags attached. On the site the writing
+ * is the point, so the tags are split off and set quieter — otherwise every
+ * tile is half tags and the copy underneath has to shrink to fit.
+ */
+function captionBody(caption: string): string {
+  return caption
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('#'))
+    .join('\n')
+    .trim();
+}
+
+function hashtagsOf(caption: string): string {
+  return caption
+    .split('\n')
+    .filter((line) => line.trim().startsWith('#'))
+    .join(' ')
+    .trim();
+}
 
 export default function Home() {
   return (
@@ -95,9 +117,9 @@ export default function Home() {
               className="mt-8 max-w-lg animate-fade-in text-lg leading-relaxed text-ink/70"
               style={{ animationDelay: '600ms' }}
             >
-              We plan, write, design, and publish your posts almost entirely on
-              our own. You just reply to a text now and then. The done-for-you
-              calm of a $1,500/mo agency — without the agency.
+              Every week we make your posts and text them to you. You look them
+              over between customers and reply yes. An agency charges $1,500 a
+              month to do the same job.
             </p>
 
             <div
@@ -122,7 +144,8 @@ export default function Home() {
               className="mt-6 animate-fade-in font-mono text-[11px] uppercase tracking-[0.18em] text-ink/55"
               style={{ animationDelay: '900ms' }}
             >
-              No dashboard · No passwords · Cancel anytime
+              Nothing to log into, we never see your passwords, and you can
+              cancel whenever you want
             </p>
           </div>
 
@@ -180,7 +203,7 @@ export default function Home() {
 
       {/* ───────────────────── Samples gallery ───────────────────── */}
       <section className="border-y border-ink/10 bg-parchment/70">
-        <div className="mx-auto max-w-6xl px-6 py-28">
+        <div className="mx-auto max-w-4xl px-6 py-28">
           <Reveal className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="eyebrow">№ 2 — The work</p>
@@ -190,13 +213,13 @@ export default function Home() {
               </h2>
             </div>
             <p className="max-w-sm text-[15px] leading-relaxed text-ink/60">
-              Sometimes we design a graphic. Sometimes your own photo is already
-              the post and the writing is the work. Every one of these — image
-              and caption — came out of the same engine that would make yours.
+              Some of these we designed. The rest are a photo the owner already
+              had, where the writing was the whole job. Both came out of the same
+              thing that would write yours.
             </p>
           </Reveal>
 
-          <div className="mt-16 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {SAMPLES.map((s, i) => (
               <Reveal key={s.file} delay={i * 90}>
                 <figure className="group flex h-full flex-col overflow-hidden rounded-3xl border border-ink/10 bg-white shadow-soft transition-shadow duration-500 hover:shadow-lift">
@@ -214,13 +237,18 @@ export default function Home() {
                   </div>
 
                   {/* The caption that ships with it — the half nobody shows */}
-                  <figcaption className="flex flex-1 flex-col gap-3 px-5 pb-5 pt-4">
+                  <figcaption className="flex flex-1 flex-col gap-2.5 px-4 pb-5 pt-4">
                     <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-clay-600">
                       {s.brand}
                     </span>
-                    <p className="whitespace-pre-line text-[13px] leading-relaxed text-ink/75">
-                      {s.caption}
+                    <p className="line-clamp-[7] whitespace-pre-line text-[15px] leading-[1.6] text-ink/80">
+                      {captionBody(s.caption)}
                     </p>
+                    {hashtagsOf(s.caption) && (
+                      <p className="mt-auto pt-1 text-[12px] leading-relaxed text-ink/40">
+                        {hashtagsOf(s.caption)}
+                      </p>
+                    )}
                   </figcaption>
                 </figure>
               </Reveal>
