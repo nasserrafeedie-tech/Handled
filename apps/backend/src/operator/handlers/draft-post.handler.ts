@@ -10,6 +10,7 @@ import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
 import { playbookFor, ALT_TEXT_RULE } from '../llm/playbook';
 import { polishCaption } from '../llm/caption-polish';
+import { detectSlop, shouldRegenerate, slopFeedback } from '../llm/slop';
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { ModerationService } from '../guardrails/moderation.service';
 import { PublishGateService } from '../guardrails/publish-gate.service';
@@ -103,6 +104,50 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
 
     // Voice fixes the prompt can't enforce reliably — see caption-polish.
     gen.caption = polishCaption(gen.caption);
+
+    // The prompt asks for a voice; this checks whether it got one. Prompt rules
+    // are a request, and measured across sampled generations some of them did
+    // nothing — so a draft that still reads as machine-written gets one more
+    // attempt with its specific problems named. One retry, not a loop: if the
+    // second is no better the first was not a fluke, and an owner waiting on a
+    // text should not pay for us to keep trying.
+    const findings = detectSlop(gen.caption);
+    if (shouldRegenerate(findings)) {
+      this.log.warn(
+        `slop in ${platform} draft for ${task.customer_id} ` +
+          `(${findings.map((f) => f.name).join(', ')}) — regenerating`,
+      );
+      try {
+        const retry = await this.llm.completeJson(
+          {
+            tier: 'bulk',
+            cachedContext: context,
+            prompt: `${prompt}\n\n${slopFeedback(findings, gen.caption)}`,
+            maxTokens: 600,
+          },
+          CaptionLlmOutput,
+        );
+        retry.caption = polishCaption(retry.caption);
+        const after = detectSlop(retry.caption);
+        // Keep the retry only if it actually improved on the original —
+        // a second draft that trades one tell for two is not progress.
+        if (after.length < findings.length) {
+          gen.caption = retry.caption;
+          gen.hashtags = retry.hashtags;
+          gen.alt_text = retry.alt_text ?? gen.alt_text;
+        }
+        if (after.length > 0) {
+          this.log.warn(
+            `slop survived the retry for ${task.customer_id}: ` +
+              `${after.map((f) => f.name).join(', ')}`,
+          );
+        }
+      } catch (e) {
+        // A failed retry must not cost the owner their post — the first draft
+        // is publishable, just not as good as we wanted.
+        this.log.warn(`slop retry failed for ${task.customer_id}: ${String(e)}`);
+      }
+    }
 
     // §8 moderation before anything is persisted as publishable.
     const verdict = await this.moderation.screen({

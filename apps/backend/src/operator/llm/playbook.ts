@@ -28,9 +28,14 @@ const UNIVERSAL: string[] = [
   'Open with a hook in the first 125 characters — that is all anyone sees before the caption truncates. Never open with "We are excited to announce".',
   // Owners can tell when a caption was written by a machine, and so can their
   // customers — it reads like every other AI-written post in the feed and makes
-  // the business look like it outsourced its voice. These are the specific
-  // constructions that give it away, listed rather than described because
-  // "sound natural" on its own does not change the output.
+  // the business look like it outsourced its voice.
+  //
+  // Measured, this rule barely moves the number: across ~70 sampled generations
+  // it took the slop rate from 15% to 13%, which is inside the noise. It is kept
+  // because it is cheap and may reduce how often the expensive backstop fires.
+  // The backstop is what actually works — llm/slop.ts detects these same
+  // constructions after generation and regenerates, which takes 15% to 3%. Do
+  // not add a rule here and assume it took effect; run slop.eval.ts.
   'Never use these constructions, which read as machine-written: the rhetorical triple ("fast, fresh, and local"); "X — without the Y"; "not just X, it\'s Y"; "more than just a X"; repeated openers like "Sometimes… Sometimes…"; and the phrases "discover", "unlock", "elevate", "dive in", "delve", "game-changer", "look no further", "in today\'s fast-paced world", "nestled in", "whether you\'re… or…", "that\'s where we come in". Do not open with "The best", "The most", or "The top".',
   'Vary sentence length. Machine-written copy runs every sentence to the same medium length; people write a short one, then a longer one that carries the detail, then a fragment.',
   'Write for one specific person, not an audience. Second person ("you"), present tense.',
