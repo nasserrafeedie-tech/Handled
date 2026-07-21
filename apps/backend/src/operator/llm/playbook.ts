@@ -26,6 +26,13 @@ import type { Platform } from '@smm/contracts';
 /** Shared rules that hold across every surface we publish to. */
 const UNIVERSAL: string[] = [
   'Open with a hook in the first 125 characters — that is all anyone sees before the caption truncates. Never open with "We are excited to announce".',
+  // Owners can tell when a caption was written by a machine, and so can their
+  // customers — it reads like every other AI-written post in the feed and makes
+  // the business look like it outsourced its voice. These are the specific
+  // constructions that give it away, listed rather than described because
+  // "sound natural" on its own does not change the output.
+  'Never use these constructions, which read as machine-written: the rhetorical triple ("fast, fresh, and local"); "X — without the Y"; "not just X, it\'s Y"; "more than just a X"; repeated openers like "Sometimes… Sometimes…"; and the phrases "discover", "unlock", "elevate", "dive in", "delve", "game-changer", "look no further", "in today\'s fast-paced world", "nestled in", "whether you\'re… or…", "that\'s where we come in". Do not open with "The best", "The most", or "The top".',
+  'Vary sentence length. Machine-written copy runs every sentence to the same medium length; people write a short one, then a longer one that carries the detail, then a fragment.',
   'Write for one specific person, not an audience. Second person ("you"), present tense.',
   'Weave 1-2 plain search keywords naturally into the first two sentences (what the business is, what it sells, the neighbourhood it is in). These platforms are search engines now; keywords in the caption do more for discovery than hashtags.',
   'Earn a SEND or a SAVE, not a like. Close with a reason to forward it to a specific person ("send this to whoever…") or to keep it ("save this for…"). Sends are weighted several times more than likes for reaching new people.',

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   type Task,
   type Result,
@@ -9,9 +9,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
 import { playbookFor, ALT_TEXT_RULE } from '../llm/playbook';
+import { polishCaption } from '../llm/caption-polish';
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { ModerationService } from '../guardrails/moderation.service';
 import { PublishGateService } from '../guardrails/publish-gate.service';
+import {
+  PLATFORM_LIMITS,
+  truncateCaption,
+  validateForPlatform,
+} from '../guardrails/platform-limits';
 import { TaskHandler, ok, fail } from './handler.interface';
 
 /**
@@ -22,6 +28,7 @@ import { TaskHandler, ok, fail } from './handler.interface';
 @Injectable()
 export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
   readonly type = 'DRAFT_POST' as const;
+  private readonly log = new Logger(DraftPostHandler.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -94,6 +101,9 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       CaptionLlmOutput,
     );
 
+    // Voice fixes the prompt can't enforce reliably — see caption-polish.
+    gen.caption = polishCaption(gen.caption);
+
     // §8 moderation before anything is persisted as publishable.
     const verdict = await this.moderation.screen({
       caption: gen.caption,
@@ -103,6 +113,32 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
 
     const risk = this.gate.classifyRisk(gen.caption);
     const decision = this.gate.decide(customer.trustLevel, risk);
+
+    // Check the draft against what the platform will actually accept, before it
+    // is persisted and shown to the owner. What we validate is what gets
+    // published: the caption and hashtags travel as one field.
+    //
+    // An over-long caption we shorten silently — the alternative is a post that
+    // dies at publish for a reason no owner can act on. Anything else we can
+    // only log: cropping a photo is a decision about their business, not a
+    // formatting fix, so it stays visible rather than being quietly "handled".
+    const published = [gen.caption, gen.hashtags.map((h) => `#${h}`).join(' ')]
+      .filter(Boolean)
+      .join('\n\n');
+    const violations = validateForPlatform(platform, published);
+    for (const v of violations) {
+      if (v.code === 'caption_too_long') {
+        const room = published.length - gen.caption.length;
+        gen.caption = truncateCaption(
+          gen.caption,
+          platform,
+          PLATFORM_LIMITS[platform].captionChars - room,
+        );
+        this.log.warn(`trimmed an over-long ${platform} caption for ${task.customer_id}`);
+      } else {
+        this.log.warn(`${platform} draft for ${task.customer_id}: ${v.message}`);
+      }
+    }
 
     // Owner photos beat anything we can generate (§7: owner photo > AI). Pull
     // the oldest banked photo — one they texted in that no post has claimed —

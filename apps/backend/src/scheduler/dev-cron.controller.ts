@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CronService } from './cron.service';
 
 const RunWeekBody = z.object({
-  from: z.string().min(3).describe('customer phone, e.g. +15551234567'),
+  from: z.string().min(3).describe('customer phone, e.g. +14245550199'),
 });
 
 /**
@@ -12,7 +12,7 @@ const RunWeekBody = z.object({
  * watched end to end without waiting for the cron:
  *
  *   curl -X POST localhost:3001/dev/run-week \
- *     -H 'content-type: application/json' -d '{"from":"+15551234567"}'
+ *     -H 'content-type: application/json' -d '{"from":"+14245550199"}'
  *
  * Lives in the scheduler module (not alongside the SMS simulator) because the
  * scheduler already depends on the Concierge — putting it the other way round

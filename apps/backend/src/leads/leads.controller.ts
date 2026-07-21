@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import { z } from 'zod';
+import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
 
 const LeadBody = z.object({
@@ -26,10 +27,10 @@ export class LeadsController {
     if (!parsed.success) throw new BadRequestException('invalid lead');
     const { phone, email, source, smsConsent, smsConsentText, smsConsentAt } =
       parsed.data;
-    const normalized = phone.replace(/[^\d+]/g, '');
-    if (normalized.replace(/\D/g, '').length < 10) {
-      throw new BadRequestException('invalid phone');
-    }
+    // Must match the spelling the Twilio webhook will use, or the lead and the
+    // customer it becomes are two unrelated rows that never join up.
+    const normalized = normalizePhone(phone);
+    if (!normalized) throw new BadRequestException('invalid phone');
     // Consent is an audit trail: record it when affirmatively given, and never
     // degrade a stored consent (a re-submit without the fields leaves it alone).
     const consent =

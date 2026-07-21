@@ -16,6 +16,7 @@ import type { Task } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
+import { detectMedia } from '../common/media-type';
 import { StorageService } from '../common/storage.service';
 
 interface UploadedFileShape {
@@ -61,23 +62,30 @@ export class UploadsController {
     const kinds: string[] = [];
 
     for (const f of files) {
-      const kind = f.mimetype.startsWith('video') ? 'video' : 'image';
-      if (!/^(video|image)\//.test(f.mimetype)) {
-        throw new BadRequestException(`unsupported type ${f.mimetype}`);
+      // Read the file rather than believing its declared type. Everything we
+      // store — kind, extension, content type — comes from the bytes, so a
+      // caller cannot choose what lands in a bucket we serve.
+      const detected = detectMedia(f.buffer);
+      if (!detected) {
+        this.log.warn(
+          `rejected upload from ${customerId}: declared ${f.mimetype}, bytes say otherwise`,
+        );
+        throw new BadRequestException(
+          "That file doesn't look like a photo or video we can use — try a JPG, PNG, or MP4.",
+        );
       }
-      const ext = f.mimetype.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
-      const r2Key = `${customerId}/uploads/${randomUUID()}.${ext}`;
-      await this.storage.put(r2Key, f.buffer, f.mimetype);
+      const r2Key = `${customerId}/uploads/${randomUUID()}.${detected.ext}`;
+      await this.storage.put(r2Key, f.buffer, detected.contentType);
       await this.prisma.mediaAsset.create({
         data: {
           customerId,
-          kind,
+          kind: detected.kind,
           source: 'owner_upload',
           r2Key,
-          contentType: f.mimetype,
+          contentType: detected.contentType,
         },
       });
-      kinds.push(kind);
+      kinds.push(detected.kind);
     }
 
     // Enough banked video → cut the reel in the background; text when done.

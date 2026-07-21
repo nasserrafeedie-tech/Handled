@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import { ArchetypeResearchService } from '../playbook/archetype-research.service';
+import { ReauthService } from '../connect/reauth.service';
 import { zonedToUtc } from '../common/time';
 import { resolveStrategy } from '../operator/llm/vertical-playbook';
 
@@ -32,6 +33,7 @@ export class CronService {
     private readonly bus: TaskBus,
     private readonly concierge: ConciergeService,
     private readonly research: ArchetypeResearchService,
+    private readonly reauth: ReauthService,
   ) {}
 
   private get enabled(): boolean {
@@ -171,6 +173,26 @@ export class CronService {
   /** Dev-endpoint passthrough: drain the queue regardless of ENABLE_CRON. */
   async flushQueuedTextsNow(): Promise<number> {
     return this.concierge.flushQueuedTexts();
+  }
+
+  /**
+   * Daily (09:00): ask owners whose platform connection is about to lapse to
+   * reconnect. Meta's tokens expire every ~60 days with no server-side renewal,
+   * so this is a deadline we can see coming — the alternative is posting
+   * stopping with no explanation. See ReauthService.
+   */
+  @Cron('0 9 * * *')
+  async askForReauth(): Promise<void> {
+    if (!this.enabled) return;
+    await this.reauth
+      .sweep()
+      .catch((e) => this.log.warn(`reauth sweep failed: ${e.message}`));
+  }
+
+  /** Dev-endpoint passthrough: run the reauth sweep regardless of ENABLE_CRON. */
+  async askForReauthNow(): Promise<number> {
+    const { asked } = await this.reauth.sweep();
+    return asked;
   }
 
   /**

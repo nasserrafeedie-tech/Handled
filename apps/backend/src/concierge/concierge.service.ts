@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { Task } from '@smm/contracts';
+import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
@@ -938,7 +939,22 @@ export class ConciergeService {
     );
   }
 
-  private async resolveCustomer(phone: string) {
+  private async resolveCustomer(rawPhone: string) {
+    // Every inbound path funnels through here, so this is the one place that
+    // has to agree on spelling. Lookup is an exact match: if the stored number
+    // says "+14244098341" and this call says "4244098341", we don't find the
+    // owner and silently start them over from question one.
+    //
+    // Twilio always sends E.164, so a failure here means something unusual —
+    // a short code, or a country we don't serve. We keep the raw value rather
+    // than dropping the message, and log it loudly, because losing an inbound
+    // text is worse than storing an odd one.
+    const normalized = normalizePhone(rawPhone);
+    if (!normalized) {
+      this.log.error(`could not normalize inbound number "${rawPhone}" — storing as-is`);
+    }
+    const phone = normalized ?? rawPhone;
+
     let customer = await this.prisma.customer.findUnique({
       where: { phone },
       include: { conversation: true },

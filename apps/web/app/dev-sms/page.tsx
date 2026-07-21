@@ -25,7 +25,7 @@ const QUICK = [
 
 export default function DevSmsPage() {
   const api = process.env.NEXT_PUBLIC_API_URL;
-  const [phone, setPhone] = useState('+15551230099');
+  const [phone, setPhone] = useState('+14245550199');
   const [draft, setDraft] = useState('');
   const [thread, setThread] = useState<Bubble[]>([]);
   const [busy, setBusy] = useState(false);

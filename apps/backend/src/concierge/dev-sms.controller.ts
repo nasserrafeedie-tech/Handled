@@ -1,10 +1,11 @@
 import { Body, Controller, NotFoundException, Post } from '@nestjs/common';
 import { z } from 'zod';
+import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConciergeService } from './concierge.service';
 
 const SimBody = z.object({
-  from: z.string().min(3).describe('phone number, e.g. +15551234567'),
+  from: z.string().min(3).describe('phone number, e.g. +14245550199'),
   body: z.string().default(''),
   /** Simulate MMS attachments (any URL works offline). */
   mediaUrls: z.array(z.string().url()).default([]),
@@ -16,7 +17,7 @@ const SimBody = z.object({
  *
  *   curl -X POST localhost:3001/dev/sms \
  *     -H 'content-type: application/json' \
- *     -d '{"from":"+15551234567","body":"hi"}'
+ *     -d '{"from":"+14245550199","body":"hi"}'
  *
  * Returns whatever the Concierge texted back. Hidden in production unless
  * ALLOW_DEV_SMS=1 is set explicitly.
@@ -51,9 +52,10 @@ export class DevSmsController {
       mediaContentTypes: mediaUrls.map(() => 'image/jpeg'),
     });
 
-    // Echo back what the Concierge sent since t0, in order.
+    // Echo back what the Concierge sent since t0, in order. Look up by the
+    // normalized number, since that is what handleInbound just stored.
     const customer = await this.prisma.customer.findUnique({
-      where: { phone: from },
+      where: { phone: normalizePhone(from) ?? from },
       include: { conversation: true },
     });
     if (!customer?.conversation) return { replies: [] };

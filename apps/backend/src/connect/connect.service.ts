@@ -83,6 +83,8 @@ export class ConnectService {
 
     const remote = await this.pfm.listAccounts(customerId);
     for (const acct of remote) {
+      // Reconnecting restarts the clock, so this is set on both paths.
+      const expiresAt = expiryFor(acct.platform);
       await this.prisma.connectedAccount.upsert({
         where: {
           customerId_platform: { customerId, platform: acct.platform },
@@ -97,11 +99,15 @@ export class ConnectService {
           externalHandle: acct.username ?? null,
           scopes: [],
           revoked: false,
+          expiresAt,
         },
         update: {
           postForMeRef: acct.id,
           externalHandle: acct.username ?? null,
           revoked: false,
+          expiresAt,
+          // A fresh connection means the last reminder is spent.
+          reauthAskedAt: null,
         },
       });
     }
@@ -131,4 +137,25 @@ export class ConnectService {
       return 'pfm-managed';
     }
   }
+}
+
+/**
+ * How long a platform's authorization lasts before the owner has to grant it
+ * again. Post for Me holds the tokens but cannot extend them: Meta's limit is
+ * on the token itself, and renewing needs the owner present.
+ *
+ * Null means no known expiry — we won't chase an owner about a connection that
+ * has no deadline. Meta's documented window is 60 days; we record 59 so the
+ * reminder is always sent while the connection still works.
+ */
+const TOKEN_LIFETIME_DAYS: Partial<Record<Platform, number>> = {
+  instagram: 59,
+  facebook: 59,
+  threads: 59,
+};
+
+function expiryFor(platform: Platform, from = new Date()): Date | null {
+  const days = TOKEN_LIFETIME_DAYS[platform];
+  if (!days) return null;
+  return new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
 }

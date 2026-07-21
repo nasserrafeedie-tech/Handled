@@ -211,6 +211,12 @@ model ConnectedAccount {
   postForMeRef   String?  // Post for Me account reference
   externalHandle String?
   revoked        Boolean  @default(false)
+  // Meta's Business tokens last ~59 days and cannot be refreshed without the
+  // owner, so an expiry is a date we have to plan around rather than an error
+  // we handle. Null means "no known expiry" (some platforms don't lapse).
+  expiresAt      DateTime?
+  // When we last texted about reconnecting. Stops a daily sweep from nagging.
+  reauthAskedAt  DateTime?
   connectedAt    DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -218,6 +224,7 @@ model ConnectedAccount {
 
   @@unique([customerId, platform])
   @@index([customerId])
+  @@index([expiresAt])
   @@map("connected_accounts")
 }
 

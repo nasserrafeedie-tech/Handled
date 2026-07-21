@@ -20,6 +20,9 @@ export class IngestMediaHandler implements TaskHandler<'INGEST_MEDIA'> {
 
     // Integration point: fetch task.payload.source_url (Twilio media URL, which
     // requires Twilio basic auth) and stream it into R2; use the returned key.
+    // When that lands, run the bytes through detectMedia() in common/media-type
+    // and store what it reports rather than content_type above — the declared
+    // type is a claim from the carrier, and it is what we derive `kind` from.
     const r2Key = `owner/${task.customer_id}/${task.task_id}`;
 
     const asset = await this.prisma.mediaAsset.create({

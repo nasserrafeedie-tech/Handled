@@ -159,7 +159,7 @@ export function buildReadinessReport(): ReadinessReport {
           if (svc && !svc.startsWith('MG'))
             return 'Messaging Service SID should start with "MG".';
           if (from && !/^\+[1-9]\d{6,14}$/.test(from))
-            return `From-number should look like +15551234567 (got a value that doesn't).`;
+            return `From-number should look like +14245550199 (got a value that doesn't).`;
           return null;
         },
         okNote: 'Messaging service is set.',
