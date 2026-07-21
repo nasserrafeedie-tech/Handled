@@ -5,6 +5,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../operator/llm/llm.service';
 import { PlaybookService } from './playbook.service';
 import { ArchetypeFields, normalizeBusinessType, slugify } from './playbook.types';
+import {
+  researchWithSearch,
+  extractJsonObject,
+  MAX_SEARCHES_PER_PASS,
+  type ResearchSource,
+} from '../operator/llm/web-research';
 
 /**
  * Flow 2 — the self-updating part. A business type nothing in the playbook
@@ -18,15 +24,19 @@ import { ArchetypeFields, normalizeBusinessType, slugify } from './playbook.type
  *   `confidence`; a weak draft lands as `needs_review` rather than silently
  *   planning someone's month.
  *
- * Note on sources: this runs inside the product, which has no web-search tool,
- * so the draft is the model's own knowledge, honestly labelled as such
- * (`sources: [{ kind: "model_knowledge" }]`) and capped in confidence. A
- * genuine web-researched pass — the Cowork deep-research session — can
- * overwrite the row later with real citations and a higher ceiling.
+ * Sources: the draft runs against Anthropic's server-side `web_search` tool,
+ * so it is real research — every archetype carries the URLs Claude actually
+ * cited. If search is unavailable or returns nothing usable, the pass falls
+ * back to the model's own knowledge, labels the row honestly, and accepts a
+ * lower confidence ceiling. That distinction is what makes the store worth
+ * compounding: sourced knowledge outranks recall, and the row records which
+ * it is.
  */
 
-/** Rows drafted without web citations can't be trusted like researched ones. */
+/** A draft with no citations is recall, not research — cap it lower. */
 const NO_CITATION_CEILING = 0.8;
+/** Web-researched drafts can be trusted further, but never blindly. */
+const RESEARCHED_CEILING = 0.95;
 
 const Draft = ArchetypeFields.extend({
   title: z.string().min(1).max(80),
@@ -89,10 +99,14 @@ export class ArchetypeResearchService {
   ): Promise<PlaybookArchetype | null> {
     this.log.log(`researching new archetype for "${businessType}"`);
     try {
-      const draft = await this.draft(businessType);
+      const { draft, sources, searches } = await this.draft(businessType);
       const verdict = await this.verify(businessType, draft);
 
-      const confidence = Math.min(verdict.confidence, NO_CITATION_CEILING);
+      const researched = sources.length > 0;
+      const confidence = Math.min(
+        verdict.confidence,
+        researched ? RESEARCHED_CEILING : NO_CITATION_CEILING,
+      );
       const status = confidence >= 0.6 ? 'researched' : 'needs_review';
       const slug = await this.uniqueSlug(slugify(draft.title));
 
@@ -117,8 +131,11 @@ export class ArchetypeResearchService {
           revenueMetric: draft.revenueMetric,
           sources: [
             {
-              kind: 'model_knowledge',
-              note: 'Drafted from model knowledge, no web citations. Re-research with the deep-research pass to raise confidence.',
+              kind: researched ? 'web_research' : 'model_knowledge',
+              note: researched
+                ? `Researched on the live web (${searches} searches, ${sources.length} sources cited).`
+                : 'Web search unavailable — drafted from model knowledge. Re-research to raise confidence.',
+              citations: sources,
               verifierNotes: verdict.notes,
               weakFields: verdict.weakFields,
               at: new Date().toISOString(),
@@ -131,7 +148,8 @@ export class ArchetypeResearchService {
       });
 
       this.log.log(
-        `archetype "${slug}" created (${status}, confidence ${confidence.toFixed(2)})`,
+        `archetype "${slug}" created (${status}, confidence ${confidence.toFixed(2)}, ` +
+          `${researched ? `${sources.length} web sources` : 'model knowledge'})`,
       );
       // Keep the human doc in step. Never let a doc-write failure lose the row.
       await this.playbook
@@ -144,43 +162,78 @@ export class ArchetypeResearchService {
     }
   }
 
-  /** Draft every field of the archetype schema for this vertical. */
-  private async draft(businessType: string): Promise<z.infer<typeof Draft>> {
-    return this.llm.completeJson(
-      {
-        tier: 'voice',
-        cachedContext: [
-          'You write social-media strategy archetypes for a done-for-you',
-          'service used by small LOCAL businesses. Return ONLY JSON matching',
-          'the requested shape. Rules that make an archetype useful:',
-          '- Be SPECIFIC to the trade. "Show your work" is useless; "the fade',
-          '  taking shape mid-cut" is usable. Every idea must be executable by',
-          '  a busy owner with a phone.',
-          '- photoStyle and revenueMetric are single prose lines; every other',
-          '  field is an array of short items.',
-          '- mapsFrom lists the words owners actually use for this business.',
-          '- reels are 3-5 concepts whose payoff is visible in the first',
-          '  second. captionHooks are opening lines, in quotes.',
-          '- discovery covers local search: keyword phrasing, geotags, Google',
-          '  Business Profile, community tags.',
-          '- Never invent statistics or cite studies you cannot name.',
-          '- Respect trade-specific compliance in mistakes (patient privacy',
-          '  for health, consent for before/afters, licensing claims for',
-          '  contractors, no medical claims for wellness).',
-        ].join('\n'),
-        prompt: [
-          `Business type: "${businessType}"`,
-          '',
-          'Return JSON with keys: title (a short archetype name covering this',
-          'and similar businesses), mapsFrom[], platforms[], pillars[],',
-          'topFormats[], cadence[], reels[], photoStyle (string),',
-          'captionHooks[], discovery[], offers[], seasonal[], mistakes[],',
-          'revenueMetric (string).',
-        ].join('\n'),
-        maxTokens: 2000,
-      },
+  /**
+   * Research this vertical on the live web and draft the full archetype.
+   *
+   * Returns the draft plus the sources Claude cited. Falls back to the
+   * model's own knowledge (no sources) when search is unavailable — the
+   * caller lowers the confidence ceiling accordingly.
+   */
+  private async draft(
+    businessType: string,
+  ): Promise<{ draft: z.infer<typeof Draft>; sources: ResearchSource[]; searches: number }> {
+    const system = [
+      'You research social-media strategy for small LOCAL businesses and',
+      'return it as JSON. Search the web before answering — you are being',
+      'asked what actually works for this trade RIGHT NOW, not what you',
+      'remember. Prioritise: platform-published engagement data, 2025-2026',
+      'benchmark studies, and repeated patterns across real accounts in this',
+      'trade. Rules that make an archetype useful:',
+      '- Be SPECIFIC to the trade. "Show your work" is useless; "the fade',
+      '  taking shape mid-cut" is usable. Every idea must be executable by a',
+      '  busy owner with a phone in under a minute.',
+      '- photoStyle and revenueMetric are single prose lines; every other',
+      '  field is an array of short items.',
+      '- mapsFrom lists the words owners actually use for this business.',
+      '- reels are 3-5 concepts whose payoff is visible in the first second.',
+      '  captionHooks are opening lines, in quotes.',
+      '- discovery covers local search: keyword phrasing, geotags, Google',
+      '  Business Profile, community tags.',
+      '- Cite what you find. Never invent statistics.',
+      '- Respect trade-specific compliance in mistakes (patient privacy for',
+      '  health, consent for before/afters, licensing claims for contractors,',
+      '  no medical claims for wellness, child-photo rules for childcare).',
+      'End your reply with the JSON object and nothing after it.',
+    ].join('\n');
+
+    const prompt = [
+      `Business type: "${businessType}"`,
+      '',
+      'Research what drives engagement and local customers for this kind of',
+      'business on Instagram, TikTok, Facebook, and Google Business Profile.',
+      '',
+      'Then return a JSON object with keys: title (a short archetype name',
+      'covering this and similar businesses), mapsFrom[], platforms[],',
+      'pillars[], topFormats[], cadence[], reels[], photoStyle (string),',
+      'captionHooks[], discovery[], offers[], seasonal[], mistakes[],',
+      'revenueMetric (string).',
+    ].join('\n');
+
+    // Real research first; model knowledge only if that path fails.
+    try {
+      const { text, sources, searches } = await researchWithSearch({
+        model: process.env.LLM_MODEL_VOICE ?? 'claude-sonnet-5',
+        system,
+        prompt,
+        maxTokens: 4000,
+        maxSearches: MAX_SEARCHES_PER_PASS,
+      });
+      const draft = Draft.parse(JSON.parse(extractJsonObject(text)));
+      this.log.log(
+        `web research for "${businessType}": ${searches} searches, ${sources.length} sources`,
+      );
+      return { draft, sources, searches };
+    } catch (err) {
+      this.log.warn(
+        `web research failed for "${businessType}", falling back to model knowledge: ${String(err)}`,
+      );
+    }
+
+    const draft = await this.llm.completeJson(
+      { tier: 'voice', cachedContext: system, prompt, maxTokens: 2000 },
       Draft,
     );
+    return { draft, sources: [], searches: 0 };
   }
 
   /** Cheap adversarial pass: is this specific and trustworthy, or filler? */
@@ -223,12 +276,11 @@ export class ArchetypeResearchService {
    * Flow 3 — weekly freshness. Algorithms move, so an archetype older than
    * ~180 days (90 for heavily-used ones) is stale.
    *
-   * Deliberate limit: this pass only RE-DRAFTS archetypes this engine wrote
-   * from model knowledge. The seed archetypes came from a real web-research
-   * pass with citations, and overwriting those with un-sourced model output
-   * would quietly downgrade the playbook — so stale seed rows are flagged
-   * `needs_review` for a proper research session instead. Refreshing those
-   * well is the deep-research pass's job, not a cron's.
+   * Re-researches archetypes the engine wrote itself, on the live web. Seed
+   * rows — the hand-curated ones from social-playbook.md — are flagged for
+   * review rather than auto-rewritten: a human curated those, and a cron
+   * shouldn't silently replace them. A refresh that scores materially worse
+   * than the row it would replace is discarded.
    */
   async refreshStale(limit = 3): Promise<{
     refreshed: string[];
@@ -248,24 +300,19 @@ export class ArchetypeResearchService {
       const staleAfter = row.usageCount >= 5 ? 90 : 180;
       if (ageDays < staleAfter) continue;
 
-      const sources = Array.isArray(row.sources) ? (row.sources as unknown[]) : [];
-      const selfWritten =
-        sources.length > 0 &&
-        sources.every(
-          (s) => (s as { kind?: string })?.kind === 'model_knowledge',
+      // Seed rows came from a human research pass with a curated doc; this job
+      // won't silently rewrite those. Everything the engine wrote itself —
+      // whether from the web or from recall — is fair game to re-research,
+      // and the confidence guard below stops a worse draft from landing.
+      if (row.status === 'seed') {
+        await this.prisma.playbookArchetype.update({
+          where: { slug: row.slug },
+          data: { status: 'needs_review' },
+        });
+        flagged.push(row.slug);
+        this.log.log(
+          `seed archetype "${row.slug}" is ${Math.round(ageDays)} days old — flagged for review rather than auto-rewritten`,
         );
-
-      if (!selfWritten) {
-        if (row.status !== 'needs_review') {
-          await this.prisma.playbookArchetype.update({
-            where: { slug: row.slug },
-            data: { status: 'needs_review' },
-          });
-          flagged.push(row.slug);
-          this.log.log(
-            `archetype "${row.slug}" is ${Math.round(ageDays)} days old and web-sourced — flagged for a real research pass`,
-          );
-        }
         continue;
       }
 
@@ -273,9 +320,13 @@ export class ArchetypeResearchService {
 
       try {
         const seedType = row.mapsFrom[0] ?? row.title;
-        const draft = await this.draft(seedType);
+        const { draft, sources, searches } = await this.draft(seedType);
         const verdict = await this.verify(seedType, draft);
-        const confidence = Math.min(verdict.confidence, NO_CITATION_CEILING);
+        const researched = sources.length > 0;
+        const confidence = Math.min(
+          verdict.confidence,
+          researched ? RESEARCHED_CEILING : NO_CITATION_CEILING,
+        );
 
         // Never let a worse draft replace a better one.
         if (confidence + 0.05 < row.confidence) {
@@ -310,8 +361,11 @@ export class ArchetypeResearchService {
             researchedAt: new Date(),
             sources: [
               {
-                kind: 'model_knowledge',
-                note: 'Refreshed by the weekly freshness job.',
+                kind: researched ? 'web_research' : 'model_knowledge',
+                note: researched
+                  ? `Refreshed by the weekly freshness job (${searches} searches, ${sources.length} sources).`
+                  : 'Refreshed by the weekly freshness job from model knowledge — web search unavailable.',
+                citations: sources,
                 verifierNotes: verdict.notes,
                 weakFields: verdict.weakFields,
                 at: new Date().toISOString(),
