@@ -198,6 +198,27 @@ export default function BillingPage() {
           <p className="mt-8 text-center text-sm text-clay-700">{note}</p>
         )}
 
+        {/* The guarantee. Placed under the buttons rather than in the footer
+            because it exists to answer the last thought someone has before
+            paying — "what if it's no good?" — and it can only do that where
+            the decision is actually made. */}
+        <Reveal delay={360}>
+          <div className="mx-auto mt-12 max-w-xl rounded-4xl border border-ink/10 bg-white/70 px-8 py-7 text-center shadow-soft">
+            <p className="eyebrow mb-3">✳ Our guarantee</p>
+            <p className="font-display text-xl leading-snug">
+              Give it a month. If you don&rsquo;t like the work,{' '}
+              <span className="wonk italic text-clay-600">
+                we&rsquo;ll refund it.
+              </span>
+            </p>
+            <p className="mt-3 text-[15px] leading-relaxed text-ink/65">
+              Your whole first month back, no questions and no forms — just text
+              us. After that, cancel any time and you won&rsquo;t be billed
+              again.
+            </p>
+          </div>
+        </Reveal>
+
         <p className="mt-10 text-center text-sm text-ink/60">
           Not sure which fits?{' '}
           <span className="font-medium text-clay-700">

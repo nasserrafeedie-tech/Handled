@@ -95,11 +95,19 @@ export default function TermsPage() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="font-display text-xl font-medium">Payment</h2>
+        <h2 className="font-display text-xl font-medium">Payment &amp; our guarantee</h2>
         <p className="text-ink/75">
           Subscriptions are billed on a recurring basis through our payment
           processor. You can cancel at any time; cancellation stops future
           billing and ends the service at the end of the current period.
+        </p>
+        <p className="text-ink/75">
+          <strong>First month guarantee.</strong> If you are not happy with the
+          work in your first month, tell us within 30 days of your first payment
+          and we will refund that payment in full. One refund per business, and
+          it applies to your first month only — after that, cancelling stops
+          future billing but does not refund the current period. Ask us by text
+          or at the support address below; there is no form to fill in.
         </p>
       </section>
 
