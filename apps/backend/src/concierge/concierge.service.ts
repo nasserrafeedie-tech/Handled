@@ -21,6 +21,7 @@ import {
   tomorrowMorningInZone,
 } from '../common/time';
 import { z } from 'zod';
+import { strategySummary } from './strategy-summary';
 
 /** Shape of a grounded question-answer from the LLM. */
 const AnswerOutput = z.object({ reply: z.string().min(1).max(600) });
@@ -127,6 +128,17 @@ export class ConciergeService {
         "Done — back to how it was: nothing goes out without your OK.",
       );
     }
+    // PLAN / STRATEGY: show the owner what they're paying for. Handled has no
+    // dashboard by design, but "no dashboard" shouldn't mean "no visibility" —
+    // so the plan is legible over the same channel as everything else.
+    if (kw === 'plan' || kw === 'strategy') {
+      return this.reply(
+        customer.phone,
+        conversation.id,
+        await this.buildStrategySummary(customer.id),
+      );
+    }
+
     // RESET: wipe the brand profile and redo the interview from the top.
     // Scheduled posts stay put; only the profile (and its strategy) resets.
     if (kw === 'reset') {
@@ -534,6 +546,45 @@ export class ConciergeService {
   }
 
   /**
+   * Assemble the owner-facing plan summary. Shared by the PLAN keyword and by
+   * the question-answering path, so "what's my strategy?" and "PLAN" agree.
+   */
+  private async buildStrategySummary(customerId: string): Promise<string> {
+    const [customer, profile, upcoming, postedLast30] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: customerId } }),
+      this.prisma.brandProfile.findUnique({ where: { customerId } }),
+      this.prisma.post.findMany({
+        where: { customerId, status: { in: ['approved', 'scheduled'] } },
+        orderBy: { scheduledTime: 'asc' },
+        take: 3,
+        select: { caption: true, scheduledTime: true, status: true },
+      }),
+      this.prisma.post.count({
+        where: {
+          customerId,
+          status: 'published',
+          updatedAt: { gte: new Date(Date.now() - 30 * 24 * 3600 * 1000) },
+        },
+      }),
+    ]);
+    const archetype = customer?.archetypeSlug
+      ? await this.prisma.playbookArchetype.findUnique({
+          where: { slug: customer.archetypeSlug },
+        })
+      : null;
+
+    return strategySummary({
+      profile,
+      archetype,
+      archetypeConfidence: customer?.archetypeConfidence ?? null,
+      businessName: customer?.businessName ?? null,
+      timezone: customer?.timezone ?? 'America/Los_Angeles',
+      upcoming,
+      postedLast30,
+    });
+  }
+
+  /**
    * A real answer to a real question — grounded in this customer's actual
    * state so the model can't invent features. Replaces the canned "Happy to
    * help!" that used to dead-end every question (and repeat itself).
@@ -566,7 +617,11 @@ export class ConciergeService {
           ? `Open photo/video asks they still owe: ${openAsks.map((a) => a.prompt).join(' | ')}. They upload at ${site}/upload?c=${customerId}`
           : 'No photo asks are open right now.',
         `They connect social accounts at ${site}/connect?c=${customerId} (we never see passwords).`,
-        'Keywords that always work: STOP, HELP, UPGRADE, REFER, AUTOPILOT, MANUAL, RESET (redo profile).',
+        'Keywords that always work: STOP, HELP, UPGRADE, REFER, AUTOPILOT, MANUAL, PLAN (see their strategy), RESET (redo profile).',
+        '',
+        'THEIR CURRENT PLAN (quote from this if they ask what you are doing',
+        'for them, what their strategy is, or what is coming up):',
+        await this.buildStrategySummary(customerId),
       ].join('\n');
       const { reply } = await this.llm.completeJson(
         {

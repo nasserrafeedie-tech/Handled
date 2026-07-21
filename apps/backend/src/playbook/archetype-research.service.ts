@@ -151,6 +151,14 @@ export class ArchetypeResearchService {
         `archetype "${slug}" created (${status}, confidence ${confidence.toFixed(2)}, ` +
           `${researched ? `${sources.length} web sources` : 'model knowledge'})`,
       );
+
+      // Anyone parked on a weak partial match whose business this new
+      // archetype actually describes gets upgraded. Without this, a customer
+      // whose research failed on signup day is stuck with a wrong strategy
+      // forever — and now that owners can read their plan, "wrong" is visible.
+      await this.rescueWeakMatches(row).catch((e) =>
+        this.log.warn(`re-attach sweep failed for "${slug}": ${String(e)}`),
+      );
       // Keep the human doc in step. Never let a doc-write failure lose the row.
       await this.playbook
         .regenerateDoc()
@@ -396,6 +404,43 @@ export class ArchetypeResearchService {
         .catch((e) => this.log.warn(`doc regen after refresh failed: ${String(e)}`));
     }
     return { refreshed, flagged };
+  }
+
+  /**
+   * Move customers off a low-confidence guess onto a freshly researched
+   * archetype that genuinely covers them. Conservative on purpose: only
+   * customers below the confident bar, and only when their own words match
+   * one of the new archetype's synonyms.
+   */
+  private async rescueWeakMatches(row: PlaybookArchetype): Promise<void> {
+    const stranded = await this.prisma.customer.findMany({
+      where: {
+        archetypeConfidence: { lt: 0.75 },
+        NOT: { archetypeSlug: row.slug },
+        status: { in: ['active', 'onboarding'] },
+      },
+      select: { id: true, archetypeSlug: true, brandProfile: { select: { businessType: true } } },
+    });
+    if (stranded.length === 0) return;
+
+    const synonyms = [row.title, ...row.mapsFrom]
+      .map(normalizeBusinessType)
+      .filter((s) => s.length >= 4);
+
+    for (const c of stranded) {
+      const needle = normalizeBusinessType(c.brandProfile?.businessType ?? '');
+      if (!needle) continue;
+      const matches = synonyms.some(
+        (syn) => needle === syn || needle.includes(syn) || syn.includes(needle),
+      );
+      if (!matches) continue;
+
+      await this.playbook.attach(c.id, row.slug, row.confidence);
+      this.log.log(
+        `re-attached ${c.id} from "${c.archetypeSlug ?? 'none'}" to "${row.slug}" ` +
+          `(business: "${c.brandProfile?.businessType}")`,
+      );
+    }
   }
 
   /** "florists" already taken → "florists-2". */
