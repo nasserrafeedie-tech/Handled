@@ -134,7 +134,7 @@ describe('revenue', () => {
       cust({ planTier: 'growth' }),
       cust({ planTier: 'pro' }),
     ]).build(NOW);
-    assert.equal(m.revenue.mrrUsd, 99 + 349 * 2 + 699);
+    assert.equal(m.revenue.mrrUsd, 95 + 349 * 2 + 699);
   });
 
   it('counts only active customers toward MRR', async () => {
@@ -186,10 +186,10 @@ describe('cost to serve', () => {
 
   it('reports cost as a share of MRR, which is the number that matters', async () => {
     const m = await build(
-      [cust({ id: 'c1', planTier: 'starter' })], // $99
+      [cust({ id: 'c1', planTier: 'starter' })], // $95
       [use({ customerId: 'c1', outputTokens: 1_000_000 })], // $5
     ).build(NOW);
-    assert.ok(Math.abs((m.cost.pctOfMrr ?? 0) - (5 / 99) * 100) < 1e-9);
+    assert.ok(Math.abs((m.cost.pctOfMrr ?? 0) - (5 / 95) * 100) < 1e-9);
   });
 
   it('does not divide by zero when there is no revenue', async () => {

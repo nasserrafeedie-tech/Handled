@@ -131,7 +131,7 @@ export function SiteFooter() {
         <div className="mt-12 flex flex-col items-start justify-between gap-3 border-t border-ink/10 pt-6 font-mono text-[11px] text-ink/55 sm:flex-row sm:items-center">
           <span>© {new Date().getFullYear()} Handled</span>
           <span>
-            No dashboard. No passwords. Reply STOP any time.
+            Nothing to log into. Reply STOP any time.
           </span>
         </div>
       </div>

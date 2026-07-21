@@ -52,7 +52,7 @@ export default function OpengraphImage() {
             Your social media, handled.
           </div>
           <div style={{ display: 'flex', fontSize: '32px', color: '#6d6357' }}>
-            Done-for-you posts for small businesses — run entirely over text.
+            We make the posts. You approve them by text.
           </div>
         </div>
 
@@ -75,7 +75,7 @@ export default function OpengraphImage() {
               display: 'flex',
             }}
           />
-          No dashboard. No passwords. Cancel anytime.
+          Nothing to log into, and the first month is refundable.
         </div>
       </div>
     ),

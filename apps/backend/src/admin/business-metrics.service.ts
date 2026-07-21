@@ -51,7 +51,7 @@ export interface BusinessMetrics {
 
 /** What each tier bills monthly. */
 const TIER_PRICE: Record<string, number> = {
-  starter: 99,
+  starter: 95,
   growth: 349,
   pro: 699,
 };

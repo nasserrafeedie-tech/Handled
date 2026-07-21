@@ -17,7 +17,7 @@ const PLANS: {
   {
     id: 'starter',
     name: 'Starter',
-    price: '$99',
+    price: '$95',
     cadence: '/mo',
     blurb: 'For a single location just getting consistent.',
     features: [

@@ -30,8 +30,8 @@ const STEPS = [
   },
   {
     n: '02',
-    title: 'We plan, write & design',
-    body: 'We write the week of posts and make the graphics, then text you what we came up with.',
+    title: 'We make the week’s posts',
+    body: 'We write them and make the graphics, then text you what we came up with.',
   },
   {
     n: '03',
@@ -284,8 +284,9 @@ export default function Home() {
                 </h3>
                 <p className="mt-3 text-[15px] leading-relaxed text-ink/65">
                   Send a few 10-second clips from your phone and we cut them
-                  into a branded reel — your colors, your type, a hook in the
-                  first three seconds. Real footage, never AI video.
+                  into a reel in your colors, with something worth watching in
+                  the first three seconds. It is your real footage. We never
+                  generate video.
                 </p>
               </div>
             </div>
@@ -293,10 +294,12 @@ export default function Home() {
 
           <Reveal delay={120}>
             <p className="mx-auto mt-14 max-w-2xl text-center text-[15px] leading-relaxed text-ink/60">
-              Every caption is written the way the platforms actually rank in
-              2026 — the hook inside the first 125 characters, plain search
-              keywords early, and a reason to forward or save it. A DM share is
-              worth several times a like for reaching new people.
+              Captions are written for how the platforms actually work now. The
+              hook goes in the first 125 characters, because that is all anyone
+              reads before the caption cuts off. Plain search words go near the
+              top, since these apps are search engines now. And every post is
+              written to be sent to someone — one share into a DM does more for
+              reaching new people than a dozen likes.
             </p>
           </Reveal>
         </div>
@@ -405,8 +408,9 @@ export default function Home() {
               posting?
             </h2>
             <p className="mx-auto mt-6 max-w-md text-paper/60">
-              Pick a plan and we’ll take it from there — the rest happens in
-              your messages.
+              Leave your number and we’ll text you. That first message is
+              where it starts, and it is the same place everything else
+              happens.
             </p>
             <div className="mx-auto mt-10 flex max-w-md flex-col items-center gap-4">
               <LeadForm source="homepage-cta" />

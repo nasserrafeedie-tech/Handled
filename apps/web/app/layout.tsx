@@ -36,11 +36,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: 'Handled — Your social media, handled',
   description:
-    'Done-for-you social media for small businesses, run entirely over text. The calm alternative to a $1,500/mo agency.',
+    'We write and post your social media, and you approve it by text. An agency charges $1,500 a month for the same work.',
   openGraph: {
     title: 'Handled — Your social media, handled',
     description:
-      'Done-for-you social media for small businesses, run entirely over text. The calm alternative to a $1,500/mo agency.',
+      'We write and post your social media, and you approve it by text. An agency charges $1,500 a month for the same work.',
     url: siteUrl,
     siteName: 'Handled',
     type: 'website',
@@ -49,7 +49,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Handled — Your social media, handled',
     description:
-      'Done-for-you social media for small businesses, run entirely over text.',
+      'We write and post your social media, and you approve it by text.',
   },
   icons: {
     apple: '/apple-touch-icon.png',

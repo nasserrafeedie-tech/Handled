@@ -5,29 +5,29 @@ import { Reveal, RisingWords } from '../_components/motion';
 export const metadata: Metadata = {
   title: 'About — Handled',
   description:
-    'Why Handled exists: giving small businesses the calm, done-for-you social media presence that used to be reserved for companies with a marketing budget.',
+    'Why Handled exists: the kind of social media presence that used to need a marketing budget, run for local businesses over text.',
 };
 
 const BELIEFS = [
   {
     n: '01',
-    title: 'Small businesses deserve big-business polish',
-    body: 'A great café or salon shouldn’t look worse online than a chain with a marketing team. We close that gap without the agency price tag.',
+    title: 'A good shop shouldn’t look worse than a chain',
+    body: 'The chain down the street has a marketing department. You have a Tuesday afternoon, if that. Closing that gap used to mean hiring an agency, and it doesn’t anymore.',
   },
   {
     n: '02',
-    title: 'Software should feel like a person',
-    body: 'No dashboards, no logins, no “onboarding.” You text us like you’d text a capable friend, and things just get handled.',
+    title: 'You should be able to just ask',
+    body: 'There is nothing to log into and nothing to learn. You text us the way you’d text someone who works for you, and it gets done.',
   },
   {
     n: '03',
-    title: 'You stay in control',
-    body: 'Nothing goes out that you haven’t okayed — until you decide you trust us enough to run parts of it on autopilot. Trust is earned, not assumed.',
+    title: 'Nothing goes out until you say so',
+    body: 'You see every post first. Later, if you’d rather we just handled the routine ones, tell us and we will — but that stays your call, and you can take it back whenever you like.',
   },
   {
     n: '04',
-    title: 'Honest work, honestly priced',
-    body: 'No contracts, no lock-in, no surprise fees. If we’re not earning our keep, you cancel with a single text.',
+    title: 'Easy to leave',
+    body: 'There is no contract and no notice period. If we stop being worth the money, one text ends it, and your first month is refundable anyway.',
   },
 ];
 
@@ -49,11 +49,9 @@ export default function AboutPage() {
             className="mt-8 max-w-2xl animate-fade-in text-lg leading-relaxed text-ink/70"
             style={{ animationDelay: '800ms' }}
           >
-            Handled plans, writes, designs, and publishes social media for local
-            businesses — almost entirely on its own, and entirely over text. We
-            built it for the owners who are brilliant at what they do and simply
-            don’t have another ten hours a week to spend fighting with
-            Instagram.
+            Handled runs the social media for local businesses, and it runs on
+            text messages. We built it for owners who are good at the thing they
+            actually do and don’t have ten hours a week left over for Instagram.
           </p>
         </div>
       </section>
@@ -132,8 +130,8 @@ export default function AboutPage() {
               <span className="italic text-clay-300">off your plate.</span>
             </h2>
             <p className="mx-auto mt-5 max-w-md text-paper/60">
-              Pick a plan and we’ll handle the rest — the whole thing runs in
-              your messages.
+              Pick a plan and the next thing that happens is a text from us.
+              Your first month is refundable if it isn’t what you hoped.
             </p>
             <a href="/billing" className="btn-clay mt-9">
               See plans

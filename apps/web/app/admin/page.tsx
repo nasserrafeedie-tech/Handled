@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
  */
 
 const PLAN_PRICE: Record<string, string> = {
-  starter: '$99/mo',
+  starter: '$95/mo',
   growth: '$349/mo',
   pro: '$699/mo',
 };
