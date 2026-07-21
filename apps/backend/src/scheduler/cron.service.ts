@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomUUID } from 'node:crypto';
 import type { Task } from '@smm/contracts';
-import type { CalendarSlot } from '@smm/contracts';
+import type { CalendarSlot, DraftPostResult } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
@@ -101,7 +101,7 @@ export class CronService {
     let drafted = 0;
     for (const slot of slots) {
       try {
-        await this.emit(customerId, 'DRAFT_POST', {
+        const draft = await this.emit(customerId, 'DRAFT_POST', {
           platform: slot.platform,
           archetype: slot.archetype,
           scheduled_time: zonedToUtc(slot.date, slot.best_time, tz).toISOString(),
@@ -109,6 +109,20 @@ export class CronService {
           shot_list_hint: slot.shot_list,
         });
         drafted++;
+
+        // The draft has no photo of the owner's and they've asked us to make
+        // one. Started here rather than inside the draft handler, which cannot
+        // dispatch tasks without closing a dependency loop. Failures are
+        // logged, never fatal: a post without a picture still goes out.
+        const drafted_ = (draft as { data?: DraftPostResult })?.data;
+        if (drafted_?.needs_image) {
+          await this.emit(customerId, 'GENERATE_IMAGE', {
+            post_id: drafted_.post_id,
+            aspect: '1:1',
+          }).catch((e) =>
+            this.log.warn(`image for ${drafted_.post_id} failed: ${e.message}`),
+          );
+        }
       } catch (e) {
         // One bad draft shouldn't cost the owner their whole week.
         this.log.warn(

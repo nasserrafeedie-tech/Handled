@@ -28,6 +28,7 @@ import {
 } from '../common/time';
 import { z } from 'zod';
 import { strategySummary } from './strategy-summary';
+import { OWNER_CONSENT_COPY } from '../operator/graphics/image-prompt';
 
 /**
  * Intents that DO something, as opposed to being answered. Only these are
@@ -37,6 +38,8 @@ import { strategySummary } from './strategy-summary';
 const ACTIONABLE: ReadonlySet<OwnerIntent> = new Set([
   'autopilot_on',
   'autopilot_off',
+  'ai_images_on',
+  'ai_images_off',
   'start_over',
 ]);
 
@@ -55,6 +58,13 @@ const CONFIRMATIONS: Record<string, string> = {
     'Want me to rebuild your profile from scratch? That clears what I know ' +
     "about your business and we'd redo the questions — anything already " +
     'scheduled stays put. Say yes and we start fresh.',
+  // Longer than the others on purpose. Agreeing to this changes how the
+  // business shows itself to its own customers, so the owner should know
+  // exactly what these pictures are before saying yes.
+  ai_images_on: OWNER_CONSENT_COPY,
+  ai_images_off:
+    "Want me to stop making pictures? I'll go back to asking you for photos " +
+    'when a post needs one.',
 };
 
 /** Shape of a grounded question-answer from the LLM. */
@@ -296,6 +306,31 @@ export class ConciergeService {
           phone,
           conversationId,
           "Done — back to how it was: nothing goes out without your OK.",
+        );
+
+      case 'ai_images_on':
+        await this.prisma.customer.update({
+          where: { id: customerId },
+          data: { aiImagesOptIn: true, aiImagesOptInAt: new Date() },
+        });
+        return this.reply(
+          phone,
+          conversationId,
+          "Done — when a post needs a picture and you haven't sent one, I'll " +
+            "make one. You'll still see every post before it goes out, and if " +
+            'you text me a real photo I\'ll always use that instead.',
+        );
+
+      case 'ai_images_off':
+        await this.prisma.customer.update({
+          where: { id: customerId },
+          data: { aiImagesOptIn: false },
+        });
+        return this.reply(
+          phone,
+          conversationId,
+          "Done — no more made-up pictures. I'll ask you for a photo when a " +
+            'post needs one.',
         );
 
       case 'start_over':

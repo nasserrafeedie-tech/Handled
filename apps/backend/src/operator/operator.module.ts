@@ -7,6 +7,7 @@ import { PublishGateService } from './guardrails/publish-gate.service';
 import { TokenCryptoService } from './security/token-crypto.service';
 import { PostForMeService } from './publishing/post-for-me.service';
 import { GraphicsService } from './graphics/graphics.service';
+import { ImageGenService } from './graphics/image-gen.service';
 import { BrandIdentityService } from './branding/brand-identity.service';
 import { ReelService } from './video/reel.service';
 import { StorageService } from '../common/storage.service';
@@ -22,6 +23,7 @@ import { IngestMediaHandler } from './handlers/ingest-media.handler';
 import { UpdateBrandProfileHandler } from './handlers/update-brand-profile.handler';
 import { PauseCustomerHandler } from './handlers/pause-customer.handler';
 import { MakeGraphicHandler } from './handlers/make-graphic.handler';
+import { GenerateImageHandler } from './handlers/generate-image.handler';
 
 @Module({
   providers: [
@@ -32,6 +34,7 @@ import { MakeGraphicHandler } from './handlers/make-graphic.handler';
     TokenCryptoService,
     PostForMeService,
     GraphicsService,
+    ImageGenService,
     BrandIdentityService,
     ReelService,
     StorageService,
@@ -47,6 +50,7 @@ import { MakeGraphicHandler } from './handlers/make-graphic.handler';
     UpdateBrandProfileHandler,
     PauseCustomerHandler,
     MakeGraphicHandler,
+    GenerateImageHandler,
     AssembleReelHandler,
     // registry, exposed to the TaskBus under the abstract token
     OperatorService,

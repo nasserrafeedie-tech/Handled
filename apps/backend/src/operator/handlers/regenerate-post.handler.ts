@@ -85,6 +85,10 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
       media_refs: post.mediaRefs,
       scheduled_time: post.scheduledTime ? post.scheduledTime.toISOString() : null,
       risk_level: risk,
+      // Rewording a caption should not also buy a new picture. An owner asking
+      // for different words would otherwise pay for a fresh generation each
+      // time they nudge the copy.
+      needs_image: false,
     };
     return ok(task.task_id, `Reworked it: "${gen.caption.slice(0, 120)}"`, 'pending_approval', data);
   }

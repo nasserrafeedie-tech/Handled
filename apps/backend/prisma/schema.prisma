@@ -116,6 +116,12 @@ model Customer {
   // questions; the owner can correct it in conversation.
   timezone        String         @default("America/Los_Angeles")
   planTier        String         @default("starter")
+  // Generated photography is opt-in and off by default. Not because of the
+  // plan tier — that gates access — but because posting model-made imagery is
+  // a decision about how the business represents itself, and it is the owner's
+  // to make. See OWNER_CONSENT_COPY in graphics/image-prompt.ts.
+  aiImagesOptIn   Boolean        @default(false)
+  aiImagesOptInAt DateTime?
   trustLevel      TrustLevel     @default(approve_all) // §8: everyone starts here
   status          CustomerStatus @default(onboarding)
   stripeCustomerId String?       @unique
@@ -287,6 +293,13 @@ model Post {
   // (promo, behind_the_scenes) — a different axis entirely. Stamped at draft
   // time so per-archetype performance can be aggregated later (engine Flow 4).
   playbookSlug    String?
+  // Whether any attached image was made by a model rather than a camera.
+  // Stored explicitly instead of derived from the media rows because it has to
+  // travel to the platform: Instagram and TikTok both require AI-generated
+  // content to be declared, and TikTok takes it as a field on the publish call.
+  // A disclosure that depends on a join is a disclosure that will eventually
+  // be missed.
+  aiGeneratedMedia Boolean        @default(false)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 

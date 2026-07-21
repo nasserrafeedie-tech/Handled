@@ -245,6 +245,12 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       );
     }
 
+    // No photo of their own, and they've asked us to make them one. Reported
+    // rather than emitted: a handler dispatching through the TaskBus would
+    // close a loop (TaskBus → OperatorService → this handler → TaskBus), so
+    // the caller starts the follow-up task instead.
+    const needsImage = !bankedPhoto && customer.aiImagesOptIn;
+
     const data: DraftPostResult = {
       post_id: post.id,
       platform,
@@ -254,6 +260,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       media_refs: [],
       scheduled_time: post.scheduledTime ? post.scheduledTime.toISOString() : null,
       risk_level: risk,
+      needs_image: needsImage,
     };
 
     const status: Result['status'] = decision.autoPublishAllowed

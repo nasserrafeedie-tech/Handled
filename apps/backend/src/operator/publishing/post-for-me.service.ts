@@ -7,6 +7,12 @@ export interface PublishRequest {
   caption: string;
   hashtags: string[];
   mediaUrls: string[];
+  /**
+   * Whether any attached image was made by a model. Instagram and TikTok
+   * require this to be declared — TikTok takes it as a field on the publish
+   * call (`video_made_with_ai` on its own API).
+   */
+  aiGenerated?: boolean;
 }
 
 export interface PublishOutcome {
@@ -106,11 +112,24 @@ export class PostForMeService {
       .filter(Boolean)
       .join('\n\n');
 
+    if (req.aiGenerated) {
+      // UNVERIFIED: the field name below is our best reading of how Post for Me
+      // exposes AI disclosure, and it has not been confirmed against their API.
+      // The consequence of getting it wrong lands on the owner's account, not
+      // ours, so it is logged every time until someone checks the docs and
+      // either confirms the key or replaces it.
+      this.log.warn(
+        `publishing AI-generated media to ${req.platform} — disclosure field ` +
+          'not yet verified against the Post for Me API',
+      );
+    }
+
     const data = await this.call<{ id: string }>('POST', '/v1/posts', {
       social_accounts: [req.postForMeRef],
       platform: req.platform,
       caption,
       media: req.mediaUrls.map((url) => ({ url })),
+      ...(req.aiGenerated ? { is_ai_generated: true } : {}),
     });
     return { externalPostId: data.id };
   }

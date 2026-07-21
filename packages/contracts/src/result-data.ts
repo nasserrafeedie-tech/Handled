@@ -16,7 +16,12 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
  * letter. Normalize to the canonical form before validating; what we STORE
  * stays exactly the enum, so nothing downstream has to be case-aware.
  */
-const lenientEnum = <T extends readonly [string, ...string[]]>(e: z.ZodEnum<T>) =>
+// The constraint has to be the mutable tuple, not a readonly one: that is what
+// z.ZodEnum itself is declared with, and `readonly` here does not widen to it.
+// Getting this wrong broke `tsc -p packages/contracts` while leaving the
+// backend compiling against an already-built dist/, so local builds looked fine
+// and only the deploy failed.
+const lenientEnum = <T extends [string, ...string[]]>(e: z.ZodEnum<T>) =>
   z.preprocess(
     (v) =>
       typeof v === 'string'
@@ -68,6 +73,10 @@ export const DraftPostResult = z
     media_refs: z.array(z.string()),
     scheduled_time: iso8601.nullable(),
     risk_level: z.enum(['low', 'high']),
+    // The owner has no photo banked for this one and has asked us to make
+    // pictures. The caller starts GENERATE_IMAGE — the handler cannot, because
+    // dispatching through the TaskBus from inside a handler is circular.
+    needs_image: z.boolean().default(false),
   })
   .strict();
 export type DraftPostResult = z.infer<typeof DraftPostResult>;

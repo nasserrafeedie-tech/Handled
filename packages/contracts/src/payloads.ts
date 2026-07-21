@@ -182,6 +182,18 @@ export const MakeGraphicPayload = z
   .strict();
 export type MakeGraphicPayload = z.infer<typeof MakeGraphicPayload>;
 
+// ── GENERATE_IMAGE ─────────────────────────────────────────────────────────
+// Owner has no photo and asked us to make one. Produces a photograph of the
+// KIND of thing this business sells — never a depiction of their actual
+// premises, and never of a person. Guardrails live in graphics/image-prompt.ts.
+export const GenerateImagePayload = z
+  .object({
+    post_id: uuid.describe('the post this image is for'),
+    aspect: z.enum(['1:1', '4:5']).default('1:1'),
+  })
+  .strict();
+export type GenerateImagePayload = z.infer<typeof GenerateImagePayload>;
+
 // ── PAUSE_CUSTOMER ─────────────────────────────────────────────────────────
 // Kill switch (§8). Halt all scheduled publishing immediately.
 export const PauseCustomerPayload = z

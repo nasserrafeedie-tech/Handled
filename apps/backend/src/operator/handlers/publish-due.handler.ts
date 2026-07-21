@@ -82,6 +82,10 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
           caption: post.caption ?? '',
           hashtags: post.hashtags,
           mediaUrls: this.resolveMediaUrls(post.id, post.mediaRefs),
+          // Instagram and TikTok both require model-made imagery to be
+          // declared. Undisclosed AI content is a risk to the owner's account,
+          // not ours, so this travels with every publish.
+          aiGenerated: post.aiGeneratedMedia,
         });
         await this.prisma.post.update({
           where: { id: post.id },

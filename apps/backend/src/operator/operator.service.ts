@@ -13,6 +13,7 @@ import { IngestMediaHandler } from './handlers/ingest-media.handler';
 import { UpdateBrandProfileHandler } from './handlers/update-brand-profile.handler';
 import { PauseCustomerHandler } from './handlers/pause-customer.handler';
 import { MakeGraphicHandler } from './handlers/make-graphic.handler';
+import { GenerateImageHandler } from './handlers/generate-image.handler';
 import { AssembleReelHandler } from './handlers/assemble-reel.handler';
 
 /**
@@ -37,6 +38,7 @@ export class OperatorService implements OperatorRegistry {
     updateProfile: UpdateBrandProfileHandler,
     pause: PauseCustomerHandler,
     makeGraphic: MakeGraphicHandler,
+    generateImage: GenerateImageHandler,
     assembleReel: AssembleReelHandler,
   ) {
     for (const h of [
@@ -51,6 +53,7 @@ export class OperatorService implements OperatorRegistry {
       updateProfile,
       pause,
       makeGraphic,
+      generateImage,
       assembleReel,
     ] as TaskHandler[]) {
       this.handlers.set(h.type, h);

@@ -35,6 +35,8 @@ export type OwnerIntent =
   | 'autopilot_off'
   | 'upgrade'
   | 'refer'
+  | 'ai_images_on'
+  | 'ai_images_off'
   | 'start_over'
   | 'question'
   | 'other';
@@ -62,6 +64,7 @@ export const CONFIRM_BELOW = 0.7;
 export const CONSEQUENTIAL: ReadonlySet<OwnerIntent> = new Set([
   'start_over', // wipes the brand profile
   'autopilot_on', // posts start publishing without their eyes on them
+  'ai_images_on', // model-made photos start representing their business
 ]);
 
 const LlmIntent = z
@@ -75,6 +78,8 @@ const LlmIntent = z
       'autopilot_off',
       'upgrade',
       'refer',
+      'ai_images_on',
+      'ai_images_off',
       'start_over',
       'question',
       'other',
@@ -167,6 +172,9 @@ export class IntentService {
           '- autopilot_off: wants to approve posts again before they go out',
           '- upgrade: asking about more posts, reels, or a bigger plan',
           '- refer: wants to refer someone, or asking about a referral',
+          '- ai_images_on: has no time to take photos and wants us to make',
+          '  them ("can you make the pictures", "I never get round to photos")',
+          '- ai_images_off: wants us to stop making photos for them',
           '- start_over: wants their whole profile rebuilt from scratch',
           '',
           '- question: asking something we should answer',
