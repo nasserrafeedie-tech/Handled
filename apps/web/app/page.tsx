@@ -72,7 +72,7 @@ const FAQS = [
   },
   {
     q: 'What if it turns out not to be for me?',
-    a: 'Then you should not pay for it. Tell us inside your first month and we will refund it — text us and it is done, there is no form. After that you can cancel any time and you will not be billed again.',
+    a: 'Then you should not pay for it. Tell us in the first two weeks and we will refund it — text us and it is done, there is no form. By then you will have seen half a dozen posts, which is enough to know. After that you can cancel any time and you will not be billed again.',
   },
 ];
 
@@ -148,8 +148,8 @@ export default function Home() {
               className="mt-6 animate-fade-in font-mono text-[11px] uppercase tracking-[0.18em] text-ink/55"
               style={{ animationDelay: '900ms' }}
             >
-              Nothing to log into, we never see your passwords, and your first
-              month is refundable if you don&rsquo;t like the work
+              Nothing to log into, we never see your passwords, and the first
+              two weeks are refundable if you don&rsquo;t like the work
             </p>
           </div>
 

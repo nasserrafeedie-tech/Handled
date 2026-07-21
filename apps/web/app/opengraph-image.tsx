@@ -75,7 +75,7 @@ export default function OpengraphImage() {
               display: 'flex',
             }}
           />
-          Nothing to log into, and the first month is refundable.
+          Nothing to log into, and the first two weeks are refundable.
         </div>
       </div>
     ),

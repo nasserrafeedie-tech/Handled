@@ -27,7 +27,7 @@ const BELIEFS = [
   {
     n: '04',
     title: 'Easy to leave',
-    body: 'There is no contract and no notice period. If we stop being worth the money, one text ends it, and your first month is refundable anyway.',
+    body: 'There is no contract and no notice period. If we stop being worth the money, one text ends it, and the first two weeks are refundable anyway.',
   },
 ];
 
@@ -131,7 +131,7 @@ export default function AboutPage() {
             </h2>
             <p className="mx-auto mt-5 max-w-md text-paper/60">
               Pick a plan and the next thing that happens is a text from us.
-              Your first month is refundable if it isn’t what you hoped.
+              Your first two weeks are refundable if it isn’t what you hoped.
             </p>
             <a href="/billing" className="btn-clay mt-9">
               See plans

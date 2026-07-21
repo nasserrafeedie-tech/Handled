@@ -205,15 +205,15 @@ export default function BillingPage() {
           <div className="mx-auto mt-12 max-w-xl rounded-4xl border border-ink/10 bg-white/70 px-8 py-7 text-center shadow-soft">
             <p className="eyebrow mb-3">✳ Our guarantee</p>
             <p className="font-display text-xl leading-snug">
-              Give it a month. If you don&rsquo;t like the work,{' '}
+              Give it two weeks. If you don&rsquo;t like the work,{' '}
               <span className="wonk italic text-clay-600">
                 we&rsquo;ll refund it.
               </span>
             </p>
             <p className="mt-3 text-[15px] leading-relaxed text-ink/65">
-              Your whole first month back, no questions and no forms — just text
-              us. After that, cancel any time and you won&rsquo;t be billed
-              again.
+              Your whole first payment back, no questions and no forms — just
+              text us. Two weeks is half a dozen posts, which is plenty to know.
+              After that, cancel any time and you won&rsquo;t be billed again.
             </p>
           </div>
         </Reveal>
