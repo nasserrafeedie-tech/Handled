@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { OPERATOR_REGISTRY } from '../tasks/operator-registry';
 import { OperatorService } from './operator.service';
 import { LlmService } from './llm/llm.service';
+import { CustomerContextService } from './llm/customer-context.service';
 import { ModerationService } from './guardrails/moderation.service';
 import { PublishGateService } from './guardrails/publish-gate.service';
 import { TokenCryptoService } from './security/token-crypto.service';
@@ -31,6 +32,7 @@ import { GenerateImageHandler } from './handlers/generate-image.handler';
   providers: [
     // cross-cutting
     LlmService,
+    CustomerContextService,
     ModerationService,
     PublishGateService,
     TokenCryptoService,
@@ -59,6 +61,7 @@ import { GenerateImageHandler } from './handlers/generate-image.handler';
     { provide: OPERATOR_REGISTRY, useExisting: OperatorService },
   ],
   exports: [
+    CustomerContextService,
     OPERATOR_REGISTRY,
     TokenCryptoService,
     GraphicsService,

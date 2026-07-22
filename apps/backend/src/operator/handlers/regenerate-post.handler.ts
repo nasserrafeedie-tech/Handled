@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
+import { CustomerContextService } from '../llm/customer-context.service';
 import { ModerationService } from '../guardrails/moderation.service';
 import { PublishGateService } from '../guardrails/publish-gate.service';
 import { TaskHandler, ok, fail } from './handler.interface';
@@ -22,6 +23,7 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
     private readonly llm: LlmService,
     private readonly moderation: ModerationService,
     private readonly gate: PublishGateService,
+    private readonly customerContext: CustomerContextService,
   ) {}
 
   async handle(task: Extract<Task, { type: 'REGENERATE_POST' }>): Promise<Result> {
@@ -38,16 +40,24 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
       return fail(task.task_id, 'Your profile needs setup first.', 'no_brand_profile', task.customer_id);
     }
 
-    const context = buildBrandContext(profile);
+    // A revise is the moment an owner tells us how they like their posts, so
+    // it is where the per-customer context engine learns. Fire-and-forget: the
+    // redo they asked for must not wait on, or fail because of, the learning.
+    const feedback = task.payload.owner_feedback ?? '';
+    void this.customerContext.learnFromFeedback(task.customer_id, feedback);
+
+    const context =
+      buildBrandContext(profile) +
+      (await this.customerContext.contextBlock(task.customer_id));
     const prompt = [
       `Rewrite this ${post.archetype} post for ${post.platform}.`,
       `Previous caption: "${post.caption ?? ''}".`,
-      `Owner feedback: "${task.payload.owner_feedback}".`,
+      `Owner feedback: "${feedback}".`,
       'Return JSON: {"caption": string, "hashtags": string[]}.',
     ].join(' ');
 
     const gen = await this.llm.completeJson(
-      { tier: 'bulk', cachedContext: context, prompt, maxTokens: 600 },
+      { tier: 'bulk', cachedContext: context, prompt, maxTokens: 600, customerId: task.customer_id },
       CaptionLlmOutput,
     );
 

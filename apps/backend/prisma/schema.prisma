@@ -149,6 +149,7 @@ model Customer {
   tasks            Task[]
   metrics          Metric[]
   queuedTexts      QueuedText[]
+  preferences      CustomerPreference[]
 
   @@map("customers")
 }
@@ -201,6 +202,39 @@ model PlaybookArchetype {
 // Token counts are stored rather than dollars. Counts are facts that do not
 // change; a price does, and a rate correction should never require rewriting
 // history. Cost is derived at read time — see llm/pricing.ts.
+// ─── customer_preferences (the per-customer context engine) ──────────────
+// What we have learned about how ONE business likes its posts, on top of the
+// brand profile it gave us at signup. The profile is what the owner said once;
+// this is what they keep telling us since — "I don't like that color", "keep
+// them short" — pulled from their own words and remembered.
+//
+// Deliberately conservative. Only standing preferences are stored, never
+// one-off edits to a single post, and each carries how many times we have seen
+// it: said once is tentative, said again is confirmed. So a throwaway comment
+// can't quietly rewrite how every future post is written.
+model CustomerPreference {
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @db.Uuid
+  // The preference as it reads in the prompt: a short instruction.
+  text       String
+  // like | dislike | rule — for grouping and the owner-facing view.
+  kind       String   @default("rule")
+  // How many separate times the owner has expressed this. 1 = tentative.
+  timesSeen  Int      @default(1)
+  // Where it came from, for the audit trail and "what you've told us".
+  source     String   @default("conversation")
+  // Off, rather than deleted, when superseded or the owner disowns it —
+  // history stays, but an inactive preference never reaches the prompt.
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, active])
+  @@map("customer_preferences")
+}
+
 model LlmUsage {
   id           String   @id @default(uuid()) @db.Uuid
   // Null for work not tied to one customer (playbook research, for instance,

@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
+import { CustomerContextService } from '../llm/customer-context.service';
 import { playbookFor, ALT_TEXT_RULE } from '../llm/playbook';
 import { polishCaption } from '../llm/caption-polish';
 import { detectSlop, shouldRegenerate, slopFeedback } from '../llm/slop';
@@ -36,6 +37,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     private readonly llm: LlmService,
     private readonly moderation: ModerationService,
     private readonly gate: PublishGateService,
+    private readonly customerContext: CustomerContextService,
   ) {}
 
   async handle(task: Extract<Task, { type: 'DRAFT_POST' }>): Promise<Result> {
@@ -53,7 +55,12 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     }
 
     const { platform, archetype } = task.payload;
-    const context = buildBrandContext(profile);
+    // Brand profile (what they told us at signup) + the per-customer context
+    // engine (what we've learned since: their preferences and what their own
+    // audience rewards). Both cached together, so repeat calls stay cheap.
+    const context =
+      buildBrandContext(profile) +
+      (await this.customerContext.contextBlock(task.customer_id));
 
     // Anti-repetition memory. Without this the model re-derives the same
     // "safe" caption every week — same opening, same rhythm, same sign-off —

@@ -98,13 +98,21 @@ export class LlmService {
       body: JSON.stringify({
         model: this.model(req.tier),
         max_tokens: req.maxTokens ?? 1024,
-        system: [
-          {
-            type: 'text',
-            text: req.cachedContext,
-            cache_control: { type: 'ephemeral' },
-          },
-        ],
+        // Only send a system block when there is context to cache. The API
+        // rejects cache_control on an empty text block (400), so a caller with
+        // no per-customer context — the preference extractor, the image
+        // subject-picker — must omit the block entirely, not send an empty one.
+        ...(req.cachedContext
+          ? {
+              system: [
+                {
+                  type: 'text',
+                  text: req.cachedContext,
+                  cache_control: { type: 'ephemeral' },
+                },
+              ],
+            }
+          : {}),
         messages: [{ role: 'user', content: req.prompt }],
       }),
     });
