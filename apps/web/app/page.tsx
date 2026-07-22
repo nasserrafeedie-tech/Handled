@@ -125,9 +125,10 @@ export default function Home() {
               className="mt-8 max-w-lg animate-fade-in text-lg leading-relaxed text-ink/70"
               style={{ animationDelay: '600ms' }}
             >
-              Every week we make your posts and text them to you. You look them
-              over between customers and reply yes. An agency charges $1,500 a
-              month to do the same job.
+              Every week we write and design your posts — swipeable carousels,
+              graphics, captions — and text them to you. You look them over
+              between customers and reply yes. An agency charges $1,500 a month
+              to do the same job.
             </p>
 
             <div

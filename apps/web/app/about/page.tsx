@@ -12,7 +12,7 @@ const BELIEFS = [
   {
     n: '01',
     title: 'A good shop shouldn’t look worse than a chain',
-    body: 'The chain down the street has a marketing department. You have a Tuesday afternoon, if that. Closing that gap used to mean hiring an agency, and it doesn’t anymore.',
+    body: 'The chain down the street has a marketing department turning out polished carousels every week. You have a Tuesday afternoon, if that. Closing that gap used to mean hiring an agency, and it doesn’t anymore.',
   },
   {
     n: '02',

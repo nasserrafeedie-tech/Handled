@@ -52,7 +52,7 @@ export default function OpengraphImage() {
             Your social media, handled.
           </div>
           <div style={{ display: 'flex', fontSize: '32px', color: '#6d6357' }}>
-            We make the posts. You approve them by text.
+            We design the posts and carousels. You approve them by text.
           </div>
         </div>
 
