@@ -122,7 +122,16 @@ export class CronService {
         // dispatch tasks without closing a dependency loop. Failures are
         // logged, never fatal: a post without a picture still goes out.
         const drafted_ = (draft as { data?: DraftPostResult })?.data;
-        if (drafted_?.needs_image) {
+        // A carousel is the default visual for informational posts; a single
+        // generated photo is the fallback for the photo-first ones. The draft
+        // handler picks exactly one, so these never both fire for a post.
+        if (drafted_?.needs_carousel) {
+          await this.emit(customerId, 'GENERATE_CAROUSEL', {
+            post_id: drafted_.post_id,
+          }).catch((e) =>
+            this.log.warn(`carousel for ${drafted_.post_id} failed: ${e.message}`),
+          );
+        } else if (drafted_?.needs_image) {
           await this.emit(customerId, 'GENERATE_IMAGE', {
             post_id: drafted_.post_id,
             aspect: '1:1',

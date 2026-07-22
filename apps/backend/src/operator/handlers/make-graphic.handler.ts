@@ -44,7 +44,9 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
       style: (profile?.visualStyle as BrandTheme['style']) ?? undefined,
     };
 
-    // Rotate the composition per post so this brand's own feed has rhythm.
+    // One seed for the whole set, rotated per post so this brand's own feed has
+    // rhythm while each individual carousel stays cohesive — every slide shares
+    // a surface and palette, and only the decoration shifts between them.
     // Seeded off the post count, not randomness, so a re-render of the same
     // post is identical — regenerating a caption shouldn't reshuffle the art.
     const made = await this.prisma.post.count({
@@ -55,7 +57,8 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
       headline: s.headline,
       body: s.body,
       footer: s.footer,
-      variant: made + i,
+      seed: made,
+      variant: i,
     }));
 
     let pngs: Buffer[];

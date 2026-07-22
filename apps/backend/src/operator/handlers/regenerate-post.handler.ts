@@ -99,6 +99,7 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
       // for different words would otherwise pay for a fresh generation each
       // time they nudge the copy.
       needs_image: false,
+      needs_carousel: false,
     };
     return ok(task.task_id, `Reworked it: "${gen.caption.slice(0, 120)}"`, 'pending_approval', data);
   }

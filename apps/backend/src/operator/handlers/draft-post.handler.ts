@@ -13,6 +13,7 @@ import { playbookFor, ALT_TEXT_RULE } from '../llm/playbook';
 import { polishCaption } from '../llm/caption-polish';
 import { detectSlop, shouldRegenerate, slopFeedback } from '../llm/slop';
 import { resolveStrategy } from '../llm/vertical-playbook';
+import { isCarouselArchetype, tierHasCarousel } from '../graphics/carousel-content';
 import { ModerationService } from '../guardrails/moderation.service';
 import { PublishGateService } from '../guardrails/publish-gate.service';
 import {
@@ -263,8 +264,18 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     // for it too would both nag them and pre-empt their own photo. So the
     // planner's own split becomes the split between generated and owner photos:
     // needs_asset slots wait for a real shot, the rest get a generated one.
+    // The carousel is the Growth+ flagship: an informational post with no owner
+    // photo becomes swipeable branded slides — the single biggest reason to move
+    // up from Starter. A single generated photo is the fallback, only for the
+    // photo-first archetypes a carousel would ruin (behind-the-scenes, we're
+    // open) and only when the owner opted into generated imagery. Owner photos
+    // and shot-list asks still win over both, and the three are mutually
+    // exclusive so a post gets exactly one treatment.
+    const canGenerate = !bankedPhoto && !task.payload.needs_asset;
+    const needsCarousel =
+      canGenerate && tierHasCarousel(customer.planTier) && isCarouselArchetype(archetype);
     const needsImage =
-      !bankedPhoto && customer.aiImagesOptIn && !task.payload.needs_asset;
+      canGenerate && !needsCarousel && customer.aiImagesOptIn;
 
     const data: DraftPostResult = {
       post_id: post.id,
@@ -276,6 +287,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       scheduled_time: post.scheduledTime ? post.scheduledTime.toISOString() : null,
       risk_level: risk,
       needs_image: needsImage,
+      needs_carousel: needsCarousel,
     };
 
     const status: Result['status'] = decision.autoPublishAllowed

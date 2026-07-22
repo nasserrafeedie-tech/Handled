@@ -194,6 +194,19 @@ export const GenerateImagePayload = z
   .strict();
 export type GenerateImagePayload = z.infer<typeof GenerateImagePayload>;
 
+// ── GENERATE_CAROUSEL ──────────────────────────────────────────────────────
+// An informational post (educational tip, product spotlight) is better as a
+// swipeable carousel that breaks the caption's key points into branded slides —
+// higher engagement than one photo. The Operator writes the slide copy from the
+// post's own caption, then renders it SVG→PNG (always spelled right, no AI photo
+// model). A Growth+ headline feature — the main reason to move up from Starter.
+export const GenerateCarouselPayload = z
+  .object({
+    post_id: uuid.describe('the post this carousel is for'),
+  })
+  .strict();
+export type GenerateCarouselPayload = z.infer<typeof GenerateCarouselPayload>;
+
 // ── PAUSE_CUSTOMER ─────────────────────────────────────────────────────────
 // Kill switch (§8). Halt all scheduled publishing immediately.
 export const PauseCustomerPayload = z

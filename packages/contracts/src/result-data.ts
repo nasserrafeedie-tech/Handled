@@ -120,6 +120,10 @@ export const DraftPostResult = z
     // pictures. The caller starts GENERATE_IMAGE — the handler cannot, because
     // dispatching through the TaskBus from inside a handler is circular.
     needs_image: z.boolean().default(false),
+    // This is an informational post (a tip, a product explainer) with no owner
+    // photo — better as a swipeable carousel than a single image. The caller
+    // starts GENERATE_CAROUSEL, for the same circular-dispatch reason as above.
+    needs_carousel: z.boolean().default(false),
   })
   .strict();
 export type DraftPostResult = z.infer<typeof DraftPostResult>;

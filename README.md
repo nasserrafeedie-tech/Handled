@@ -5,6 +5,12 @@ The owner talks to a **Concierge over SMS**; a backend **Operator** does the rea
 work (plan, write, generate media, schedule, publish, measure). The two agents
 are hard-separated and joined by a strict **Task/Result JSON contract**.
 
+The flagship visual is the **swipeable carousel** — informational posts (tips,
+product spotlights, promos) are turned into branded, correctly-spelled slides
+automatically. It's the headline Growth+ feature and the main reason to move up
+from Starter. See `GENERATE_CAROUSEL` (`operator/handlers/generate-carousel.handler.ts`)
+and the tier gate in `operator/graphics/carousel-content.ts`.
+
 > Full product spec: see the project brief. This repo implements the foundation
 > and the MVP loop (build order §10, items 1–7).
 

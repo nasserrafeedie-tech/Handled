@@ -1,8 +1,22 @@
 /**
  * Slide templates → SVG. We compose the design ourselves so the text is always
  * crisp and correctly spelled (unlike diffusion image models), but the result
- * still looks professionally designed: gradient backgrounds, decorative shapes,
- * premium type (Poppins + Playfair Display), badges and dividers.
+ * still looks professionally designed.
+ *
+ * Variety comes from three independent axes that multiply together, so a feed
+ * never reads as one card recoloured:
+ *   • SURFACE — the background treatment: dark gradient, cream paper, pastel
+ *     tint, solid brand block, accent panel, framed page, or a colour split.
+ *     Each carries its own palette so the type reads on light or dark.
+ *   • COMPOSITION — the decorative arrangement layered on top: rings, dot grids,
+ *     arcs, stripes, plus-mark confetti, a soft blob, or clean negative space.
+ *   • TYPE STYLE — the font pairing (modern / editorial / bold / luxe).
+ *
+ * Cohesion within a post, variety between posts: every slide in one carousel
+ * shares a `seed` and therefore one surface and palette — it's a single post, so
+ * it has to look like a set — while each slide's `variant` shifts only the
+ * decoration. Two different posts get different seeds, and that is where a
+ * feed's variety comes from.
  *
  * Output is an SVG string that GraphicsService rasterizes to PNG on an
  * Instagram square canvas.
@@ -54,9 +68,17 @@ export interface SlideSpec {
   /** How the photo is composed with the type. Defaults to 'full'. */
   photoLayout?: PhotoLayout;
   /**
-   * Seed for the decorative composition. Same brand colours and type, but the
-   * shapes behind them are arranged differently — so a customer's own feed
-   * doesn't read as the same card photocopied seven times. Stable per post.
+   * Which look this SET of slides uses — the surface (background treatment and
+   * the palette that reads on it). Every slide in one carousel must be given the
+   * same seed: a carousel is a single post, so its slides have to look like a
+   * set. Variety belongs *between* posts, which is why the caller seeds this off
+   * the post rather than the slide. Stable per post, so a re-render is identical.
+   */
+  seed?: number;
+  /**
+   * Which slide this is within the set. Varies the decorative arrangement only —
+   * same surface, same palette, different shapes behind the words — so a
+   * carousel has rhythm without looking like five unrelated cards.
    */
   variant?: number;
 }
@@ -191,85 +213,289 @@ function tspansLeft(lines: string[], x: number, startY: number, lineHeight: numb
     .join('');
 }
 
-/* ── shared building blocks ────────────────────────────────────────────── */
+/* ── palette ───────────────────────────────────────────────────────────── */
+/**
+ * The colours a text layout draws with. A surface (below) produces one of these
+ * to match its background — so the same layout code reads correctly whether it's
+ * sitting on a dark gradient, cream paper, or a solid accent block.
+ */
 interface Palette {
   bgTop: string;
   bgBottom: string;
   fg: string;
   fgSoft: string; // muted foreground for body copy
-  accent: string;
-  onAccent: string;
-  deco: string; // decorative shape color (as fg with low opacity)
+  accent: string; // the pop colour for eyebrows, rules, dots, pills — contrasts the surface
+  onAccent: string; // text/icon colour on top of an accent fill
+  deco: string; // decorative-shape colour, drawn at low opacity
 }
 
-function palette(theme: BrandTheme): Palette {
+/** The two brand colours every surface is built from. */
+interface Base {
+  primary: string;
+  accent: string;
+}
+
+function basePalette(theme: BrandTheme): Base {
+  const primary = /^#?[0-9a-f]{6}$/i.test(theme.primary || '') ? theme.primary : '#0F172A';
+  const accent =
+    theme.secondary && /^#?[0-9a-f]{6}$/i.test(theme.secondary)
+      ? theme.secondary
+      : luminance(primary) > 0.55
+        ? darken(primary, 0.4)
+        : lighten(primary, 0.42);
+  return { primary, accent };
+}
+
+/** A brand colour dark enough to read on a LIGHT surface. */
+function popOnLight(b: Base): string {
+  if (luminance(b.primary) < 0.62) return b.primary;
+  if (luminance(b.accent) < 0.62) return b.accent;
+  return darken(b.primary, 0.45);
+}
+/** A brand colour bright enough to read on a DARK surface. */
+function vividOnDark(b: Base): string {
+  if (luminance(b.accent) > 0.42) return b.accent;
+  if (luminance(b.primary) > 0.42) return b.primary;
+  return lighten(b.accent, 0.42);
+}
+
+/**
+ * The photo palette — the original dark-gradient treatment, kept for slides that
+ * sit a real photo behind the type. Photos want a consistent dark scrim, so they
+ * don't ride the surface rotation the way text-only slides do.
+ */
+function photoPalette(theme: BrandTheme): Palette {
   const primary = /^#?[0-9a-f]{6}$/i.test(theme.primary || '') ? theme.primary : '#0F172A';
   const dark = luminance(primary) > 0.55;
   const bgTop = dark ? lighten(primary, 0.08) : lighten(primary, 0.06);
   const bgBottom = dark ? darken(primary, 0.18) : darken(primary, 0.34);
   const fg = theme.text || contrastText(bgBottom);
-  const accent =
-    theme.secondary && /^#?[0-9a-f]{6}$/i.test(theme.secondary)
-      ? theme.secondary
-      : dark
-        ? darken(primary, 0.4)
-        : lighten(primary, 0.42);
+  const b = basePalette(theme);
+  const accent = vividOnDark(b);
   return {
-    bgTop,
-    bgBottom,
-    fg,
+    bgTop, bgBottom, fg,
     fgSoft: fg === '#FFFFFF' ? 'rgba(255,255,255,0.82)' : 'rgba(26,23,18,0.72)',
-    accent,
-    onAccent: contrastText(accent),
-    deco: fg === '#FFFFFF' ? 'rgba(255,255,255,1)' : 'rgba(26,23,18,1)',
+    accent, onAccent: contrastText(accent),
+    deco: fg === '#FFFFFF' ? '#FFFFFF' : '#1A1712',
   };
 }
 
+/* ── surfaces ──────────────────────────────────────────────────────────── */
 /**
- * Decorative arrangements. Identical palette and type, different composition —
- * this is what stops a brand's own feed looking like one card printed over and
- * over. Kept deliberately quiet: these sit behind the words, never compete.
+ * A surface is a complete background treatment plus the palette that reads on
+ * it. Decoupling the surface from the type layout is what turns "one card,
+ * recoloured" into a deep catalogue of looks: the same headline can land on a
+ * dark gradient, cream paper, a pastel tint, a solid brand block, an accent
+ * panel, a colour split, or a framed page — and each still looks designed.
+ */
+interface Surface {
+  p: Palette;
+  bg: string; // <defs> + background rect + any signature shape
+  allowDeco: boolean; // may a decorative composition be overlaid on top?
+}
+
+/** <defs> holding the #bg fill and a #glow radial the compositions can use. */
+function surfaceDefs(bgFill: string, glowColor: string, glowOpacity: number): string {
+  return `<defs>${bgFill}
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="${glowColor}" stop-opacity="${glowOpacity}"/>
+      <stop offset="1" stop-color="${glowColor}" stop-opacity="0"/>
+    </radialGradient>
+  </defs>`;
+}
+
+/** A plain (flat or linear-gradient) surface — the workhorse for most looks. */
+function flatSurface(bgColor: string, b: Base, grad?: [string, string]): Surface {
+  const isLight = luminance(bgColor) > 0.6;
+  const fg = contrastText(bgColor);
+  let pop = isLight ? popOnLight(b) : vividOnDark(b);
+  // If the pop colour is too close in value to the background, it won't read —
+  // fall back to the foreground so eyebrows and rules never vanish.
+  if (Math.abs(luminance(pop) - luminance(bgColor)) < 0.22) pop = fg;
+  const fill = grad
+    ? `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${grad[0]}"/><stop offset="1" stop-color="${grad[1]}"/></linearGradient>`
+    : `<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${bgColor}"/><stop offset="1" stop-color="${bgColor}"/></linearGradient>`;
+  const p: Palette = {
+    bgTop: grad?.[0] ?? bgColor,
+    bgBottom: grad?.[1] ?? bgColor,
+    fg,
+    fgSoft: isLight ? 'rgba(31,27,22,0.64)' : 'rgba(255,255,255,0.80)',
+    accent: pop,
+    onAccent: contrastText(pop),
+    deco: isLight ? pop : '#FFFFFF',
+  };
+  const bg = `${surfaceDefs(fill, pop, isLight ? 0.09 : 0.28)}<rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>`;
+  return { p, bg, allowDeco: true };
+}
+
+/** A surface flooded in the accent colour — bold, used sparingly in the rotation. */
+function accentSurface(b: Base): Surface {
+  const bg = luminance(b.accent) > 0.72 ? darken(b.accent, 0.14) : b.accent;
+  const fg = contrastText(bg);
+  const fill = `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${lighten(bg, 0.06)}"/><stop offset="1" stop-color="${darken(bg, 0.16)}"/></linearGradient>`;
+  const p: Palette = {
+    bgTop: lighten(bg, 0.06), bgBottom: darken(bg, 0.16),
+    fg,
+    fgSoft: fg === '#FFFFFF' ? 'rgba(255,255,255,0.82)' : 'rgba(31,27,22,0.66)',
+    accent: fg, // on an accent field, the pop colour is the contrast colour
+    onAccent: bg,
+    deco: fg,
+  };
+  return { p, bg: `${surfaceDefs(fill, fg, 0.10)}<rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>`, allowDeco: true };
+}
+
+/** Cream paper with a bold accent triangle in one corner — editorial, distinctive. */
+function splitSurface(b: Base): Surface {
+  const paper = lighten(b.primary, 0.9);
+  const pop = popOnLight(b);
+  const block = luminance(b.primary) < 0.6 ? b.primary : darken(b.accent, 0.1);
+  const p: Palette = {
+    bgTop: paper, bgBottom: paper,
+    fg: '#211C16', fgSoft: 'rgba(33,28,22,0.64)',
+    accent: pop, onAccent: contrastText(pop), deco: pop,
+  };
+  // Two corner triangles, clear of the centre column where the type sits.
+  const bg = `${surfaceDefs(`<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${lighten(paper, 0.3)}"/><stop offset="1" stop-color="${paper}"/></linearGradient>`, pop, 0.08)}
+    <rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>
+    <path d="M ${CANVAS} 0 L ${CANVAS} 420 L ${CANVAS - 420} 0 Z" fill="${block}"/>
+    <path d="M 0 ${CANVAS} L 0 ${CANVAS - 300} L 300 ${CANVAS} Z" fill="${pop}" opacity="0.14"/>`;
+  return { p, bg, allowDeco: false };
+}
+
+/** Cream paper inside a thin drawn frame — quiet, magazine-like. */
+function borderedPaper(b: Base): Surface {
+  const paper = lighten(b.primary, 0.92);
+  const pop = popOnLight(b);
+  const p: Palette = {
+    bgTop: paper, bgBottom: paper,
+    fg: '#211C16', fgSoft: 'rgba(33,28,22,0.64)',
+    accent: pop, onAccent: contrastText(pop), deco: pop,
+  };
+  const m = 46;
+  const bg = `${surfaceDefs(`<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${lighten(paper, 0.4)}"/><stop offset="1" stop-color="${paper}"/></linearGradient>`, pop, 0.07)}
+    <rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>
+    <rect x="${m}" y="${m}" width="${CANVAS - m * 2}" height="${CANVAS - m * 2}" rx="26" fill="none" stroke="${pop}" stroke-opacity="0.35" stroke-width="3"/>`;
+  return { p, bg, allowDeco: false };
+}
+
+/**
+ * The surface rotation. Ordered so walking it slide-to-slide gives a rhythm of
+ * value and colour — dark, light, dark, light, colour — rather than a run of
+ * look-alikes. The `variant` seed (post count + slide index) walks this list, so
+ * every slide in a carousel gets a different surface and consecutive posts start
+ * at a different point.
+ */
+function surfaceRotation(b: Base): (() => Surface)[] {
+  const P = b.primary;
+  const darkBg = luminance(P) > 0.5 ? darken(P, 0.62) : darken(P, 0.16);
+  const darkGrad: [string, string] = [lighten(darkBg, 0.1), darken(darkBg, 0.22)];
+  return [
+    () => flatSurface(darkBg, b, darkGrad),                                 // 0 dark gradient
+    () => flatSurface(lighten(P, 0.9), b),                                  // 1 cream paper
+    () => flatSurface(P, b, [lighten(P, 0.05), darken(P, 0.18)]),           // 2 solid brand
+    () => flatSurface(lighten(P, 0.76), b),                                 // 3 soft pastel tint
+    () => accentSurface(b),                                                 // 4 accent panel
+    () => borderedPaper(b),                                                 // 5 framed paper
+    () => splitSurface(b),                                                  // 6 colour split
+  ];
+}
+
+/**
+ * Decorative arrangements, drawn in the surface's own `deco`/`accent` colours so
+ * each reads on light or dark. These sit behind the words and never compete.
+ * A far larger library than before — combined with 7 surfaces and 4 type styles,
+ * the same headline can come out hundreds of visibly different ways.
  */
 const COMPOSITIONS: ((p: Palette) => string)[] = [
-  // glow top-right, ring bottom-left
+  // 0 — glow top-right, ring bottom-left
   (p) => `
     <circle cx="${CANVAS - 120}" cy="140" r="420" fill="url(#glow)"/>
     <circle cx="${CANVAS - 60}" cy="60" r="230" fill="${p.deco}" opacity="0.06"/>
     <circle cx="120" cy="${CANVAS - 90}" r="170" fill="none" stroke="${p.deco}" stroke-opacity="0.08" stroke-width="2"/>`,
-  // glow bottom-left, soft disc top-left
+  // 1 — glow bottom-left, soft disc top-left
   (p) => `
     <circle cx="90" cy="${CANVAS - 120}" r="430" fill="url(#glow)"/>
     <circle cx="140" cy="120" r="190" fill="${p.deco}" opacity="0.05"/>
     <circle cx="${CANVAS - 130}" cy="${CANVAS - 150}" r="150" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2"/>`,
-  // wide glow across the top, horizon rule
+  // 2 — wide glow across the top, horizon rule
   (p) => `
     <ellipse cx="${CANVAS / 2}" cy="-40" rx="620" ry="360" fill="url(#glow)"/>
     <rect x="0" y="${CANVAS - 150}" width="${CANVAS}" height="2" fill="${p.deco}" opacity="0.10"/>
     <circle cx="${CANVAS - 110}" cy="${CANVAS - 300}" r="120" fill="${p.deco}" opacity="0.05"/>`,
-  // two offset rings, glow low-right
+  // 3 — two offset rings, glow low-right
   (p) => `
     <circle cx="${CANVAS - 80}" cy="${CANVAS - 60}" r="400" fill="url(#glow)"/>
     <circle cx="${CANVAS - 200}" cy="200" r="260" fill="none" stroke="${p.deco}" stroke-opacity="0.07" stroke-width="2"/>
     <circle cx="60" cy="${CANVAS / 2}" r="150" fill="${p.deco}" opacity="0.04"/>`,
+  // 4 — a grid of dots in the top-right, soft glow low-left
+  (p) => {
+    const gap = 54, cols = 5, rows = 4, ox = CANVAS - 96 - (cols - 1) * gap, oy = 120;
+    let dots = '';
+    for (let i = 0; i < cols; i++)
+      for (let j = 0; j < rows; j++)
+        dots += `<circle cx="${ox + i * gap}" cy="${oy + j * gap}" r="7" fill="${p.deco}" opacity="0.13"/>`;
+    return `<circle cx="110" cy="${CANVAS - 110}" r="360" fill="url(#glow)"/>${dots}`;
+  },
+  // 5 — concentric arcs sweeping out of the bottom-left corner
+  (p) => {
+    let arcs = '';
+    for (const r of [140, 260, 380, 500])
+      arcs += `<circle cx="0" cy="${CANVAS}" r="${r}" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2.5"/>`;
+    return `<circle cx="${CANVAS - 120}" cy="150" r="240" fill="url(#glow)"/>${arcs}`;
+  },
+  // 6 — diagonal stripes bleeding off the top-right
+  (p) => {
+    let s = '';
+    for (let i = 0; i < 6; i++) {
+      const o = i * 48;
+      s += `<line x1="${CANVAS - 380 + o}" y1="-20" x2="${CANVAS + 60 + o}" y2="420" stroke="${p.deco}" stroke-opacity="0.08" stroke-width="12" stroke-linecap="round"/>`;
+    }
+    return `<circle cx="140" cy="${CANVAS - 120}" r="300" fill="url(#glow)"/>${s}`;
+  },
+  // 7 — scattered plus-marks, a light confetti in the accent colour
+  (p) => {
+    const pts: [number, number, number][] = [
+      [150, 200, 16], [CANVAS - 170, 250, 12], [CANVAS - 120, CANVAS - 210, 18],
+      [230, CANVAS - 150, 13], [CANVAS / 2 + 210, 130, 11], [95, CANVAS / 2 + 40, 15],
+    ];
+    return pts
+      .map(([x, y, s]) =>
+        `<path d="M ${x - s} ${y} H ${x + s} M ${x} ${y - s} V ${y + s}" stroke="${p.accent}" stroke-opacity="0.5" stroke-width="4" stroke-linecap="round"/>`)
+      .join('');
+  },
+  // 8 — a single large soft blob off the top-right, glow low-left
+  (p) => `
+    <path d="M 900 -60 C 1160 120 1060 400 820 440 C 620 474 540 300 630 150 C 700 30 800 -100 900 -60 Z" fill="${p.deco}" opacity="0.06"/>
+    <circle cx="120" cy="${CANVAS - 100}" r="240" fill="url(#glow)"/>`,
+  // 9 — minimal: just breathing room and the faintest wash
+  (p) => `<circle cx="${CANVAS - 140}" cy="${CANVAS - 140}" r="300" fill="url(#glow)"/>`,
 ];
 
-/** <defs> + gradient background + a seeded decorative arrangement. */
-function frame(p: Palette, variant = 0): string {
-  const deco = COMPOSITIONS[Math.abs(variant) % COMPOSITIONS.length](p);
-  return `
-    <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="${p.bgTop}"/>
-        <stop offset="1" stop-color="${p.bgBottom}"/>
-      </linearGradient>
-      <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-        <stop offset="0" stop-color="${p.accent}" stop-opacity="0.28"/>
-        <stop offset="1" stop-color="${p.accent}" stop-opacity="0"/>
-      </radialGradient>
-    </defs>
-    <rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>
-    ${deco}
-  `;
+/**
+ * Choose the look for one slide.
+ *
+ * `seed` picks the surface and is shared by every slide in a carousel, so the
+ * set is cohesive — one post, one look. `variant` (the slide's index) only moves
+ * the decorative arrangement, giving the set rhythm without breaking it apart.
+ * Two different posts get different seeds and therefore different surfaces,
+ * which is where the variety in a feed comes from.
+ */
+function pickLook(
+  theme: BrandTheme,
+  seed: number,
+  variant: number,
+): { p: Palette; bg: string } {
+  const b = basePalette(theme);
+  const rotation = surfaceRotation(b);
+  const surf = rotation[Math.abs(seed) % rotation.length]();
+  let bg = surf.bg;
+  if (surf.allowDeco) {
+    // Offset by the seed as well as the slide index so two carousels that
+    // happen to share a surface still don't repeat the same run of shapes.
+    const i = Math.abs(seed * 3 + variant * 5) % COMPOSITIONS.length;
+    bg += COMPOSITIONS[i](surf.p);
+  }
+  return { p: surf.p, bg };
 }
 
 /**
@@ -424,11 +650,17 @@ function stack(blocks: Block[], zoneTop: number, zoneBottom: number): string {
 
 /* ── main entry ────────────────────────────────────────────────────────── */
 export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
-  const p = palette(theme);
-  const t = typeSet(theme.style);
   const layout: PhotoLayout | undefined = spec.photo
     ? (spec.photoLayout ?? 'full')
     : undefined;
+  // Photo slides keep the consistent dark scrim. Text-only slides take their
+  // surface from the SET's seed, so a carousel reads as one designed piece;
+  // `seed` falls back to `variant` for single one-off graphics that have no set.
+  const surface = layout
+    ? undefined
+    : pickLook(theme, spec.seed ?? spec.variant ?? 0, spec.variant ?? 0);
+  const p = surface ? surface.p : photoPalette(theme);
+  const t = typeSet(theme.style);
   const footer = spec.footer ?? theme.brandName ?? '';
 
   const BAND_H = Math.round(CANVAS * 0.56);
@@ -475,9 +707,14 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
     const head = (s: string) => (t.headUpper ? s.toUpperCase() : s);
     // Gaps shrink with the type, otherwise fixed whitespace eats the savings.
     const g = (n: number) => Math.round(n * scale);
-    // Tight zones can hold fewer lines before they have to be trimmed.
-    const headMax = layout === 'band' ? 3 : layout === 'card' ? 3 : 4;
-    const bodyMax = layout === 'band' ? 2 : layout === 'card' ? 3 : 3;
+    // Line ceilings are a LAST RESORT, not a fitting strategy. They sit well
+    // above what a sensible headline needs so that the auto-fit loop below
+    // shrinks the type to fit the words — a clamp that bites early would make
+    // the content "fit" at full size and silently truncate the headline to an
+    // ellipsis ("floss for a…"), which reads as broken rather than designed.
+    // Photo band/card zones are genuinely tighter, so they keep lower ceilings.
+    const headMax = layout === 'band' ? 4 : layout === 'card' ? 5 : 7;
+    const bodyMax = layout === 'band' ? 3 : layout === 'card' ? 4 : 5;
     const blocks: Block[] = [];
 
     if (spec.kind === 'quote') {
@@ -648,7 +885,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
 
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS}" viewBox="0 0 ${CANVAS} ${CANVAS}">`,
-    spec.photo ? photoFrame(p, spec.photo, layout!) : frame(p, spec.variant ?? 0),
+    spec.photo ? photoFrame(p, spec.photo, layout!) : surface!.bg,
   ];
   if (cardBox) parts.push(cardPanel(p, cardBox.y, cardBox.h));
   parts.push(stack(blocks, zoneTop, zoneBottom));

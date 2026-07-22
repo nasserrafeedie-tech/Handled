@@ -31,7 +31,7 @@ const STEPS = [
   {
     n: '02',
     title: 'We make the week’s posts',
-    body: 'We write them and make the graphics, then text you what we came up with.',
+    body: 'We write them and build the carousels and graphics, then text you what we came up with.',
   },
   {
     n: '03',
@@ -65,6 +65,10 @@ const FAQS = [
   {
     q: 'What if I don’t like a post?',
     a: 'Tell us what is off — “too formal”, “use the other photo”, “cut the last line” — and we will redo it. Nothing posts until you say so.',
+  },
+  {
+    q: 'What are carousels, and do I get them?',
+    a: 'A carousel is a swipeable set of slides — your tip or offer broken into a few clean, branded cards instead of a single photo. They are the most saved and most shared format on Instagram, which is why they are our headline feature. On Growth and Pro we build them from your posts automatically: every word spelled right, in your colors, ready before you have to think about it.',
   },
   {
     q: 'Do you need my passwords?',
@@ -258,6 +262,48 @@ export default function Home() {
               </Reveal>
             ))}
           </div>
+
+          {/* Carousels — the Growth flagship. Shown big, with real slides in a
+              swipe strip, because it's the single biggest reason to move up. */}
+          <Reveal delay={80}>
+            <div className="mt-20 rounded-4xl border border-ink/10 bg-white p-8 shadow-soft sm:p-12">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="eyebrow">On Growth &amp; Pro — the flagship</p>
+                  <h3 className="mt-3 max-w-xl font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+                    Your tips, turned into{' '}
+                    <span className="wonk italic text-clay-600">
+                      carousels people swipe.
+                    </span>
+                  </h3>
+                </div>
+                <p className="max-w-xs text-[15px] leading-relaxed text-ink/60">
+                  The things worth saying — how whitening works, what makes your
+                  espresso different — broken into clean, branded slides.
+                  Carousels are the most-saved, most-shared format on Instagram,
+                  and we build them from your posts automatically. Every word
+                  spelled right, in your colors.
+                </p>
+              </div>
+
+              {/* The real thing: swipe the actual rendered slides */}
+              <div className="mt-10 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {[1, 2, 3, 4].map((n) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={n}
+                    src={`/samples/carousel-slide-${n}.png`}
+                    alt={`Carousel slide ${n} of 4 — an educational coffee tip as a branded slide`}
+                    loading="lazy"
+                    className="w-56 shrink-0 snap-start rounded-2xl border border-ink/10 shadow-soft sm:w-64"
+                  />
+                ))}
+              </div>
+              <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.16em] text-ink/45">
+                ← swipe · one post, four slides, built for you
+              </p>
+            </div>
+          </Reveal>
 
           {/* Reels — the Growth-plan differentiator, shown small and playing */}
           <Reveal delay={100}>

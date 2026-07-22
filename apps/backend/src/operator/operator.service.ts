@@ -14,6 +14,7 @@ import { UpdateBrandProfileHandler } from './handlers/update-brand-profile.handl
 import { PauseCustomerHandler } from './handlers/pause-customer.handler';
 import { MakeGraphicHandler } from './handlers/make-graphic.handler';
 import { GenerateImageHandler } from './handlers/generate-image.handler';
+import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
 import { AssembleReelHandler } from './handlers/assemble-reel.handler';
 
 /**
@@ -39,6 +40,7 @@ export class OperatorService implements OperatorRegistry {
     pause: PauseCustomerHandler,
     makeGraphic: MakeGraphicHandler,
     generateImage: GenerateImageHandler,
+    generateCarousel: GenerateCarouselHandler,
     assembleReel: AssembleReelHandler,
   ) {
     for (const h of [
@@ -54,6 +56,7 @@ export class OperatorService implements OperatorRegistry {
       pause,
       makeGraphic,
       generateImage,
+      generateCarousel,
       assembleReel,
     ] as TaskHandler[]) {
       this.handlers.set(h.type, h);

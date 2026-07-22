@@ -19,6 +19,13 @@ type Sample = {
 
 const SAMPLES: Sample[] = [
   {
+    file: 'carousel-slide-1.png',
+    ask: 'something about how to actually taste good coffee',
+    reply:
+      'Perfect for a carousel — I turned it into four swipeable slides in your colors. Here’s slide one.',
+    brand: "Rosa's Coffee",
+  },
+  {
     file: 'composed-promo.jpg',
     ask: 'make a promo for 50% off all lattes this Friday',
     reply: 'On it — here’s your Friday latte promo. Want me to schedule it for 8am?',
@@ -76,8 +83,9 @@ export default function DemoPage() {
             style={{ animationDelay: '600ms' }}
           >
             This is the whole product. You send a plain-English text; we send
-            back a finished, on-brand graphic. Tap one below to watch it happen
-            — these are real graphics from our engine, not mockups.
+            back a finished, on-brand post — a swipeable carousel, a graphic, or
+            just your photo with the right words. Tap one below to watch it
+            happen — these are real from our engine, not mockups.
           </p>
         </div>
 

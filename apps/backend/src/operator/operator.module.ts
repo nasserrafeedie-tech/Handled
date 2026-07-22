@@ -27,6 +27,7 @@ import { UpdateBrandProfileHandler } from './handlers/update-brand-profile.handl
 import { PauseCustomerHandler } from './handlers/pause-customer.handler';
 import { MakeGraphicHandler } from './handlers/make-graphic.handler';
 import { GenerateImageHandler } from './handlers/generate-image.handler';
+import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
 
 @Module({
   imports: [PlaybookModule],
@@ -57,6 +58,7 @@ import { GenerateImageHandler } from './handlers/generate-image.handler';
     PauseCustomerHandler,
     MakeGraphicHandler,
     GenerateImageHandler,
+    GenerateCarouselHandler,
     AssembleReelHandler,
     // registry, exposed to the TaskBus under the abstract token
     OperatorService,

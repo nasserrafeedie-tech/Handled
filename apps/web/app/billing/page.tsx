@@ -23,7 +23,7 @@ const PLANS: {
     features: [
       '3 posts / week',
       '1 platform',
-      'Photos, graphics & carousels',
+      'Captions + your own photos',
       'You approve every post by text',
     ],
     highlight: false,
@@ -33,8 +33,9 @@ const PLANS: {
     name: 'Growth',
     price: '$349',
     cadence: '/mo',
-    blurb: 'Where most shops land. More posts, more places, and reels.',
+    blurb: 'Where most shops land — and where swipeable carousels begin.',
     features: [
+      'Swipeable branded carousels',
       '5 posts / week',
       'Up to 3 platforms',
       'Reels cut from your clips',

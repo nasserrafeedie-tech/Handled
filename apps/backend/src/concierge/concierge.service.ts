@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import type { Task, CalendarSlot } from '@smm/contracts';
+import type { Task, CalendarSlot, DraftPostResult } from '@smm/contracts';
 import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
@@ -991,7 +991,7 @@ export class ConciergeService {
     let drafted = 0;
     for (const slot of slots) {
       try {
-        await this.bus.emit(
+        const result = await this.bus.emit(
           this.task(
             customerId,
             'DRAFT_POST',
@@ -1006,6 +1006,21 @@ export class ConciergeService {
           ),
         );
         drafted++;
+
+        // Give the first week its visuals too, so onboarding shows the real
+        // product — carousels by default, a generated photo for the photo-first
+        // posts. The draft handler picks exactly one; failures never block the
+        // week. (Same follow-up as the weekly cron path.)
+        const d = result.data as DraftPostResult | null | undefined;
+        if (d?.needs_carousel) {
+          await this.bus
+            .emit(this.task(customerId, 'GENERATE_CAROUSEL', { post_id: d.post_id }, 'concierge'))
+            .catch((e) => this.log.warn(`first-week carousel failed: ${String(e)}`));
+        } else if (d?.needs_image) {
+          await this.bus
+            .emit(this.task(customerId, 'GENERATE_IMAGE', { post_id: d.post_id, aspect: '1:1' }, 'concierge'))
+            .catch((e) => this.log.warn(`first-week image failed: ${String(e)}`));
+        }
       } catch (e) {
         // One bad draft must not cost the owner their whole first week.
         this.log.warn(
