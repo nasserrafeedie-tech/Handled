@@ -71,7 +71,7 @@ export class GenerateImageHandler implements TaskHandler<'GENERATE_IMAGE'> {
     }
     if (!this.images.configured) {
       return fail(task.task_id, "I can't make photos just now.", 'not_configured',
-        'FAL_API_KEY not set');
+        'no image provider configured (OPENAI_API_KEY)');
     }
 
     const brief: ImageBrief = {
