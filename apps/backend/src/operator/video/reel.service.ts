@@ -100,12 +100,25 @@ export class ReelService {
       //    font — the first frame has to earn the second one).
       const final = join(work, 'final.mp4');
       if (opts.hookText && opts.fontPath && existsSync(opts.fontPath)) {
-        const text = opts.hookText.replace(/\\/g, '').replace(/'/g, '’').replace(/:/g, '\\:');
+        // The hook is read from a FILE, not interpolated into the filtergraph,
+        // and expansion is switched off. Both matter:
+        //
+        //  • `expansion=none` stops drawtext running strftime over the text. A
+        //    hook like "50% off this Friday" was silently rendering as NOTHING
+        //    — the whole overlay vanished, no error, and the reel published
+        //    without the one element that earns it distribution. Percent signs
+        //    are unavoidable in promo copy, so this is not an edge case.
+        //  • `textfile=` keeps quotes, colons and commas out of the filter
+        //    string entirely, so no amount of escaping cleverness is needed for
+        //    copy a language model wrote.
+        const textFile = join(work, 'hook.txt');
+        writeFileSync(textFile, opts.hookText, 'utf8');
         const box = opts.accentHex ? `${opts.accentHex}@0.85` : 'black@0.55';
+        const esc = (p: string) => p.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
         await this.ffmpeg([
           '-i', joined,
           '-vf',
-          `drawtext=fontfile='${opts.fontPath}':text='${text}':fontsize=64:fontcolor=white:box=1:boxcolor=${box}:boxborderw=28:x=(w-text_w)/2:y=h*0.16:enable='lte(t,3)'`,
+          `drawtext=fontfile='${esc(opts.fontPath)}':textfile='${esc(textFile)}':expansion=none:fontsize=64:fontcolor=white:box=1:boxcolor=${box}:boxborderw=28:x=(w-text_w)/2:y=h*0.16:enable='lte(t,3)'`,
           '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
           '-c:a', 'copy',
           final,
