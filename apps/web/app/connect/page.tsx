@@ -3,14 +3,15 @@
 import { useEffect, useState } from 'react';
 
 // Each entry maps a friendly label to the exact platform id the backend expects.
+// This list must stay in step with the Platform enum in packages/contracts — an
+// owner offered a button for a platform we cannot publish to gets a connection
+// that silently never posts. X, LinkedIn and YouTube were dropped from the
+// product and lingered here.
 const PLATFORMS = [
   { id: 'instagram', name: 'Instagram', glyph: 'IG' },
   { id: 'facebook', name: 'Facebook', glyph: 'f' },
   { id: 'tiktok', name: 'TikTok', glyph: '♪' },
-  { id: 'x', name: 'X', glyph: '𝕏' },
-  { id: 'linkedin', name: 'LinkedIn', glyph: 'in' },
   { id: 'threads', name: 'Threads', glyph: '@' },
-  { id: 'youtube', name: 'YouTube', glyph: '▶' },
 ] as const;
 
 type PlatformId = (typeof PLATFORMS)[number]['id'];
