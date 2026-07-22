@@ -147,6 +147,20 @@ export class PostForMeService {
     return { externalPostId: data.id };
   }
 
+  /**
+   * Read a post's real state from Post for Me. Creating a post returns an id
+   * immediately, but Instagram processes it asynchronously and can still reject
+   * it after we have recorded a success — so "we got an id back" is not "it is
+   * live". This is how we find out which.
+   */
+  async getPost(externalPostId: string): Promise<unknown> {
+    this.assertConfigured();
+    return this.call<unknown>(
+      'GET',
+      `/v1/social-posts/${encodeURIComponent(externalPostId)}`,
+    );
+  }
+
   async fetchMetrics(externalPostId: string): Promise<PlatformMetrics> {
     this.assertConfigured();
     const data = await this.call<Partial<PlatformMetrics>>(

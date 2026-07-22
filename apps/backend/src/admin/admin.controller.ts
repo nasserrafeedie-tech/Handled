@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { BusinessMetricsService } from './business-metrics.service';
+import { PostForMeService } from '../operator/publishing/post-for-me.service';
 
 const PublishNowBody = z.object({ postId: z.string().uuid() });
 
@@ -26,7 +27,24 @@ export class AdminController {
     private readonly prisma: PrismaService,
     private readonly bus: TaskBus,
     private readonly metrics: BusinessMetricsService,
+    private readonly pfm: PostForMeService,
   ) {}
+
+  /** Read a post's real state straight from Post for Me (debug/verify). */
+  @Get('post-status')
+  async postStatus(
+    @Headers('x-admin-token') token: string | undefined,
+    @Headers('x-external-id') externalId: string | undefined,
+  ) {
+    const expected = process.env.ADMIN_TOKEN;
+    if (!expected || token !== expected) throw new NotFoundException();
+    if (!externalId) return { error: 'pass the external id in the x-external-id header' };
+    try {
+      return await this.pfm.getPost(externalId);
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) };
+    }
+  }
 
   /**
    * Publish one approved post immediately.
