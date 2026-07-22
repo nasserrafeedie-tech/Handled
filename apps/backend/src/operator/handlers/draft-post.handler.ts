@@ -12,6 +12,7 @@ import { CustomerContextService } from '../llm/customer-context.service';
 import { playbookFor, ALT_TEXT_RULE } from '../llm/playbook';
 import { polishCaption } from '../llm/caption-polish';
 import { detectSlop, shouldRegenerate, slopFeedback } from '../llm/slop';
+import { detectFabrication, fabricationFeedback } from '../guardrails/fabrication';
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { isCarouselArchetype, tierHasCarousel } from '../graphics/carousel-content';
 import { ModerationService } from '../guardrails/moderation.service';
@@ -158,6 +159,49 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       }
     }
 
+    // An invented customer is not a quality problem, it is a false statement
+    // published under the owner's name. The prompt has forbidden it in capitals
+    // from the start and the model still writes it, so this is the check rather
+    // than the request. One rewrite, exactly like slop; if it survives that, the
+    // post is pinned to the owner's approval below and never auto-publishes.
+    const realQuote = /["“][^"”]{12,}["”]/.test(task.payload.prompt_notes ?? '');
+    let faked = detectFabrication(gen.caption, realQuote);
+    if (faked.length) {
+      this.log.warn(
+        `invented customer in ${archetype} draft for ${task.customer_id} ` +
+          `(${faked.map((f) => f.name).join(', ')}) — rewriting`,
+      );
+      try {
+        const retry = await this.llm.completeJson(
+          {
+            tier: 'bulk',
+            cachedContext: context,
+            prompt: `${prompt}\n\n${fabricationFeedback(faked)}`,
+            maxTokens: 600,
+            customerId: task.customer_id,
+          },
+          CaptionLlmOutput,
+        );
+        retry.caption = polishCaption(retry.caption);
+        const after = detectFabrication(retry.caption, realQuote);
+        if (after.length < faked.length) {
+          gen.caption = retry.caption;
+          gen.hashtags = retry.hashtags;
+          gen.alt_text = retry.alt_text ?? gen.alt_text;
+          faked = after;
+        }
+      } catch (e) {
+        this.log.warn(`fabrication rewrite failed for ${task.customer_id}: ${String(e)}`);
+      }
+      if (faked.length) {
+        this.log.error(
+          `fabricated customer SURVIVED the rewrite for ${task.customer_id} — ` +
+            `pinning to owner approval: ${faked.map((f) => f.detail).join('; ')}`,
+        );
+      }
+    }
+    const inventedCustomer = faked.length > 0;
+
     // §8 moderation before anything is persisted as publishable.
     const verdict = await this.moderation.screen({
       caption: gen.caption,
@@ -229,9 +273,12 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
           : null,
         riskLevel: risk,
         moderationState: verdict.passed ? 'passed' : 'blocked',
-        approvalState: verdict.passed ? decision.approvalState : 'awaiting_owner',
+        // A draft we could not scrub an invented customer out of never goes out
+        // on autopilot, whatever the trust level says. A human reads it first.
+        approvalState:
+          verdict.passed && !inventedCustomer ? decision.approvalState : 'awaiting_owner',
         status: verdict.passed
-          ? decision.autoPublishAllowed
+          ? decision.autoPublishAllowed && !inventedCustomer
             ? 'approved'
             : 'pending_approval'
           : 'draft',

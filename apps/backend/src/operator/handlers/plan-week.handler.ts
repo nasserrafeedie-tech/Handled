@@ -37,18 +37,28 @@ export const MAX_ASSET_ASKS = 2;
 export function clampAssetAsks<T extends { archetype: string; needs_asset: boolean }>(
   slots: T[],
 ): T[] {
+  const carousel = (s: T) => isCarouselArchetype(s.archetype as never);
   const asking = slots.filter((s) => s.needs_asset);
-  if (asking.length <= MAX_ASSET_ASKS) return slots;
 
-  const keep = new Set(
-    [...asking]
-      .sort(
-        (a, b) =>
-          Number(isCarouselArchetype(a.archetype as never)) -
-          Number(isCarouselArchetype(b.archetype as never)),
-      )
-      .slice(0, MAX_ASSET_ASKS),
+  // Photo-first slots first, then carousel-eligible ones. Sorting even when we
+  // are inside the budget matters: a week that asks for exactly two photos and
+  // happens to pick two carousel-eligible slots loses both carousels while
+  // staying under the cap. Measured — coverage fell to one visual in five that
+  // way. So carousel slots may hold at most one ask between them, whatever the
+  // total, because each one they take costs a carousel we would otherwise build.
+  const ordered = [...asking].sort(
+    (a, b) => Number(carousel(a)) - Number(carousel(b)),
   );
+  const keep = new Set<T>();
+  let carouselAsks = 0;
+  for (const s of ordered) {
+    if (keep.size >= MAX_ASSET_ASKS) break;
+    if (carousel(s)) {
+      if (carouselAsks >= 1) continue;
+      carouselAsks++;
+    }
+    keep.add(s);
+  }
   return slots.map((s) =>
     s.needs_asset && !keep.has(s) ? { ...s, needs_asset: false } : s,
   );
