@@ -70,8 +70,11 @@ describe('validateForPlatform', () => {
   it('catches an oversized carousel', () => {
     const eleven = Array.from({ length: 11 }, () => ({ width: 1080, height: 1080 }));
     assert.deepEqual(codes(validateForPlatform('instagram', 'hi', eleven)), ['too_many_media']);
-    // X allows only 4.
-    assert.deepEqual(codes(validateForPlatform('x', 'hi', eleven.slice(0, 5))), ['too_many_media']);
+    // Threads caps at 10 as well.
+    assert.deepEqual(codes(validateForPlatform('threads', 'hi', eleven)), ['too_many_media']);
+    // TikTok Photo Mode is the outlier — it takes up to 35 images, so the same
+    // carousel that breaks Instagram is perfectly valid there.
+    assert.deepEqual(codes(validateForPlatform('tiktok', 'hi', eleven)), []);
   });
 
   it('reports every violation at once, not just the first', () => {

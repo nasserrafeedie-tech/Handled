@@ -24,14 +24,13 @@ enum CustomerStatus {
   cancelled
 }
 
+// Kept deliberately short — see the Platform enum in packages/contracts for why
+// X, LinkedIn and YouTube were dropped. TikTok stays for its image carousels.
 enum Platform {
   instagram
   facebook
   tiktok
-  x
-  linkedin
   threads
-  youtube
 }
 
 enum PostArchetype {

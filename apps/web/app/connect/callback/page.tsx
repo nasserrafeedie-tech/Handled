@@ -12,10 +12,7 @@ const LABELS: Record<string, string> = {
   instagram: 'Instagram',
   facebook: 'Facebook',
   tiktok: 'TikTok',
-  x: 'X',
-  linkedin: 'LinkedIn',
   threads: 'Threads',
-  youtube: 'YouTube',
 };
 
 type Phase = 'working' | 'done' | 'demo' | 'error';

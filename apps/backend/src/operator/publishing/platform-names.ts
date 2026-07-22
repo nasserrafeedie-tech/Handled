@@ -11,9 +11,6 @@ const NAMES: Record<Platform, string> = {
   facebook: 'Facebook',
   tiktok: 'TikTok',
   threads: 'Threads',
-  linkedin: 'LinkedIn',
-  youtube: 'YouTube',
-  x: 'X',
 };
 
 export function platformName(platform: Platform | string): string {

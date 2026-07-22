@@ -59,21 +59,9 @@ const PER_PLATFORM: Record<Platform, string[]> = {
     'Very short caption, under 150 characters, written like a person talking.',
     '3-5 hashtags mixing one broad discovery tag with specific niche ones. TikTok search is a real traffic source — write the caption the way someone would type the search.',
   ],
-  x: [
-    'Under 240 characters. One idea, said plainly. No thread, no filler.',
-    '0-2 hashtags maximum.',
-  ],
-  linkedin: [
-    '60-120 words. Lead with the useful observation or the result, not the announcement.',
-    '0-3 professional hashtags. Skip the inspirational framing.',
-  ],
   threads: [
     'Conversational and short, under 300 characters. Written to be replied to.',
     '0-2 hashtags.',
-  ],
-  youtube: [
-    'First sentence doubles as the search result description — front-load the keywords.',
-    '3-5 hashtags; the first three surface above the title.',
   ],
 };
 

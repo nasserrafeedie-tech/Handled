@@ -57,25 +57,6 @@ export const PLATFORM_LIMITS: Record<Platform, PlatformLimits> = {
     maxMedia: 35,
     maxImageBytes: 20 * MB,
   },
-  x: {
-    captionChars: 280,
-    aspect: null,
-    maxMedia: 4,
-    maxImageBytes: 5 * MB,
-  },
-  linkedin: {
-    captionChars: 3000,
-    aspect: null,
-    maxMedia: 9,
-    maxImageBytes: 10 * MB,
-  },
-  youtube: {
-    // The description field; titles are handled separately.
-    captionChars: 5000,
-    aspect: null,
-    maxMedia: 1,
-    maxImageBytes: 2 * MB,
-  },
 };
 
 export interface MediaFacts {

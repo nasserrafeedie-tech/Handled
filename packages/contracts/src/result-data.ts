@@ -50,7 +50,9 @@ const PLATFORM_ALIAS: Record<string, string> = {
   ig: 'instagram',
   insta: 'instagram',
   fb: 'facebook',
-  twitter: 'x',
+  // TikTok's own name for an image carousel — the flagship format there.
+  photo_mode: 'tiktok',
+  tik_tok: 'tiktok',
 };
 
 const platformField = z.preprocess((v) => {

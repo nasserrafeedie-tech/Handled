@@ -7,14 +7,20 @@ import { z } from 'zod';
  */
 
 /** Social platforms we publish to via Post for Me (§2). */
+/**
+ * The platforms we publish to.
+ *
+ * Deliberately short. X, LinkedIn and YouTube were dropped: they are a poor fit
+ * for the cafés, salons and barbershops this is built for, and every platform we
+ * keep is one more set of limits, failure modes and token refreshes to get right.
+ * TikTok stays — its Photo Mode takes 2–35 image carousels, so our flagship
+ * format publishes there natively without any video.
+ */
 export const Platform = z.enum([
   'instagram',
   'facebook',
   'tiktok',
-  'x',
-  'linkedin',
   'threads',
-  'youtube',
 ]);
 export type Platform = z.infer<typeof Platform>;
 
