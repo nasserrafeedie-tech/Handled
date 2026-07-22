@@ -273,6 +273,40 @@ export function verticalFor(businessType: string | null | undefined): VerticalPl
   return VERTICALS.find((v) => v.match.test(d)) ?? DEFAULT;
 }
 
+/**
+ * Does this business have a place customers walk into?
+ *
+ * Most do, and every reel recipe opens by asking for a shot of it. Plenty do
+ * not: agencies, consultants and online sellers have no premises at all, and the
+ * mobile trades already in this playbook — locksmiths, movers, cleaners — travel
+ * to the customer instead. Asking all of them to film "your storefront from
+ * outside" is an instruction they cannot follow, and an ask nobody can complete
+ * is worse than no ask: it stalls the whole reel.
+ */
+export function hasStorefront(businessType: string | null | undefined): boolean {
+  return !/\b(?:agency|consultan|freelance|marketing|social media|online|e-?commerce|virtual|remote|mobile|traveling|travelling|we come to you|in-home|at-home|courier|delivery|locksmith|mover|moving|haul|cleaning service|landscap|plumb|electrician|handyman)\b/i.test(
+    businessType ?? '',
+  );
+}
+
+/**
+ * The 3-clip recipe, with the storefront shot swapped out for something a
+ * premises-free business can actually film. Only the opening clip assumes a
+ * building; the other two — the work itself and the finished result — hold for
+ * everyone.
+ */
+export function reelClipsFor(
+  businessType: string | null | undefined,
+  clips: readonly [string, string, string],
+): [string, string, string] {
+  if (hasStorefront(businessType)) return [...clips] as [string, string, string];
+  return [
+    'the tools, van or screen you actually work on — unglamorous is fine',
+    clips[1],
+    clips[2],
+  ];
+}
+
 /** Prompt block for the weekly planner. */
 export function planningGuidance(businessType: string | null | undefined): string {
   const v = verticalFor(businessType);

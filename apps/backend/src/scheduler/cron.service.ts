@@ -12,7 +12,7 @@ import { ReconcileService } from './reconcile.service';
 import { RecapService } from '../concierge/recap.service';
 import { ArchetypePerformanceService } from '../playbook/archetype-performance.service';
 import { zonedToUtc } from '../common/time';
-import { resolveStrategy } from '../operator/llm/vertical-playbook';
+import { resolveStrategy, reelClipsFor } from '../operator/llm/vertical-playbook';
 
 /** Shape of the PLAN_WEEK Result we care about. */
 type PlanResult = { data?: { slots?: CalendarSlot[] } };
@@ -169,7 +169,16 @@ export class CronService {
           where: { customerId },
           select: { businessType: true, contentStrategy: true },
         });
-        const v = { key: 'custom', reelClips: resolveStrategy(profile ?? {}).reel_clips };
+        // Swap the opening storefront shot for something filmable when the
+        // business has no premises — an agency, or a trade that travels to the
+        // customer. An ask nobody can complete stalls the whole reel.
+        const v = {
+          key: 'custom',
+          reelClips: reelClipsFor(
+            profile?.businessType,
+            resolveStrategy(profile ?? {}).reel_clips as [string, string, string],
+          ),
+        };
         await this.prisma.shotListRequest.create({
           data: {
             customerId,
