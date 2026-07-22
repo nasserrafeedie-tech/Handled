@@ -72,6 +72,14 @@ export default function ConnectPage() {
       });
       if (!res.ok) throw new Error(String(res.status));
       const { url } = (await res.json()) as { url: string };
+      // Post for Me sends the owner back to a single project-level redirect
+      // URL, so nothing about this customer survives the round trip. Remember
+      // it here; the callback picks it up on the way back in.
+      try {
+        sessionStorage.setItem('handled:connect:customer', customer);
+      } catch {
+        /* private mode — the callback falls back to asking for the link again */
+      }
       window.location.href = url;
     } catch {
       setNote('Something went wrong. Please try again in a moment.');

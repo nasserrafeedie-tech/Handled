@@ -63,10 +63,15 @@ export class ConnectService {
       };
     }
 
+    // No per-request redirect override. Post for Me rejects it outright on
+    // Quickstart projects ("Redirect URL Override is not allowed"), and the
+    // project-level Redirect URL configured in their dashboard is what actually
+    // gets used. The customer id therefore cannot ride back on the query
+    // string, so the connect page stashes it before handing the browser over
+    // and the callback reads it back.
     const { url } = await this.pfm.createAuthUrl({
       platform: req.platform,
       externalId: req.customerId,
-      redirectUrl,
     });
     return { url, offline: false };
   }

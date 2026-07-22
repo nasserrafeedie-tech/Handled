@@ -29,7 +29,17 @@ export default function ConnectCallbackPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const customer = params.get('customer') ?? params.get('c');
+    // The query string is empty on the way back — Post for Me redirects to one
+    // fixed project URL and cannot carry per-customer parameters — so fall back
+    // to what the connect page remembered before it handed the browser over.
+    let customer = params.get('customer') ?? params.get('c');
+    if (!customer) {
+      try {
+        customer = sessionStorage.getItem('handled:connect:customer');
+      } catch {
+        customer = null;
+      }
+    }
     const demo = params.get('demo') === '1';
 
     if (demo || !api) {

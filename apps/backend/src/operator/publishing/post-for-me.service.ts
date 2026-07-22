@@ -31,8 +31,15 @@ export interface AuthUrlRequest {
   platform: Platform;
   /** Our customer id — Post for Me stores it so we can find the account later. */
   externalId: string;
-  /** Where Post for Me sends the owner back once they finish authorizing. */
-  redirectUrl: string;
+  /**
+   * Where Post for Me sends the owner back once they finish authorizing.
+   *
+   * Optional, and normally left unset: Quickstart projects reject a per-request
+   * override outright, and the Project Redirect URL configured in their
+   * dashboard is what gets used instead. Only pass this on a project type that
+   * permits overrides.
+   */
+  redirectUrl?: string;
 }
 
 /** One connected social account as Post for Me reports it. */
@@ -81,7 +88,9 @@ export class PostForMeService {
       {
         platform: req.platform,
         external_id: req.externalId,
-        redirect_url_override: req.redirectUrl,
+        // Omitted entirely when unset — sending it as null still trips the
+        // Quickstart check.
+        ...(req.redirectUrl ? { redirect_url_override: req.redirectUrl } : {}),
       },
     );
     return { url: data.url };
