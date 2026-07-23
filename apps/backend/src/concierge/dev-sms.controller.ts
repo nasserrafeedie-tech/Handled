@@ -1,4 +1,4 @@
-import { Body, Controller, NotFoundException, Post } from '@nestjs/common';
+import { Body, Controller, Headers, NotFoundException, Post } from '@nestjs/common';
 import { z } from 'zod';
 import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
@@ -29,19 +29,31 @@ export class DevSmsController {
     private readonly prisma: PrismaService,
   ) {}
 
-  /** Both dev endpoints stay invisible in production unless explicitly opened. */
-  private assertDevAllowed(): void {
-    if (
-      process.env.NODE_ENV === 'production' &&
-      process.env.ALLOW_DEV_SMS !== '1'
-    ) {
-      throw new NotFoundException();
-    }
+  /**
+   * Both dev endpoints stay invisible in production unless explicitly opened.
+   *
+   * ALLOW_DEV_SMS alone is NOT enough to open them. This endpoint speaks as any
+   * customer it is given a number for — which means driving their onboarding
+   * and, more seriously, replying YES to approve their posts. Left
+   * unauthenticated in production it would be a way for a stranger to publish
+   * to a customer's Instagram, which is the exact thing the approval gate
+   * exists to prevent. So production also demands the admin token.
+   */
+  private assertDevAllowed(token: string | undefined): void {
+    if (process.env.NODE_ENV !== 'production') return;
+
+    if (process.env.ALLOW_DEV_SMS !== '1') throw new NotFoundException();
+
+    const expected = process.env.ADMIN_TOKEN;
+    if (!expected || token !== expected) throw new NotFoundException();
   }
 
   @Post('sms')
-  async simulate(@Body() body: unknown): Promise<{ replies: string[] }> {
-    this.assertDevAllowed();
+  async simulate(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ): Promise<{ replies: string[] }> {
+    this.assertDevAllowed(token);
     const { from, body: text, mediaUrls } = SimBody.parse(body);
     const t0 = new Date();
 

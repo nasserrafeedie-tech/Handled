@@ -5,6 +5,7 @@ import {
   Headers,
   NotFoundException,
   Post as HttpPost,
+  Query,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -54,6 +55,8 @@ const ApproveBody = z.object({
   postId: z.string().uuid(),
   approvedBy: z.string().min(3),
 });
+
+const RelayedBody = z.object({ messageIds: z.array(z.string().uuid()).min(1) });
 
 /**
  * Says out loud what the tier does and does not include, at the moment it is
@@ -193,6 +196,81 @@ export class AdminController {
       approvedBy,
       next: `POST /admin/publish-now with {"postId":"${postId}"} to send it.`,
     };
+  }
+
+  /**
+   * Texts Handled has written but nobody has carried to the customer yet.
+   *
+   * Replying to an inbound message is the easy half — the simulator hands those
+   * straight back. The hard half is everything Handled says on its own clock:
+   * the Monday approval texts, the nudge when a photo never arrives, the recap
+   * before billing. Those are composed by the scheduler with no request to
+   * return them to, so without an outbox they are written, stored, and never
+   * seen by anyone — the customer simply never hears about the week's posts.
+   */
+  @Get('outbox')
+  async outbox(
+    @Headers('x-admin-token') token: string | undefined,
+    @Query('customer') customerId: string | undefined,
+  ) {
+    const expected = process.env.ADMIN_TOKEN;
+    if (!expected || token !== expected) throw new NotFoundException();
+
+    const pending = await this.prisma.message.findMany({
+      where: {
+        direction: 'outbound',
+        relayedAt: null,
+        ...(customerId
+          ? { conversation: { customerId } }
+          : {}),
+      },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        conversation: {
+          select: { customer: { select: { id: true, businessName: true, phone: true } } },
+        },
+      },
+    });
+
+    return {
+      pending: pending.length,
+      messages: pending.map((m) => ({
+        id: m.id,
+        to: m.conversation.customer.phone,
+        business: m.conversation.customer.businessName,
+        written: m.createdAt,
+        body: m.body,
+      })),
+      note:
+        pending.length === 0
+          ? 'Nothing waiting.'
+          : 'Send these to the customer yourself, then POST /admin/outbox/relayed with their ids.',
+    };
+  }
+
+  /**
+   * Mark texts as delivered by hand. Separate from reading them on purpose: the
+   * outbox is checked far more often than it is cleared, and a read that
+   * silently emptied it would lose any message seen but not yet sent.
+   */
+  @HttpPost('outbox/relayed')
+  async markRelayed(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const expected = process.env.ADMIN_TOKEN;
+    if (!expected || token !== expected) throw new NotFoundException();
+
+    const parsed = RelayedBody.safeParse(body);
+    if (!parsed.success) {
+      return { error: 'bad_request', detail: 'messageIds must be a non-empty array of uuids' };
+    }
+
+    const { count } = await this.prisma.message.updateMany({
+      where: { id: { in: parsed.data.messageIds }, relayedAt: null },
+      data: { relayedAt: new Date() },
+    });
+    return { marked: count };
   }
 
   /** Read a post's real state straight from Post for Me (debug/verify). */

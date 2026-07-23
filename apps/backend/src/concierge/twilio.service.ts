@@ -13,7 +13,26 @@ export class TwilioService {
     process.env.TWILIO_AUTH_TOKEN,
   );
 
+  /**
+   * Manual relay: Handled composes every text as normal, but a human carries
+   * them to the customer instead of the wire.
+   *
+   * For the window where a Twilio number exists but is not yet verified to send
+   * to US numbers. Without this the account SID is present, so `send` tries the
+   * real API, the send is rejected, and the throw happens BEFORE the caller
+   * records the message — so the text is lost entirely rather than merely
+   * undelivered. That silently breaks the simulator, whose whole job is to hand
+   * back what Handled wanted to say.
+   */
+  private get manualRelay(): boolean {
+    return process.env.SMS_MANUAL_RELAY === '1';
+  }
+
   async send(to: string, body: string): Promise<void> {
+    if (this.manualRelay) {
+      this.log.log(`[manual relay → ${to}] ${body}`);
+      return;
+    }
     if (!process.env.TWILIO_ACCOUNT_SID) {
       this.log.warn(`[dry-run SMS → ${to}] ${body}`);
       return;
