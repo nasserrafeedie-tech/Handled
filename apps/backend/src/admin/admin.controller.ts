@@ -12,8 +12,62 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { BusinessMetricsService } from './business-metrics.service';
 import { PostForMeService } from '../operator/publishing/post-for-me.service';
+import { normalizePhone } from '../common/phone';
+import { tierHasCarousel } from '../operator/graphics/carousel-content';
 
 const PublishNowBody = z.object({ postId: z.string().uuid() });
+
+/**
+ * Setting a customer up by hand.
+ *
+ * planTier is otherwise written in exactly one place — the Stripe webhook. That
+ * is right for self-serve, and wrong for the first customers, who get signed up
+ * in person and may never touch Stripe. Without this they sit on the "starter"
+ * default forever and every paid feature stays silently off: no carousels, no
+ * generated images, no reels, no video uploads. Nothing errors. The feature we
+ * sell hardest simply never appears, and there is nothing in the logs to chase.
+ */
+const UpsertCustomerBody = z.object({
+  phone: z.string().min(7),
+  businessName: z.string().min(1).optional(),
+  // Matches billing's PlanId. 'premium' appears in the carousel gate but was
+  // never a sellable plan, so it is deliberately not offered here.
+  planTier: z.enum(['starter', 'growth', 'pro']).optional(),
+  timezone: z.string().min(1).optional(),
+  status: z.enum(['active', 'paused', 'cancelled']).optional(),
+});
+
+/**
+ * Recording an approval the owner gave somewhere other than SMS.
+ *
+ * Approval normally arrives as a text reply, and until toll-free verification
+ * clears we cannot send or receive those — so the first hand-run customers will
+ * approve out loud, over iMessage, or standing in their shop. That approval is
+ * real and we should be able to act on it.
+ *
+ * `approvedBy` is required, and free text on purpose: it has to be possible to
+ * read later and know a human said yes and who heard it. An approval nobody can
+ * trace is indistinguishable from us posting to a stranger's Instagram on our
+ * own authority, which is the one thing this product must never do.
+ */
+const ApproveBody = z.object({
+  postId: z.string().uuid(),
+  approvedBy: z.string().min(3),
+});
+
+/**
+ * Says out loud what the tier does and does not include, at the moment it is
+ * set. The gates are silent by design at runtime — a Starter customer is not
+ * told what they are missing — so the one place it must be loud is here, where
+ * a wrong tier is still cheap to fix.
+ */
+function tierNote(planTier: string): string {
+  return tierHasCarousel(planTier)
+    ? `${planTier}: carousels, generated images and reels are ON.`
+    : `${planTier}: captions and the owner's own photos only — NO carousels, ` +
+      'no generated images, no reels. Set planTier to growth or pro if this ' +
+      'customer is paying for those.';
+}
 
 /**
  * Operator's eyes — NOT a customer dashboard (§2: customers never get one).
@@ -29,6 +83,117 @@ export class AdminController {
     private readonly metrics: BusinessMetricsService,
     private readonly pfm: PostForMeService,
   ) {}
+
+  /**
+   * Create or update a customer by hand — the founder-run signup path.
+   *
+   * Keyed on phone, because that is the only identifier the product has: the
+   * owner texts us, and we match on the number. Normalized to E.164 first, so a
+   * customer set up here as "(424) 409-8341" is the same record Twilio finds
+   * when they text in. Skipping that would create a second, empty customer and
+   * start them over from question one.
+   */
+  @HttpPost('customer')
+  async upsertCustomer(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const expected = process.env.ADMIN_TOKEN;
+    if (!expected || token !== expected) throw new NotFoundException();
+
+    const parsed = UpsertCustomerBody.safeParse(body);
+    if (!parsed.success) {
+      return { error: 'bad_request', detail: parsed.error.issues };
+    }
+    const { phone: rawPhone, ...fields } = parsed.data;
+
+    const phone = normalizePhone(rawPhone);
+    if (!phone) {
+      return {
+        error: 'bad_phone',
+        detail:
+          `"${rawPhone}" is not a phone number we can text. Use E.164 ` +
+          '(+14244098341) or a 10-digit US number.',
+      };
+    }
+
+    const existing = await this.prisma.customer.findUnique({ where: { phone } });
+    const customer = await this.prisma.customer.upsert({
+      where: { phone },
+      // A hand-made customer needs the same children the SMS path creates,
+      // or onboarding has nowhere to write and dies on the first reply.
+      create: {
+        phone,
+        ...fields,
+        conversation: { create: {} },
+        brandProfile: { create: {} },
+      },
+      update: fields,
+    });
+
+    return {
+      created: !existing,
+      customer: {
+        id: customer.id,
+        phone: customer.phone,
+        businessName: customer.businessName,
+        planTier: customer.planTier,
+        status: customer.status,
+      },
+      // Same source every other connect link uses, so this one cannot drift to
+      // a different host than the one the concierge texts them.
+      connectLink: `${process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com'}/connect?c=${customer.id}`,
+      note: tierNote(customer.planTier),
+    };
+  }
+
+  /**
+   * Record an owner's approval that came in off-channel, so a post can go out
+   * while SMS is unavailable. Deliberately does NOT publish — it only opens the
+   * gate. Publishing stays a separate, explicit act.
+   */
+  @HttpPost('approve')
+  async approve(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const expected = process.env.ADMIN_TOKEN;
+    if (!expected || token !== expected) throw new NotFoundException();
+
+    const parsed = ApproveBody.safeParse(body);
+    if (!parsed.success) {
+      return {
+        error: 'bad_request',
+        detail:
+          'postId and approvedBy are both required. Say who approved it and ' +
+          'how — "Dr. Rafeedie, by text 22 Jul" — not just "me".',
+      };
+    }
+    const { postId, approvedBy } = parsed.data;
+
+    const post = await this.prisma.post.findUnique({ where: { id: postId } });
+    if (!post) throw new NotFoundException(`no post ${postId}`);
+    if (post.approvalState === 'approved') {
+      return { changed: false, reason: 'already approved' };
+    }
+
+    await this.prisma.post.update({
+      where: { id: postId },
+      data: {
+        approvalState: 'approved',
+        // Written onto the post itself rather than a log line, so the trail
+        // travels with the post and survives log rotation.
+        approvalNote: approvedBy,
+      },
+    });
+
+    return {
+      changed: true,
+      postId,
+      approvedBy,
+      next: `POST /admin/publish-now with {"postId":"${postId}"} to send it.`,
+    };
+  }
 
   /** Read a post's real state straight from Post for Me (debug/verify). */
   @Get('post-status')

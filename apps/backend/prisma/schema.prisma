@@ -384,6 +384,12 @@ model Post {
   riskLevel       RiskLevel       @default(low)
   externalPostId  String?
   failureReason   String?
+  // How an approval was obtained when it did not arrive by text — "Dr.
+  // Rafeedie, in person 22 Jul". Null for the normal SMS path, where the
+  // owner's actual reply is already stored on the conversation. Exists so that
+  // posting on someone's behalf always leaves a trail naming the human who said
+  // yes; an approval nobody can trace is the one thing we must not have.
+  approvalNote    String?
   // Which playbook archetype this post was planned from. Named `playbookSlug`
   // and not `archetypeSlug` because `archetype` above is the POST's format
   // (promo, behind_the_scenes) — a different axis entirely. Stamped at draft
