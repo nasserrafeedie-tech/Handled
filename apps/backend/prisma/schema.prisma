@@ -547,6 +547,22 @@ model Result {
 }
 
 // ─── leads (pre-launch waitlist + interested visitors) ───────────────────
+// Stripe delivers each webhook AT LEAST once, not exactly once — a redelivery
+// after a timeout is normal operation, not an error. Without a record of what
+// has already been handled, a repeated checkout.session.completed runs
+// onboarding twice and the new customer's first experience of Handled is being
+// texted the same welcome message twice.
+//
+// The event id is the primary key, so the insert itself is the lock: a
+// duplicate fails the unique constraint and we skip. No read-then-write race.
+model StripeWebhookEvent {
+  id         String   @id
+  type       String
+  receivedAt DateTime @default(now())
+
+  @@map("stripe_webhook_events")
+}
+
 model Lead {
   id             String    @id @default(uuid()) @db.Uuid
   phone          String    @unique
