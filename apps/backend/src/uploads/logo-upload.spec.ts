@@ -4,10 +4,11 @@ import { Resvg } from '@resvg/resvg-js';
 import { UploadsController } from './uploads.controller';
 
 /** A real extractable logo: a saturated mark on white. */
-function logoBytes(fill = '#8C2F39'): Buffer {
+function logoBytes(fill = '#8C2F39', size = 240): Buffer {
+  const r = Math.round(size * 0.35);
   return Buffer.from(
     new Resvg(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#fff"/><circle cx="100" cy="100" r="70" fill="${fill}"/></svg>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect width="${size}" height="${size}" fill="#fff"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="${fill}"/></svg>`,
     )
       .render()
       .asPng(),
@@ -62,6 +63,16 @@ describe('logo upload', () => {
       undefined,
       'must not clobber the owner’s stated colors',
     );
+  });
+
+  it('takes colors but does NOT set logoRef for a low-res logo', async () => {
+    // Colours survive any resolution; a tiny logo would look blurry stamped, so
+    // it is not composited — logoRef stays unset, the text footer is kept.
+    const { ctrl, updates, notes } = makeController([]);
+    await (ctrl as any).handleLogo('cus_1', file(logoBytes('#8C2F39', 90)));
+    assert.equal(updates[0].logoRef, undefined, 'low-res logo must not be composited');
+    assert.ok(updates[0].brandColors?.length, 'but its colours are still taken');
+    assert.match(notes.join(' '), /low-res|larger version/i, 'owner is told');
   });
 
   it('rejects a file that is not an image', async () => {

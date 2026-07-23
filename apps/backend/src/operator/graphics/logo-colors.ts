@@ -17,7 +17,19 @@ import { Jimp } from 'jimp';
 export interface LogoColors {
   primary?: string;
   secondary?: string;
+  /** The logo's real pixel dimensions, so the caller can judge its quality. */
+  width?: number;
+  height?: number;
 }
+
+/**
+ * The smallest a logo's longer side may be to composite it onto a slide. Below
+ * this we still take its COLOURS (which survive any resolution) but do NOT stamp
+ * the logo, because scaling a tiny mark up into the badge box looks blurry — and
+ * a clean text name beats a fuzzy logo on every post. Instagram carousels render
+ * near 1080px, often on 2× screens; a logo under this reads soft in the badge.
+ */
+export const MIN_LOGO_SIDE = 180;
 
 /** Wrap stored logo bytes as a data URI for compositing into an SVG slide. */
 export function logoDataUri(bytes: Buffer, ext: string): string {
@@ -69,6 +81,10 @@ export async function extractBrandColors(buffer: Buffer): Promise<LogoColors> {
     // Not a decodable raster (corrupt, or an SVG/PDF we can't read as pixels).
     return {};
   }
+  // Capture the REAL dimensions before downscaling mutates them — the caller
+  // uses them to decide whether the logo is sharp enough to composite.
+  const width = img.bitmap.width;
+  const height = img.bitmap.height;
   // Downscale for speed; colour survives it. Keep aspect so we don't skew hues.
   img.scaleToFit({ w: 96, h: 96 });
   const d = img.bitmap.data; // RGBA
@@ -102,7 +118,7 @@ export async function extractBrandColors(buffer: Buffer): Promise<LogoColors> {
 
   // Confidence gate: too few coloured pixels means there is no brand colour to
   // find. Better to say nothing and fall back than to report noise.
-  if (buckets.size === 0 || kept < sampled * 0.02) return {};
+  if (buckets.size === 0 || kept < sampled * 0.02) return { width, height };
 
   const ranked = [...buckets.values()].sort((x, y) => y.count - x.count);
   const rep = (acc: Bucket) =>
@@ -116,5 +132,5 @@ export async function extractBrandColors(buffer: Buffer): Promise<LogoColors> {
       ? rep(ranked[1])
       : undefined;
 
-  return { primary, secondary };
+  return { primary, secondary, width, height };
 }

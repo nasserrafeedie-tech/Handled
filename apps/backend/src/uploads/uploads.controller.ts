@@ -18,7 +18,7 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import { detectMedia } from '../common/media-type';
 import { StorageService } from '../common/storage.service';
-import { extractBrandColors } from '../operator/graphics/logo-colors';
+import { extractBrandColors, MIN_LOGO_SIDE } from '../operator/graphics/logo-colors';
 
 interface UploadedFileShape {
   originalname: string;
@@ -132,11 +132,11 @@ export class UploadsController {
         'That doesn\'t look like a logo image — send a PNG or JPG of your logo.',
       );
     }
-    const r2Key = `${customerId}/logo.${detected.ext}`;
-    await this.storage.put(r2Key, file.buffer, detected.contentType);
-
-    // Extract colours before writing, so a black-and-white logo (which yields
-    // nothing) doesn't wipe colours the owner may have already stated in words.
+    // Extract colours (and measure the logo) before writing. Colours survive any
+    // resolution — a tiny logo still gives the right hues — so we take them from
+    // any logo. But we only STAMP the logo onto posts when it's sharp enough:
+    // scaling a low-res mark up into the badge looks blurry, and a clean text
+    // name beats a fuzzy logo on every post.
     const colors = await extractBrandColors(file.buffer);
     const existing = await this.prisma.brandProfile.findUnique({
       where: { customerId },
@@ -145,31 +145,47 @@ export class UploadsController {
     const extracted = [colors.primary, colors.secondary].filter(
       (c): c is string => Boolean(c),
     );
+    const longSide = Math.max(colors.width ?? 0, colors.height ?? 0);
+    const sharpEnough = longSide >= MIN_LOGO_SIDE;
+
+    // Store the file and set logoRef ONLY when it's worth compositing — a logo
+    // we won't stamp is not worth keeping, and an unset logoRef is exactly what
+    // makes the renderer skip the badge and keep the text footer.
+    let r2Key: string | undefined;
+    if (sharpEnough) {
+      r2Key = `${customerId}/logo.${detected.ext}`;
+      await this.storage.put(r2Key, file.buffer, detected.contentType);
+    }
     // Fill brand colours from the logo only when we don't already have the
-    // owner's own words — an explicit "we're teal" is more intentional than an
-    // extraction, and the logo is still stored either way.
+    // owner's own words — an explicit "we're teal" is more intentional.
     const takeColors = extracted.length > 0 && !(existing?.brandColors?.length);
 
-    await this.prisma.brandProfile.update({
-      where: { customerId },
-      data: {
-        logoRef: r2Key,
-        ...(takeColors ? { brandColors: extracted } : {}),
-      },
-    });
+    if (r2Key || takeColors) {
+      await this.prisma.brandProfile.update({
+        where: { customerId },
+        data: {
+          ...(r2Key ? { logoRef: r2Key } : {}),
+          ...(takeColors ? { brandColors: extracted } : {}),
+        },
+      });
+    }
 
-    const msg = takeColors
-      ? 'Got your logo — I pulled your brand colours from it and your carousels ' +
-        'will use them from now on. 🎨 If they look off, just tell me your ' +
-        'colours (like "we\'re teal and gold").'
+    const colourLine = takeColors
+      ? 'I pulled your brand colours from it'
       : extracted.length > 0
-        ? 'Got your logo, thanks! I\'ll keep the colours you already gave me.'
-        : 'Got your logo! I couldn\'t read clear brand colours from it — if you ' +
-          'tell me your colours (like "we\'re teal and gold") I\'ll use those.';
+        ? 'I\'ll keep the colours you already gave me'
+        : 'I couldn\'t read clear colours from it — tell me your colours (like "we\'re teal and gold") and I\'ll use those';
+    const msg = sharpEnough
+      ? `Got your logo — ${colourLine}, and it'll go on your posts. 🎨`
+      : `Got your logo — ${colourLine}. Heads up: it's a bit low-res to put on ` +
+        `your posts crisply, so if you have a larger version, send it over and ` +
+        `I'll add it. Otherwise your colours are set. 👍`;
     void this.concierge.notify(customerId, msg, { promptedByOwner: true });
 
     this.log.log(
-      `logo stored for ${customerId}; colours ${takeColors ? extracted.join('+') : 'not taken'}`,
+      `logo for ${customerId}: ${longSide}px longSide, ` +
+        `${sharpEnough ? 'composited' : 'too low-res, colours only'}, ` +
+        `colours ${takeColors ? extracted.join('+') : 'not taken'}`,
     );
     return { stored: 1, kinds: ['logo'] };
   }

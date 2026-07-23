@@ -53,6 +53,13 @@ describe('extractBrandColors', () => {
     assert.equal((await extractBrandColors(png)).primary, undefined);
   });
 
+  it('reports the logo\'s real dimensions', async () => {
+    const png = logo('<circle cx="120" cy="120" r="80" fill="#8C2F39"/>'); // 240x240
+    const out = await extractBrandColors(png);
+    assert.equal(out.width, 240);
+    assert.equal(out.height, 240);
+  });
+
   it('does not throw on undecodable bytes — returns nothing', async () => {
     const out = await extractBrandColors(Buffer.from('not an image at all'));
     assert.deepEqual(out, {});
