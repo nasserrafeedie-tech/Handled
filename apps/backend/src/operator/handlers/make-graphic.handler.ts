@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { type Task, type Result, type MakeGraphicResult } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GraphicsService } from '../graphics/graphics.service';
-import { CANVAS, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
+import { CANVAS, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
 import { TaskHandler, ok, fail } from './handler.interface';
 import { StorageService } from '../../common/storage.service';
 import { toSvgColors } from '../graphics/color.util';
@@ -52,12 +52,15 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
     const made = await this.prisma.post.count({
       where: { customerId: task.customer_id },
     });
+    // Mix in a stable per-brand offset so two businesses don't share a look at
+    // the same post number — the same fingerprint fix as the carousel handler.
+    const brandOffset = stableSeed(task.customer_id);
     const specs: SlideSpec[] = task.payload.slides.map((s, i) => ({
       kind: s.kind,
       headline: s.headline,
       body: s.body,
       footer: s.footer,
-      seed: made,
+      seed: made + brandOffset,
       variant: i,
     }));
 

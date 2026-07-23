@@ -1,7 +1,12 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { renderSlideSvg, type BrandTheme, type SlideSpec } from './slide-templates';
+import {
+  renderSlideSvg,
+  stableSeed,
+  type BrandTheme,
+  type SlideSpec,
+} from './slide-templates';
 
 const theme: BrandTheme = {
   primary: '#0E5C63',
@@ -85,5 +90,44 @@ describe('the words always survive the layout', () => {
       .join(' ');
     assert.ok(text.includes('reason'), 'the last word must not be dropped');
     assert.ok(!svg.includes('…'), 'no ellipsis — the type should shrink, not the copy');
+  });
+});
+
+/**
+ * The fingerprint an owner caught: seeding only off the post count meant two
+ * DIFFERENT businesses got the identical design at the same post number — open
+ * one feed, recognise it in another. The handler now mixes in a stable per-brand
+ * offset (stableSeed(customerId)); these prove it actually spreads businesses
+ * across the design space instead of marching them in lockstep.
+ */
+describe('two different businesses should not share a look', () => {
+  // Simulate distinct customer ids the way the handlers seed: made + offset.
+  const ids = Array.from({ length: 24 }, (_, i) => `cus_${i}_a1b2c3d4e5f6`);
+
+  it('stableSeed is deterministic and differs across ids', () => {
+    for (const id of ids) assert.equal(stableSeed(id), stableSeed(id));
+    const distinct = new Set(ids.map(stableSeed));
+    assert.ok(distinct.size >= ids.length - 1, 'offsets must be well spread');
+  });
+
+  it('at the SAME post number, brands land on a spread of surfaces', () => {
+    const made = 3; // every brand posting its 4th carousel
+    const surfaces = new Set(
+      ids.map((id) =>
+        surfaceOf(renderSlideSvg(slide({ seed: made + stableSeed(id), variant: 0 }), theme))),
+    );
+    // Post-count-only seeding put ALL of them on one surface (size 1). With the
+    // brand offset they cover most of the rotation. Not a guarantee of no
+    // collision, but no longer a guarantee of one.
+    assert.ok(surfaces.size >= 4, `expected a spread of surfaces, got ${surfaces.size}`);
+  });
+
+  it('the same brand still gets feed variety across its own posts', () => {
+    const id = ids[0];
+    const surfaces = new Set(
+      [0, 1, 2, 3, 4, 5, 6].map((made) =>
+        surfaceOf(renderSlideSvg(slide({ seed: made + stableSeed(id), variant: 0 }), theme))),
+    );
+    assert.ok(surfaces.size >= 5, 'a brand walking its own post counts still varies');
   });
 });

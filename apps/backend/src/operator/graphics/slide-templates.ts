@@ -24,6 +24,19 @@
 
 export const CANVAS = 1080;
 
+/**
+ * A stable non-negative integer derived from a string (a customer id). Used as a
+ * per-brand offset into the design rotation so two different businesses do not
+ * land on the identical surface + shapes at the same post number — the "you can
+ * tell it was made by Handled" fingerprint. Deterministic, so a re-render of the
+ * same post is always identical. (djb2 — small, well-spread, no crypto needed.)
+ */
+export function stableSeed(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
 export type SlideKind = 'title' | 'body' | 'quote' | 'promo' | 'cta';
 
 /**
@@ -469,6 +482,95 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
     <circle cx="120" cy="${CANVAS - 100}" r="240" fill="url(#glow)"/>`,
   // 9 — minimal: just breathing room and the faintest wash
   (p) => `<circle cx="${CANVAS - 140}" cy="${CANVAS - 140}" r="300" fill="url(#glow)"/>`,
+  // ── Below: a second vocabulary. Everything above leans on circles/glows —
+  // the tell an owner spotted, since every Handled carousel read the same. These
+  // are lines, angles, and edges: no two feeds should share a signature look.
+  // 10 — editorial rule stack, top-left
+  (p) => {
+    let r = '';
+    for (let i = 0; i < 5; i++)
+      r += `<rect x="96" y="${150 + i * 26}" width="${170 + i * 34}" height="2" fill="${p.deco}" opacity="0.13"/>`;
+    return r;
+  },
+  // 11 — corner brackets, an editorial frame on two corners
+  (p) => {
+    const m = 72, L = 132;
+    return `
+    <path d="M ${m} ${m + L} V ${m} H ${m + L}" fill="none" stroke="${p.accent}" stroke-opacity="0.16" stroke-width="3"/>
+    <path d="M ${CANVAS - m - L} ${CANVAS - m} H ${CANVAS - m} V ${CANVAS - m - L}" fill="none" stroke="${p.accent}" stroke-opacity="0.16" stroke-width="3"/>`;
+  },
+  // 12 — a column of chevrons down the right edge
+  (p) => {
+    let c = '';
+    for (let i = 0; i < 7; i++) {
+      const y = 130 + i * 122;
+      c += `<path d="M ${CANVAS - 180} ${y} l 58 40 l -58 40" fill="none" stroke="${p.deco}" stroke-opacity="0.10" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
+    }
+    return c;
+  },
+  // 13 — outlined triangles, scattered
+  (p) => {
+    const t: [number, number, number][] = [
+      [170, 230, 42], [CANVAS - 190, 190, 30], [CANVAS - 150, CANVAS - 230, 48],
+      [250, CANVAS - 180, 34], [CANVAS / 2 + 190, 150, 26],
+    ];
+    return t
+      .map(([x, y, s]) => `<path d="M ${x} ${y - s} L ${x + s} ${y + s} L ${x - s} ${y + s} Z" fill="none" stroke="${p.deco}" stroke-opacity="0.11" stroke-width="2.5"/>`)
+      .join('');
+  },
+  // 14 — concentric squares nested into the bottom-right corner
+  (p) => {
+    let s = '';
+    for (const d of [120, 250, 380, 510])
+      s += `<rect x="${CANVAS - 60 - d}" y="${CANVAS - 60 - d}" width="${d}" height="${d}" fill="none" stroke="${p.deco}" stroke-opacity="0.075" stroke-width="2"/>`;
+    return s;
+  },
+  // 15 — topographic waves rolling across the lower half
+  (p) => {
+    let w = '';
+    for (let i = 0; i < 5; i++) {
+      const y = CANVAS - 70 - i * 74;
+      w += `<path d="M -20 ${y} q 180 -60 360 0 t 360 0 t 360 0 t 360 0" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2.5"/>`;
+    }
+    return w;
+  },
+  // 16 — a crosshatch mesh block in the top-right
+  (p) => {
+    let g = '';
+    const gap = 40, x0 = CANVAS - 360, y0 = 60;
+    for (let i = 0; i <= 8; i++)
+      g += `<line x1="${x0 + i * gap}" y1="${y0}" x2="${x0 + i * gap}" y2="${y0 + 320}" stroke="${p.deco}" stroke-opacity="0.07" stroke-width="1.5"/>`;
+    for (let j = 0; j <= 8; j++)
+      g += `<line x1="${x0}" y1="${y0 + j * gap}" x2="${x0 + 320}" y2="${y0 + j * gap}" stroke="${p.deco}" stroke-opacity="0.07" stroke-width="1.5"/>`;
+    return g;
+  },
+  // 17 — measurement ticks marching down the left edge
+  (p) => {
+    let t = '';
+    for (let i = 0; i < 12; i++) {
+      const y = 130 + i * 70, long = i % 3 === 0;
+      t += `<line x1="72" y1="${y}" x2="${72 + (long ? 46 : 24)}" y2="${y}" stroke="${p.deco}" stroke-opacity="0.13" stroke-width="${long ? 3 : 2}"/>`;
+    }
+    return t;
+  },
+  // 18 — a faint field of diagonal hairlines, whole canvas
+  (p) => {
+    let d = '';
+    for (let i = -2; i < 14; i++) {
+      const x = i * 100;
+      d += `<line x1="${x}" y1="0" x2="${x + CANVAS}" y2="${CANVAS}" stroke="${p.deco}" stroke-opacity="0.05" stroke-width="1.5"/>`;
+    }
+    return d;
+  },
+  // 19 — halftone: dots shrinking left-to-right, a gradient of marks
+  (p) => {
+    let dots = '';
+    const cols = 7, rows = 5, gap = 60, ox = CANVAS - 96 - (cols - 1) * gap, oy = 140;
+    for (let i = 0; i < cols; i++)
+      for (let j = 0; j < rows; j++)
+        dots += `<circle cx="${ox + i * gap}" cy="${oy + j * gap}" r="${2 + (cols - 1 - i) * 1.5}" fill="${p.deco}" opacity="0.12"/>`;
+    return dots;
+  },
 ];
 
 /**

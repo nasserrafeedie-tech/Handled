@@ -5,7 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../common/storage.service';
 import { LlmService } from '../llm/llm.service';
 import { GraphicsService } from '../graphics/graphics.service';
-import { CANVAS, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
+import { CANVAS, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
 import { toSvgColors } from '../graphics/color.util';
 import {
   carouselInstruction,
@@ -105,18 +105,24 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       style: (profile?.visualStyle as BrandTheme['style']) ?? undefined,
     };
 
-    // One seed for the whole carousel, taken from this brand's post count: every
-    // slide then shares a surface and palette, so the set reads as one designed
-    // post rather than five unrelated cards. The count moves per post, so the
-    // NEXT carousel lands on a different surface — that's where feed variety
-    // comes from. Seeded off the count rather than randomness so a re-render of
-    // the same post is identical (matches MAKE_GRAPHIC).
+    // One seed for the whole carousel: every slide shares a surface and palette,
+    // so the set reads as one designed post rather than five unrelated cards.
+    //
+    // The seed mixes the post count with a STABLE per-brand offset. The count
+    // alone was the fingerprint an owner caught: customer A's 3rd post and
+    // customer B's 3rd post both seeded off "3", so two unrelated businesses got
+    // the identical surface and shapes — open one feed, recognise it in another.
+    // Anchoring to the brand pushes each business onto its own path through the
+    // rotation, so a look repeating across two companies takes a real collision,
+    // not a guarantee. The count still moves per post (feed variety within a
+    // brand) and the offset is deterministic (a re-render is identical).
     const made = await this.prisma.post.count({ where: { customerId: task.customer_id } });
+    const brandOffset = stableSeed(task.customer_id);
     const specs: SlideSpec[] = slidesCopy.map((s, i) => ({
       kind: s.kind,
       headline: s.headline,
       body: s.body,
-      seed: made,
+      seed: made + brandOffset,
       variant: i,
     }));
 
