@@ -19,6 +19,16 @@ import { costOf, formatCost } from '../operator/llm/pricing';
  * the number when it starts to matter.
  */
 
+/** The distribution of treatments across produced posts. */
+export interface MediaMix {
+  totalPosts: number;
+  carousel: number;
+  aiImage: number;
+  ownerPhoto: number;
+  textOnly: number;
+  photoAsks: { pending: number; fulfilled: number };
+}
+
 export interface BusinessMetrics {
   customers: {
     active: number;
@@ -174,5 +184,56 @@ export class BusinessMetricsService {
     if (ratePct > FIRE_ABOVE_PCT) return 'fire';
     if (ratePct > WATCH_ABOVE_PCT) return 'watch';
     return 'healthy';
+  }
+
+  /**
+   * What treatment the posts actually got — the media mix.
+   *
+   * The mix is emergent, not a dial: it falls out of the archetype planner, the
+   * 2-per-week photo-ask cap, the opt-in on AI images, and the tier gate. So the
+   * only way to know what Handled is really producing is to count it. This is
+   * the number to watch before touching any of those levers — you cannot tune a
+   * distribution you have never seen.
+   *
+   * One row per post, classified by its media, most-branded treatment winning:
+   * a post with any assembled slide is a carousel even if it also has a photo.
+   * Posts still being drafted or already cancelled are excluded — this counts
+   * what was actually produced for customers, not scratch work.
+   */
+  async mediaMix(): Promise<MediaMix> {
+    const posts = await this.prisma.post.findMany({
+      where: {
+        status: { in: ['pending_approval', 'approved', 'scheduled', 'published'] },
+      },
+      select: { media: { select: { source: true } } },
+    });
+
+    let carousel = 0;
+    let aiImage = 0;
+    let ownerPhoto = 0;
+    let textOnly = 0;
+    for (const p of posts) {
+      const sources = new Set(p.media.map((m) => m.source));
+      if (sources.has('assembled')) carousel++;
+      else if (sources.has('ai_generated')) aiImage++;
+      else if (sources.has('owner_upload')) ownerPhoto++;
+      else textOnly++;
+    }
+
+    const [asksPending, asksFulfilled] = await Promise.all([
+      this.prisma.shotListRequest.count({ where: { status: 'requested' } }),
+      this.prisma.shotListRequest.count({ where: { status: 'fulfilled' } }),
+    ]);
+
+    return {
+      totalPosts: posts.length,
+      carousel,
+      aiImage,
+      ownerPhoto,
+      textOnly,
+      // Photo asks are a request, not an outcome — a fulfilled one becomes an
+      // owner-photo post — so they are reported alongside, not mixed in.
+      photoAsks: { pending: asksPending, fulfilled: asksFulfilled },
+    };
   }
 }

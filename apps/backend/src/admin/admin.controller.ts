@@ -411,6 +411,7 @@ export class AdminController {
 
     return {
       business: await this.metrics.build(),
+      mediaMix: await this.metrics.mediaMix(),
       counts: {
         leads: await this.prisma.lead.count(),
         customers: await this.prisma.customer.count(),

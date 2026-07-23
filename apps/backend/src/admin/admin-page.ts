@@ -78,6 +78,15 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
   .msg .body{white-space:pre-wrap;font-size:.9rem}
   .msg .acts{margin-top:.6rem;display:flex;gap:.5rem}
   .empty{color:var(--soft);font-size:.88rem;padding:.5rem 0}
+  .mixbar{display:flex;height:1.4rem;border-radius:.4rem;overflow:hidden;
+    border:1px solid var(--edge);background:var(--parchment)}
+  .mixbar span{display:block;min-width:2px}
+  .mixlegend{display:flex;flex-wrap:wrap;gap:.4rem 1.1rem;margin:.6rem 0 .2rem;
+    font-size:.82rem}
+  .mixlegend span{display:inline-flex;align-items:center;gap:.4rem}
+  .mixlegend i{width:.7rem;height:.7rem;border-radius:2px;display:inline-block}
+  .mixlegend b{font-variant-numeric:tabular-nums}
+  .mixlegend em{color:var(--soft);font-style:normal;font-size:.75rem}
   .err{border:1px solid var(--clay);background:rgba(140,47,57,.08);color:var(--clay);
     padding:.7rem .9rem;border-radius:.5rem;margin-top:1rem;font-size:.88rem}
   .gate{max-width:26rem;margin:5rem auto;text-align:center}
@@ -108,6 +117,11 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
 
     <div id="err"></div>
     <div id="cards" class="cards"></div>
+
+    <h2>Media mix — what treatment posts actually got</h2>
+    <p class="cap">Emergent, not a setting. Watch it before touching the
+      archetype weights, the 2/week photo-ask cap, or the AI-image opt-in.</p>
+    <div id="mediamix"></div>
 
     <h2>Outbox — texts waiting to be sent by hand</h2>
     <p class="cap">While Twilio is unverified, nothing sends these. If you don't
@@ -182,6 +196,28 @@ function render(ov,ob){
     card(c.leads,'leads'),
     card(c.failedPosts,'failed',c.failedPosts>0),
   ].join('');
+
+  // Media mix
+  const mm = ov.mediaMix || {};
+  const total = mm.totalPosts || 0;
+  const pct = (n) => total ? Math.round((n / total) * 100) : 0;
+  const rows = [
+    ['Carousels', mm.carousel || 0, 'var(--clay)'],
+    ['AI images', mm.aiImage || 0, 'var(--brass)'],
+    ['Owner photos', mm.ownerPhoto || 0, 'var(--green)'],
+    ['Text only', mm.textOnly || 0, 'var(--soft)'],
+  ];
+  document.getElementById('mediamix').innerHTML = total === 0
+    ? '<p class="empty">No posts produced yet — the mix appears once a week is drafted.</p>'
+    : '<div class="mixbar">' + rows.map(([,n,c]) =>
+        pct(n) > 0 ? '<span style="width:'+pct(n)+'%;background:'+c+'"></span>' : ''
+      ).join('') + '</div>' +
+      '<div class="mixlegend">' + rows.map(([label,n,c]) =>
+        '<span><i style="background:'+c+'"></i>'+esc(label)+' '+
+        '<b>'+pct(n)+'%</b> <em>('+n+')</em></span>'
+      ).join('') + '</div>' +
+      '<p class="cap">'+total+' posts produced · photo asks: '+
+      (mm.photoAsks?.fulfilled||0)+' fulfilled, '+(mm.photoAsks?.pending||0)+' pending</p>';
 
   // Outbox
   document.getElementById('outbox').innerHTML = ob.messages.length
