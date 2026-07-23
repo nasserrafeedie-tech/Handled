@@ -9,14 +9,22 @@ import {
 } from './carousel-content';
 
 describe('tierHasCarousel — a Growth+ headline feature', () => {
-  it('includes Growth and above', () => {
-    for (const t of ['growth', 'pro', 'premium']) {
+  it('includes the real paid tiers', () => {
+    for (const t of ['growth', 'pro']) {
       assert.equal(tierHasCarousel(t), true, `${t} should have carousels`);
     }
   });
 
   it('excludes Starter — the reason to move up', () => {
     assert.equal(tierHasCarousel('starter'), false);
+  });
+
+  it('excludes any tier that is not a real plan (fail closed)', () => {
+    // "premium" was never sellable; an unknown tier must not silently unlock
+    // features the concierge would then tell the customer they do not have.
+    for (const t of ['premium', 'enterprise', '', 'GROWTH']) {
+      assert.equal(tierHasCarousel(t), false, `${t} must not have carousels`);
+    }
   });
 });
 

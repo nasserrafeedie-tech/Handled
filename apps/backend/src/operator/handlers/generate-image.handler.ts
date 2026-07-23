@@ -17,7 +17,9 @@ import { TaskHandler, ok, fail } from './handler.interface';
 import { z } from 'zod';
 
 /** Tiers that include generated photography. Starter gets graphics only. */
-const TIERS_WITH_IMAGE_GEN = new Set(['growth', 'pro', 'premium']);
+// The real sellable tiers only — "premium" was never a plan. See the note in
+// carousel-content.ts: a phantom tier here disagreed with tier-entitlements.
+const TIERS_WITH_IMAGE_GEN = new Set(['growth', 'pro']);
 
 /** What the model is allowed to hand back when picking a subject. */
 const SubjectOutput = z.object({ subject: z.string().min(1).max(200) });

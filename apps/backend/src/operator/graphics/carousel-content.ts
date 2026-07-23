@@ -43,7 +43,11 @@ export function isCarouselArchetype(archetype: PostArchetype): boolean {
  * biggest reason to move up from Starter — so Starter gets captions and the
  * owner's own photos, and swipeable branded carousels begin at Growth.
  */
-const CAROUSEL_TIERS = new Set(['growth', 'pro', 'premium']);
+// Only the three tiers billing actually sells. "premium" used to be listed but
+// was never a real plan — and because tier-entitlements collapses any unknown
+// tier to Starter, keeping a phantom tier here meant the gate said "yes" while
+// the concierge told the customer "you have nothing". One list of real tiers.
+const CAROUSEL_TIERS = new Set(['growth', 'pro']);
 
 /** Does this plan tier include automatic carousels? */
 export function tierHasCarousel(planTier: string): boolean {
