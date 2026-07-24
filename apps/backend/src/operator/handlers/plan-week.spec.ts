@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { clampAssetAsks, MAX_ASSET_ASKS } from './plan-week.handler';
+import { clampAssetAsks, clampPlatforms, MAX_ASSET_ASKS } from './plan-week.handler';
 
 /**
  * The bug this guards against, measured on a real account: the planner marked
@@ -47,5 +47,46 @@ describe('clampAssetAsks', () => {
   it('does not invent asks that the planner never made', () => {
     const week = [slot('promo', false), slot('seasonal', false)];
     assert.equal(clampAssetAsks(week).filter((s) => s.needs_asset).length, 0);
+  });
+});
+
+describe('clampPlatforms', () => {
+  const p = (platform: string) => ({ platform });
+
+  it('moves posts off platforms the customer has not connected', () => {
+    // The real bug: 3 of 7 posts aimed at facebook/threads when only instagram
+    // was connected, so they silently never published.
+    const week = [p('instagram'), p('facebook'), p('threads'), p('instagram')];
+    const out = clampPlatforms(week, ['instagram']);
+    assert.ok(out.every((s) => s.platform === 'instagram'), JSON.stringify(out));
+  });
+
+  it('leaves a slot that is already on a connected platform alone', () => {
+    const week = [p('facebook'), p('instagram')];
+    const out = clampPlatforms(week, ['instagram', 'facebook']);
+    assert.deepEqual(out.map((s) => s.platform), ['facebook', 'instagram']);
+  });
+
+  it('spreads the moved posts across connected platforms, not all onto one', () => {
+    // A customer with two platforms should keep both fed.
+    const week = [p('tiktok'), p('tiktok'), p('tiktok'), p('tiktok')];
+    const out = clampPlatforms(week, ['instagram', 'facebook']);
+    const counts = out.reduce<Record<string, number>>((m, s) => {
+      m[s.platform] = (m[s.platform] ?? 0) + 1;
+      return m;
+    }, {});
+    assert.equal(counts.instagram, 2);
+    assert.equal(counts.facebook, 2);
+  });
+
+  it('leaves slots untouched when nothing is connected yet', () => {
+    // Planning still has to run before the owner links an account.
+    const week = [p('instagram'), p('facebook')];
+    assert.deepEqual(clampPlatforms(week, []), week);
+  });
+
+  it('handles google_business like any other connected platform', () => {
+    const out = clampPlatforms([p('instagram'), p('tiktok')], ['google_business']);
+    assert.ok(out.every((s) => s.platform === 'google_business'));
   });
 });

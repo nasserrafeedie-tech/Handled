@@ -126,19 +126,33 @@ export class CronService {
         // A carousel is the default visual for informational posts; a single
         // generated photo is the fallback for the photo-first ones. The draft
         // handler picks exactly one, so these never both fire for a post.
-        if (drafted_?.needs_carousel) {
-          await this.emit(customerId, 'GENERATE_CAROUSEL', {
-            post_id: drafted_.post_id,
-          }).catch((e) =>
-            this.log.warn(`carousel for ${drafted_.post_id} failed: ${e.message}`),
+        if (drafted_?.post_id && (drafted_.needs_carousel || drafted_.needs_image)) {
+          const kind = drafted_.needs_carousel ? 'GENERATE_CAROUSEL' : 'GENERATE_IMAGE';
+          const payload = drafted_.needs_carousel
+            ? { post_id: drafted_.post_id }
+            : { post_id: drafted_.post_id, aspect: '1:1' as const };
+          const res = await this.emit(customerId, kind, payload).catch(
+            (e) => ({ status: 'failed', error: { message: (e as Error).message } }),
           );
-        } else if (drafted_?.needs_image) {
-          await this.emit(customerId, 'GENERATE_IMAGE', {
-            post_id: drafted_.post_id,
-            aspect: '1:1',
-          }).catch((e) =>
-            this.log.warn(`image for ${drafted_.post_id} failed: ${e.message}`),
-          );
+
+          // A carousel or image that fails must NOT vanish. Before, the error
+          // went to a server log line and the post silently shipped as bare
+          // text — exactly the "no pictures, and no reason why" a real planned
+          // week came back with. Record the reason on the post so the cause is
+          // visible in the operator view and can actually be found and fixed.
+          // failureReason is not read by the publish gate, so this surfaces the
+          // problem without blocking a post that can still go out as text.
+          if ((res as { status?: string })?.status === 'failed') {
+            const message =
+              (res as { error?: { message?: string } })?.error?.message ?? 'unknown';
+            this.log.warn(`${kind} for ${drafted_.post_id} failed: ${message}`);
+            await this.prisma.post
+              .update({
+                where: { id: drafted_.post_id },
+                data: { failureReason: `media ${kind}: ${message}`.slice(0, 500) },
+              })
+              .catch(() => undefined);
+          }
         }
 
         // Auto-approved posts must be scheduled here — nothing else does it.

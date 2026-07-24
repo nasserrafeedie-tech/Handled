@@ -65,6 +65,36 @@ export function clampAssetAsks<T extends { archetype: string; needs_asset: boole
 }
 
 /**
+ * Force every slot onto a platform the customer has actually connected.
+ *
+ * The planner is told which platforms to use, but a prompt is a request and
+ * this is the guarantee. A slot the model assigned to Facebook or Threads for a
+ * customer who only connected Instagram cannot publish — the publish step finds
+ * no account for that platform and silently skips it, so the week quietly
+ * shrinks and nothing says why. Measured on a real account: 3 of 7 posts were
+ * aimed at platforms that were not connected.
+ *
+ * Slots already on a connected platform are left as the model chose them; only
+ * the unpublishable ones are moved, spread round-robin across the connected
+ * platforms so a customer with more than one keeps them all fed. With nothing
+ * connected the slots are left untouched — there is nothing to post to yet, and
+ * planning must still work before the owner links an account.
+ */
+export function clampPlatforms<T extends { platform: string }>(
+  slots: T[],
+  connected: readonly string[],
+): T[] {
+  if (connected.length === 0) return slots;
+  const set = new Set(connected);
+  let next = 0;
+  return slots.map((s) =>
+    set.has(s.platform)
+      ? s
+      : { ...s, platform: connected[next++ % connected.length] },
+  );
+}
+
+/**
  * PLAN_WEEK (§7). Read brand_profile + recent metrics → produce a week's
  * calendar as strict JSON (planning runs on Sonnet 5, the voice tier). For each
  * slot that needs a real photo, create a shot_list_request so the Concierge can
@@ -105,6 +135,16 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
       );
     }
 
+    // Which platforms can this customer actually publish to right now. The
+    // planner must only assign slots to these — anything else silently fails to
+    // post. Empty before the owner connects an account; planning still runs so
+    // there is a week ready the moment they link one.
+    const connectedRows = await this.prisma.connectedAccount.findMany({
+      where: { customerId: task.customer_id, revoked: false },
+      select: { platform: true },
+    });
+    const connectedPlatforms = [...new Set(connectedRows.map((r) => r.platform))];
+
     const frequency =
       task.payload.posting_frequency ?? profile.postingFrequency ?? 3;
     // Flow 4: what has actually worked for this kind of business, pooled
@@ -125,15 +165,19 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
       'Set needs_asset TRUE on AT MOST 2 slots in the whole week, and only where',
       'a real photo is the point of the post (the team, the space, a finished',
       'job). Leave it FALSE elsewhere — we design those posts ourselves.',
-      // The playbook for some trades (dentists, restaurants) pushes Google
-      // Business Profile, Reels, and Stories — none of which are a "platform"
-      // we can post to. Constrain it up front so the week does not silently
-      // shrink when those slots get dropped downstream.
-      'platform MUST be one of exactly: instagram, facebook, tiktok, threads. ' +
-        'Reels and Stories are Instagram formats — use "instagram", not ' +
-        '"reels"/"stories". Do NOT use Google Business Profile, X, LinkedIn or ' +
-        'YouTube as a platform; we do not publish to them. For a local health ' +
-        'or service business, favour instagram and facebook.',
+      // Only plan for platforms this customer has actually connected — a slot
+      // on any other platform cannot publish and silently shrinks the week. If
+      // none are connected yet, fall back to the full set so a first week is
+      // still planned; the clamp below is the guarantee either way. Reels and
+      // Stories are Instagram formats, not platforms.
+      connectedPlatforms.length
+        ? `This customer has connected ONLY these platforms: ${connectedPlatforms.join(', ')}. ` +
+          `Every slot's platform MUST be one of exactly those — we cannot post ` +
+          `anywhere else. Reels and Stories are Instagram formats — use "instagram".`
+        : 'platform MUST be one of exactly: instagram, facebook, tiktok, threads. ' +
+          'Reels and Stories are Instagram formats — use "instagram", not ' +
+          '"reels"/"stories". Do NOT use X, LinkedIn or YouTube as a platform; ' +
+          'we do not publish to them. Favour instagram and facebook.',
       archetype ? archetypePlanningBlock(archetype) : '',
       strategyPlanningBlock(resolveStrategy(profile)),
       // A bare list of impression counts used to sit here. It told the model
@@ -155,6 +199,9 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     // sitting idle waiting on pictures that may never arrive.
     const asked = planned.slots.filter((s) => s.needs_asset).length;
     planned.slots = clampAssetAsks(planned.slots);
+    // The guarantee behind the platform instruction above: no slot survives on
+    // a platform the customer cannot publish to.
+    planned.slots = clampPlatforms(planned.slots, connectedPlatforms);
     const kept = planned.slots.filter((s) => s.needs_asset).length;
     if (kept < asked) {
       this.log.warn(
