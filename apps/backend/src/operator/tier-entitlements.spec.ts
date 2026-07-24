@@ -34,6 +34,15 @@ describe('tier entitlements', () => {
     assert.equal(tierHas('pro', 'carousel'), true);
   });
 
+  it('reels and video are Pro-exclusive — Growth does not include them', () => {
+    // The packaging decision: reels are what a customer climbs to Pro for, so
+    // Growth must NOT unlock them or the differentiator collapses.
+    assert.equal(tierHas('growth', 'reel'), false);
+    assert.equal(tierHas('growth', 'video_upload'), false);
+    assert.equal(tierHas('pro', 'reel'), true);
+    assert.equal(tierHas('pro', 'video_upload'), true);
+  });
+
   it('an unknown tier is treated as Starter, never as unlocked', () => {
     // A malformed value must fail closed — the safe direction is "no access".
     assert.equal(tierHas('', 'carousel'), false);
@@ -58,15 +67,18 @@ describe('tier entitlements', () => {
   });
 
   describe('upgradePitch — leads with the actual reason to upgrade', () => {
-    it('puts carousels first for a Starter customer', () => {
+    it('sells Starter on carousels, not reels — reels are the Pro story now', () => {
       const pitch = upgradePitch('starter');
       assert.match(pitch, /carousel/i);
-      // Carousels must appear before reels — they are the headline, not reels.
-      assert.ok(
-        pitch.toLowerCase().indexOf('carousel') <
-          pitch.toLowerCase().indexOf('reel'),
-        'carousels should lead the pitch, ahead of reels',
-      );
+      // Reels must NOT be dangled to a Starter customer: they are the
+      // Growth→Pro hero, so mentioning them here would sell past Growth.
+      assert.doesNotMatch(pitch, /reel/i);
+    });
+
+    it('leads the Growth→Pro pitch with reels', () => {
+      const pitch = upgradePitch('growth');
+      assert.match(pitch, /reel/i);
+      assert.match(pitch, /pro/i);
     });
 
     it('pitches Pro (not carousels) to someone already on Growth', () => {

@@ -6,6 +6,7 @@ import { type Task, type Result, CaptionLlmOutput } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
+import { tierHas } from '../tier-entitlements';
 import { playbookFor, ALT_TEXT_RULE } from '../llm/playbook';
 import { ModerationService } from '../guardrails/moderation.service';
 import { PublishGateService } from '../guardrails/publish-gate.service';
@@ -54,11 +55,13 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       return fail(task.task_id, 'I need your profile set up first.', 'no_brand_profile', task.customer_id);
     }
 
-    // Plan gate — reels start at Growth.
-    if (customer.planTier === 'starter') {
+    // Plan gate — reels are a Pro feature. Goes through the tier-entitlements
+    // helper rather than naming a tier inline, so a future gate change happens
+    // in one place and the concierge's copy can never contradict this refusal.
+    if (!tierHas(customer.planTier, 'reel')) {
       return fail(
         task.task_id,
-        'Reels are part of the Growth plan — reply UPGRADE and I\'ll send the details.',
+        'Reels are part of the Pro plan — reply UPGRADE and I\'ll send the details.',
         'plan_gate',
         `planTier=${customer.planTier}`,
       );

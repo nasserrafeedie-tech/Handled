@@ -21,12 +21,20 @@ export type Feature = 'carousel' | 'image' | 'reel' | 'video_upload';
 
 const RANK: Record<Tier, number> = { starter: 0, growth: 1, pro: 2 };
 
-/** The lowest tier that includes each feature. Mirrors the code gates exactly. */
+/**
+ * The lowest tier that includes each feature. Mirrors the code gates exactly.
+ *
+ * Reels (and the video uploads that feed them) are the Pro differentiator, not
+ * Growth: they are the flashiest, most expensive treatment to produce and are
+ * occasional by nature, so they are what a customer climbs to Pro *for*. Making
+ * them Pro-exclusive is what gives Growth→Pro a real reason to exist beyond
+ * "more posts a week" — carousels and images already anchor Starter→Growth.
+ */
 const REQUIRES: Record<Feature, Tier> = {
   carousel: 'growth',
   image: 'growth',
-  reel: 'growth',
-  video_upload: 'growth',
+  reel: 'pro',
+  video_upload: 'pro',
 };
 
 /** How to name each feature to a shop owner — no jargon. */
@@ -63,7 +71,7 @@ export function entitlementLine(planTier: string): string {
   );
 
   if (missing.length === 0) {
-    return `Plan ${tier}: includes everything — carousels, generated images and reels are all on.`;
+    return `Plan ${tier}: includes everything — carousels, generated images, reels and video are all on.`;
   }
   const label = (fs: Feature[]) => fs.map((f) => FEATURE_LABEL[f]).join(', ');
   const next = tierFor(missing[0]);
@@ -77,22 +85,26 @@ export function entitlementLine(planTier: string): string {
 }
 
 /**
- * The upgrade pitch, led by the feature that actually drives the upgrade.
- * Carousels are the stated #1 reason to leave Starter and carry the price gap,
- * so they come first — the previous copy omitted them entirely and sold reels.
+ * The upgrade pitch, led by the feature that actually drives each jump.
+ *
+ * Each step now has its own hero, which is the point of the packaging: Starter→
+ * Growth is sold on carousels (the stated #1 reason to leave Starter), and
+ * Growth→Pro is sold on reels — the flashy, Pro-exclusive treatment — not on
+ * volume alone, which was too weak to move anyone up before.
  */
 export function upgradePitch(planTier: string): string {
   const tier = norm(planTier);
   if (tier === 'starter') {
     return (
       'Growth adds swipeable carousels — the branded, multi-slide posts that ' +
-      'get saved and shared most — plus reels cut from your clips, more posts ' +
-      'a week and more platforms.'
+      'get saved and shared most — plus custom generated images, more posts a ' +
+      'week, up to three platforms, and hands-off posting for your routine content.'
     );
   }
-  // On Growth already → the only step up is Pro.
+  // On Growth already → Pro, led by reels (its exclusive hero) then autopilot.
   return (
-    'Pro adds daily posting across every platform and priority on your drafts, ' +
-    'on top of everything in Growth.'
+    'Pro adds reels cut from your clips — the video posts the feed pushes hardest — ' +
+    'plus daily posting across every platform and full autopilot, on top of ' +
+    'everything in Growth.'
   );
 }

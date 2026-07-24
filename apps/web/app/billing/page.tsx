@@ -23,7 +23,7 @@ const PLANS: {
     features: [
       '3 posts / week',
       '1 platform',
-      'Captions + your own photos',
+      'Branded captions on your own photos',
       'You approve every post by text',
     ],
     highlight: false,
@@ -36,9 +36,10 @@ const PLANS: {
     blurb: 'Where most shops land — and where swipeable carousels begin.',
     features: [
       'Swipeable branded carousels',
+      'Custom generated images',
       '5 posts / week',
       'Up to 3 platforms',
-      'Reels cut from your clips',
+      'Routine posts go out hands-off',
       'Weekly performance tuning',
     ],
     highlight: true,
@@ -50,8 +51,10 @@ const PLANS: {
     cadence: '/mo',
     blurb: 'Something every day, everywhere you post.',
     features: [
+      'Reels cut from your clips',
       'Daily posts (7 / week)',
       'All platforms',
+      'Full autopilot — runs itself',
       'Everything in Growth',
     ],
     highlight: false,

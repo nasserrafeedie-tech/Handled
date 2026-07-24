@@ -19,6 +19,7 @@ import { ConciergeService } from '../concierge/concierge.service';
 import { detectMedia } from '../common/media-type';
 import { StorageService } from '../common/storage.service';
 import { extractBrandColors, MIN_LOGO_SIDE } from '../operator/graphics/logo-colors';
+import { tierHas } from '../operator/tier-entitlements';
 
 interface UploadedFileShape {
   originalname: string;
@@ -96,12 +97,12 @@ export class UploadsController {
     const bankedVideos = await this.prisma.mediaAsset.count({
       where: { customerId, kind: 'video', source: 'owner_upload', postId: null },
     });
-    if (bankedVideos >= 2 && customer.planTier !== 'starter') {
+    if (bankedVideos >= 2 && tierHas(customer.planTier, 'reel')) {
       void this.assembleAndNotify(customerId);
-    } else if (kinds.includes('video') && customer.planTier === 'starter') {
+    } else if (kinds.includes('video') && !tierHas(customer.planTier, 'reel')) {
       void this.concierge.notify(
         customerId,
-        'Got your videos! Quick note — reels are part of the Growth plan. Reply UPGRADE and I\'ll send the details, or I\'ll keep them on file.',
+        'Got your videos! Quick note — reels are part of the Pro plan. Reply UPGRADE and I\'ll send the details, or I\'ll keep them on file.',
         { promptedByOwner: true },
       );
     } else {
