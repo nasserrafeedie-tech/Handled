@@ -11,6 +11,36 @@ import {
 import { platformName } from '../publishing/platform-names';
 import { TaskHandler, ok } from './handler.interface';
 
+/** The post fields the publish-time gate reads. */
+export interface PublishGateInput {
+  status: string;
+  moderationState: string;
+  approvalState: string;
+  customer: { status: string };
+}
+
+/**
+ * §8 publish-time gate: may this post go out right now?
+ *
+ * This is the last line of defence before something publishes under a
+ * customer's name, so it fails toward NOT publishing. A post is blocked if the
+ * account is paused, if it did not pass moderation, if it is still waiting on
+ * (or was refused by) the owner, or if it was already cancelled, failed, or
+ * published. Anything the query might hand us that is not cleanly "ready to go"
+ * is held, not sent.
+ */
+export function isBlockedFromPublishing(post: PublishGateInput): boolean {
+  return (
+    post.customer.status === 'paused' ||
+    post.moderationState !== 'passed' ||
+    post.approvalState === 'awaiting_owner' ||
+    post.approvalState === 'rejected' ||
+    post.status === 'cancelled' ||
+    post.status === 'failed' ||
+    post.status === 'published'
+  );
+}
+
 /**
  * PUBLISH_DUE (§7, cron). Publish everything due via Post for Me. Re-checks the
  * §8 gate at publish time (nothing un-approved or un-moderated goes out) and is
@@ -104,20 +134,12 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
     let failed = 0;
     const notices: { customer_id: string; message: string }[] = [];
     for (const post of posts) {
-      // §8 publish-time gate: never publish un-approved / un-moderated / paused,
-      // and never resurrect a post the owner or the system already killed. The
-      // post_id branch above fetches by id with no status filter, so a stray
-      // publish-now on a cancelled/failed/rejected post reaches here — this is
-      // the last line that stops it going out.
-      const blocked =
-        post.customer.status === 'paused' ||
-        post.moderationState !== 'passed' ||
-        post.approvalState === 'awaiting_owner' ||
-        post.approvalState === 'rejected' ||
-        post.status === 'cancelled' ||
-        post.status === 'failed' ||
-        post.status === 'published';
-      if (blocked) {
+      // §8 publish-time gate — the last line that stops something going out
+      // under a customer's name. Extracted to isBlockedFromPublishing so it can
+      // be tested directly, since the query above (the post_id branch) fetches
+      // by id with no status filter, so a stray publish-now on a cancelled /
+      // failed / rejected post reaches here.
+      if (isBlockedFromPublishing(post)) {
         skipped++;
         continue;
       }
