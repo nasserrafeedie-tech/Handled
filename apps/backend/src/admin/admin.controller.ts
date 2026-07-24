@@ -47,6 +47,23 @@ const UpsertCustomerBody = z.object({
   trustLevel: z.enum(['approve_all', 'auto_low_risk', 'full_auto']).optional(),
 });
 
+/**
+ * Update a customer's config by id — the escape hatch /admin/customer can't be,
+ * because it keys on phone and validates it. A dogfood/test customer with a
+ * placeholder phone (the Handled account is +15550000001, which normalizePhone
+ * rightly rejects) can't be reached by phone at all, so autopilot settings would
+ * be unreachable without direct DB access. Addresses by id, sets only what's
+ * given.
+ */
+const CustomerConfigBody = z.object({
+  customerId: z.string().uuid(),
+  trustLevel: z.enum(['approve_all', 'auto_low_risk', 'full_auto']).optional(),
+  aiImagesOptIn: z.boolean().optional(),
+  planTier: z.enum(['starter', 'growth', 'pro']).optional(),
+  timezone: z.string().min(1).optional(),
+  status: z.enum(['active', 'paused', 'cancelled']).optional(),
+});
+
 const MakeCarouselBody = z.object({
   customerId: z.string().uuid(),
   caption: z.string().min(10),
@@ -188,6 +205,38 @@ export class AdminController {
    * awaiting_owner — approve it before publishing). Returns the post id to
    * publish with /admin/publish-now.
    */
+  @HttpPost('customer-config')
+  async customerConfig(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const expected = process.env.ADMIN_TOKEN;
+    if (!expected || token !== expected) throw new NotFoundException();
+
+    const parsed = CustomerConfigBody.safeParse(body);
+    if (!parsed.success) {
+      return { error: 'bad_request', detail: parsed.error.issues };
+    }
+    const { customerId, ...fields } = parsed.data;
+    if (Object.keys(fields).length === 0) {
+      return { error: 'bad_request', detail: 'nothing to set' };
+    }
+
+    const customer = await this.prisma.customer.update({
+      where: { id: customerId },
+      data: fields,
+      select: {
+        id: true,
+        businessName: true,
+        trustLevel: true,
+        aiImagesOptIn: true,
+        planTier: true,
+        status: true,
+      },
+    });
+    return { updated: true, customer };
+  }
+
   @HttpPost('make-carousel')
   async makeCarousel(
     @Headers('x-admin-token') token: string | undefined,
