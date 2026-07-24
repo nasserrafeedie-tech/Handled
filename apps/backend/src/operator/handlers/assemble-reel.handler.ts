@@ -12,6 +12,11 @@ import { PublishGateService } from '../guardrails/publish-gate.service';
 import { GraphicsService } from '../graphics/graphics.service';
 import type { BrandTheme } from '../graphics/slide-templates';
 import { ReelService } from '../video/reel.service';
+import { TranscriptionService } from '../video/transcription.service';
+import { EdlService } from '../video/edl.service';
+import { probeDuration } from '../video/probe';
+import { mapWordsToTimeline, edlDuration } from '../video/edl';
+import { captionsToAss } from '../video/captions';
 import { TaskHandler, ok, fail } from './handler.interface';
 import { StorageService } from '../../common/storage.service';
 import { resolveStrategy } from '../llm/vertical-playbook';
@@ -31,6 +36,8 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
   constructor(
     private readonly prisma: PrismaService,
     private readonly reel: ReelService,
+    private readonly transcription: TranscriptionService,
+    private readonly edl: EdlService,
     private readonly graphics: GraphicsService,
     private readonly llm: LlmService,
     private readonly moderation: ModerationService,
@@ -108,16 +115,46 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       theme,
     );
 
+    // Transcribe → decide the edit → caption it. Every step below degrades to
+    // the plain in-order cut rather than failing: captions and smart trims are
+    // the polish, the reel itself is the product (see transcription.service.ts).
+    const paths = clipPaths.map((c) => c.path);
+    const durations = await Promise.all(paths.map((p) => probeDuration(p)));
+    const transcripts = await this.transcription.transcribeAll(paths);
+
+    const defaultHook = task.payload.hook_text ?? resolveStrategy(profile).reel_hook;
+    const edl = await this.edl.decide({
+      clipDurations: durations,
+      transcripts,
+      defaultHook,
+      brandContext: buildBrandContext(profile),
+      customerId: task.customer_id,
+    });
+
+    // Captions are timed against the FINISHED edit, not the source clips — a
+    // word spoken 6s into clip 2 lands somewhere else entirely once the edit
+    // reorders and trims. Skipping this remap still renders captions; they just
+    // describe a different moment than the one on screen.
+    const captionsAss = captionsToAss(
+      mapWordsToTimeline(edl, transcripts.map((t) => t.words)),
+      {
+        accentHex: toSvgColors(profile.brandColors ?? [])[1],
+        brandStyle: theme.style,
+      },
+    );
+
+    const font = bundledFont();
     let mp4: Buffer;
     try {
       mp4 = await this.reel.assemble({
-        clipPaths: clipPaths.map((c) => c.path),
-        hookText:
-          task.payload.hook_text ??
-          resolveStrategy(profile).reel_hook,
+        clipPaths: paths,
+        edl,
+        captionsAss,
+        hookText: edl.hook || defaultHook,
         endCardPng,
         accentHex: toSvgColors(profile.brandColors ?? [])[1],
-        fontPath: bundledFont(),
+        fontPath: font?.file,
+        fontsDir: font?.dir,
       });
     } catch (err) {
       return fail(
@@ -198,13 +235,27 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       task.task_id,
       `Your reel is ready 🎬 (${clipPaths.length} clips) — watch it here: ${this.storage.publicUrl(r2Key)}\n\nReply “yes” to schedule it, or tell me what to change.`,
       'pending_approval',
-      { post_id: post.id, media_ref: r2Key, clip_count: clipPaths.length, bytes: mp4.length },
+      {
+        post_id: post.id,
+        media_ref: r2Key,
+        clip_count: clipPaths.length,
+        bytes: mp4.length,
+        // Recorded so a reel that came out silent or uncaptioned can be
+        // diagnosed from the task log alone, without re-running the pipeline.
+        seconds: Math.round(edlDuration(edl)),
+        captioned: captionsAss.includes('Dialogue:'),
+      },
     );
   }
 }
 
-/** First bundled bold-ish TTF from the graphics fonts dir (src or dist). */
-function bundledFont(): string | undefined {
+/**
+ * The bundled fonts: one bold-ish TTF for the drawtext hook, and the directory
+ * itself so libass can resolve the caption font by family name. Both come from
+ * the same place the graphics engine draws from, which is what keeps a reel
+ * looking like the customer's other posts.
+ */
+function bundledFont(): { file: string; dir: string } | undefined {
   for (const dir of [
     join(__dirname, '..', 'graphics', 'fonts'),
     join(__dirname, '..', '..', '..', 'src', 'operator', 'graphics', 'fonts'),
@@ -212,7 +263,7 @@ function bundledFont(): string | undefined {
     if (existsSync(dir)) {
       const bold = readdirSync(dir).find((f) => /bold/i.test(f) && f.endsWith('.ttf'));
       const any = readdirSync(dir).find((f) => f.endsWith('.ttf'));
-      if (bold || any) return join(dir, (bold ?? any)!);
+      if (bold || any) return { file: join(dir, (bold ?? any)!), dir };
     }
   }
   return undefined;

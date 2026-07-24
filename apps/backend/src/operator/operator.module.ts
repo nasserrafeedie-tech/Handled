@@ -13,6 +13,8 @@ import { ImageGenService } from './graphics/image-gen.service';
 import { ImageSafetyService } from './graphics/image-safety.service';
 import { BrandIdentityService } from './branding/brand-identity.service';
 import { ReelService } from './video/reel.service';
+import { TranscriptionService } from './video/transcription.service';
+import { EdlService } from './video/edl.service';
 import { StorageService } from '../common/storage.service';
 import { AssembleReelHandler } from './handlers/assemble-reel.handler';
 import { PlanWeekHandler } from './handlers/plan-week.handler';
@@ -44,6 +46,8 @@ import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
     ImageSafetyService,
     BrandIdentityService,
     ReelService,
+    TranscriptionService,
+    EdlService,
     StorageService,
     // handlers
     PlanWeekHandler,

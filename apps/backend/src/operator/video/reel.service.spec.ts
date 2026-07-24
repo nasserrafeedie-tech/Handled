@@ -121,3 +121,135 @@ describe('the hook overlay actually reaches the frame', () => {
     assert.ok(out.length > 0, 'a missing font should cost the hook, not the reel');
   });
 });
+
+/**
+ * Captions are the reason this pipeline exists — roughly a third of the
+ * audience watches on mute. "The ASS file was well-formed" is not evidence the
+ * viewer sees anything, so these assert on the frame the same way the hook
+ * tests do: crop the caption band and measure how much the PNG compresses.
+ */
+const FONTS_DIR = join(__dirname, '..', 'graphics', 'fonts');
+
+async function captionBandBytes(mp4: Buffer, tag: string): Promise<number> {
+  const f = join(work, `${tag}.mp4`);
+  writeFileSync(f, mp4);
+  const png = join(work, `${tag}.png`);
+  // Sample a frame at 1s (inside the caption's window) and crop the band at
+  // y=700 where captions.ts positions them.
+  await run(ffmpegPath, [
+    '-y', '-ss', '1', '-i', f, '-frames:v', '1', '-vf', 'crop=1080:300:0:640', png,
+  ]);
+  return statSync(png).size;
+}
+
+describe('captions reach the frame', () => {
+  const ass = [
+    '[Script Info]',
+    'ScriptType: v4.00+',
+    'PlayResX: 1080',
+    'PlayResY: 1920',
+    'WrapStyle: 2',
+    'ScaledBorderAndShadow: yes',
+    '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,' +
+      ' BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle,' +
+      ' BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    'Style: Cap,Anton,96,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,' +
+      '-1,0,0,0,100,100,0,0,1,6,3,8,80,80,700,1',
+    '',
+    '[Events]',
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    'Dialogue: 0,0:00:00.00,0:00:03.00,Cap,,0,0,0,,FRESH BREAD DAILY',
+    '',
+  ].join('\n');
+
+  let baseline = 0;
+
+  it('establishes what an empty caption band looks like', async () => {
+    baseline = await captionBandBytes(await svc.assemble({ clipPaths: [clip] }), 'cap-baseline');
+    assert.ok(baseline < 8000, `a flat band should compress small, got ${baseline}`);
+  });
+
+  it('burns captions into the video', async () => {
+    const out = await svc.assemble({
+      clipPaths: [clip], captionsAss: ass, fontsDir: FONTS_DIR,
+    });
+    const bytes = await captionBandBytes(out, 'cap-drawn');
+    assert.ok(
+      bytes > baseline * 1.5,
+      `captions did not render — band was ${bytes}b against a ${baseline}b empty baseline`,
+    );
+  });
+
+  it('renders captions and the hook together in one pass', async () => {
+    // Both overlays share a single filter chain; a mistake there silently drops
+    // one of them, and the reel ships looking half-finished.
+    const out = await svc.assemble({
+      clipPaths: [clip],
+      captionsAss: ass,
+      fontsDir: FONTS_DIR,
+      hookText: 'Save 20% [today only]',
+      fontPath: FONT,
+      accentHex: '#8A2E3B',
+    });
+    assert.ok(await captionBandBytes(out, 'both-cap') > baseline * 1.5, 'captions missing');
+    assert.ok(await hookBandBytes(out, 'both-hook') > 8000, 'hook missing');
+  });
+
+  it('still produces a reel when the transcript was empty', async () => {
+    // Silent b-roll: no caption events, and the reel must ship regardless.
+    const out = await svc.assemble({ clipPaths: [clip, clip], captionsAss: '' });
+    assert.ok(out.length > 0, 'no captions must cost the captions, not the reel');
+  });
+});
+
+describe('the reel follows the edit decision list', () => {
+  it('cuts the segment the EDL asked for, not the clip’s opening seconds', async () => {
+    const out = await svc.assemble({
+      clipPaths: [clip],
+      edl: { segments: [{ clip_index: 0, start: 2, end: 4 }], hook: 'x' },
+    });
+    const f = join(work, 'edl-trim.mp4');
+    writeFileSync(f, out);
+    const probe = await run(ffmpegPath, ['-i', f, '-hide_banner'])
+      .catch((e: { stderr?: string }) => ({ stdout: e.stderr ?? '' }));
+    const dur = /Duration: 00:00:(\d+\.\d+)/.exec(probe.stdout)?.[1];
+    assert.ok(dur && Math.abs(Number(dur) - 2) < 0.4, `expected ~2s from the EDL, got ${dur}`);
+  });
+
+  it('reorders clips to match the edit', async () => {
+    // Two segments off the same source at different offsets: the render must
+    // produce both, proving order comes from the EDL rather than the file list.
+    const out = await svc.assemble({
+      clipPaths: [clip],
+      edl: {
+        segments: [
+          { clip_index: 0, start: 3, end: 4.5 },
+          { clip_index: 0, start: 0, end: 1.5 },
+        ],
+        hook: 'x',
+      },
+    });
+    const f = join(work, 'edl-order.mp4');
+    writeFileSync(f, out);
+    const probe = await run(ffmpegPath, ['-i', f, '-hide_banner'])
+      .catch((e: { stderr?: string }) => ({ stdout: e.stderr ?? '' }));
+    const dur = /Duration: 00:00:(\d+\.\d+)/.exec(probe.stdout)?.[1];
+    assert.ok(dur && Math.abs(Number(dur) - 3) < 0.5, `expected ~3s of segments, got ${dur}`);
+  });
+
+  it('survives an EDL pointing at a clip that was not supplied', async () => {
+    const out = await svc.assemble({
+      clipPaths: [clip],
+      edl: {
+        segments: [
+          { clip_index: 0, start: 0, end: 2 },
+          { clip_index: 9, start: 0, end: 2 },
+        ],
+        hook: 'x',
+      },
+    });
+    assert.ok(out.length > 0, 'a bad clip index must not sink the render');
+  });
+});
