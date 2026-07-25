@@ -189,22 +189,41 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
     const r2Key = `${task.customer_id}/${batch}/reel.mp4`;
     await this.storage.put(r2Key, mp4, 'video/mp4');
 
-    // Caption via the same playbook-driven path as any other post.
-    const gen = await this.llm.completeJson(
-      {
-        tier: 'bulk',
-        cachedContext: buildBrandContext(profile),
-        prompt: [
-          `Write one behind_the_scenes reel caption for ${task.payload.platform}.`,
-          'The video is real footage from the business, cut into a short reel.',
-          playbookFor(task.payload.platform),
-          'Return JSON: {"caption": string, "hashtags": string[], "alt_text": string}.',
-          ALT_TEXT_RULE,
-        ].join('\n'),
-        maxTokens: 600,
-      },
-      CaptionLlmOutput,
-    );
+    // Caption via the same playbook-driven path as any other post. Like every
+    // other step in this handler, the caption is POLISH — the rendered reel is
+    // the product. So a malformed-JSON blip from the model must not throw away a
+    // reel we already cut and stored: fall back to a plain brand-safe caption
+    // and let the owner tweak it, exactly as they would any draft.
+    let gen: (typeof CaptionLlmOutput)['_output'];
+    try {
+      gen = await this.llm.completeJson(
+        {
+          tier: 'bulk',
+          cachedContext: buildBrandContext(profile),
+          prompt: [
+            `Write one behind_the_scenes reel caption for ${task.payload.platform}.`,
+            'The video is real footage from the business, cut into a short reel.',
+            playbookFor(task.payload.platform),
+            'Return JSON: {"caption": string, "hashtags": string[], "alt_text": string}.',
+            ALT_TEXT_RULE,
+          ].join('\n'),
+          maxTokens: 600,
+        },
+        CaptionLlmOutput,
+      );
+    } catch (err) {
+      const name = customer.businessName ?? 'us';
+      this.log.warn(
+        `caption LLM failed for ${task.customer_id}, using fallback: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      gen = {
+        caption: `Behind the scenes at ${name} 🎬`,
+        hashtags: [],
+        alt_text: `A short behind-the-scenes reel from ${name}.`,
+      };
+    }
 
     const verdict = await this.moderation.screen({
       caption: gen.caption,
