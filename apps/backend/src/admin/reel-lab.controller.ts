@@ -2,7 +2,6 @@ import {
   Controller,
   Headers,
   Logger,
-  NotFoundException,
   Post,
   Query,
   UploadedFiles,
@@ -15,6 +14,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { StorageService } from '../common/storage.service';
 import { detectMedia } from '../common/media-type';
+import { assertAdmin } from './admin-auth';
 import { ReelService } from '../operator/video/reel.service';
 import { TranscriptionService } from '../operator/video/transcription.service';
 import { EdlService } from '../operator/video/edl.service';
@@ -58,8 +58,7 @@ export class ReelLabController {
     @UploadedFiles() files: Array<{ originalname: string; buffer: Buffer }> | undefined,
     @Query('hook') hook?: string,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
     if (!files?.length) return { error: 'no files' };
 
     const work = mkdtempSync(join(tmpdir(), 'reel-lab-'));

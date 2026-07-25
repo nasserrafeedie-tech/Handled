@@ -16,6 +16,7 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import type { PlanId } from './billing.service';
 import { normalizePhone } from '../common/phone';
+import { platformLimit } from '../operator/tier-entitlements';
 
 /**
  * Plan order, for telling an upgrade from a downgrade. Only used to decide
@@ -197,6 +198,30 @@ export class StripeWebhookController {
       data: { planTier: plan },
     });
     this.log.log(`customer ${customer.id}: plan ${from} → ${plan}`);
+
+    // On a downgrade, enforce the new tier's platform cap. Feature gates
+    // (carousels/images/reels) re-evaluate per post, but platform reach is only
+    // ever checked at connect time, so without this a Pro→Starter customer keeps
+    // publishing to all their platforms — paid reach they no longer pay for.
+    // Keep the oldest connections (the primary accounts), revoke the rest.
+    if (RANK[plan] < RANK[from]) {
+      const limit = platformLimit(plan);
+      const connected = await this.prisma.connectedAccount.findMany({
+        where: { customerId: customer.id, revoked: false },
+        orderBy: { connectedAt: 'asc' },
+        select: { id: true },
+      });
+      const toRevoke = connected.slice(limit);
+      if (toRevoke.length) {
+        await this.prisma.connectedAccount.updateMany({
+          where: { id: { in: toRevoke.map((r) => r.id) } },
+          data: { revoked: true },
+        });
+        this.log.log(
+          `downgrade ${from}→${plan}: revoked ${toRevoke.length} platform(s) over the ${plan} limit of ${limit} for ${customer.id}`,
+        );
+      }
+    }
 
     // Only speak up on an upgrade. A downgrade is a decision they already made
     // and being congratulated on losing features reads as tone-deaf.

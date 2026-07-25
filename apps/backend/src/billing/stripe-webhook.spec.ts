@@ -36,6 +36,13 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
         return row ?? {};
       },
     },
+    connectedAccount: {
+      findMany: async () => calls.connected ?? [],
+      updateMany: async ({ where }: any) => {
+        calls.revoked = (where.id?.in ?? []).length;
+        return { count: calls.revoked };
+      },
+    },
     stripeWebhookEvent: {
       create: async ({ data }: any) => {
         if (seen.has(data.id)) {
@@ -219,6 +226,17 @@ describe('Stripe subscription updated → plan tier', () => {
     await updated(ctrl, 'price_growth');
     assert.equal(rows['+14244098341'].planTier, 'growth');
     assert.equal(calls.notified.length, 0, 'do not congratulate someone on losing features');
+  });
+
+  it('revokes platforms over the new cap on a downgrade', async () => {
+    const rows = starterCustomer();
+    rows['+14244098341'].planTier = 'pro';
+    const { ctrl, calls } = makeController(rows);
+    // Pro had 5 platforms; Starter allows 2, so 3 must be revoked.
+    calls.connected = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id }));
+    await updated(ctrl, 'price_starter');
+    assert.equal(rows['+14244098341'].planTier, 'starter');
+    assert.equal(calls.revoked, 3, 'the 3 platforms over the Starter cap are revoked');
   });
 
   it('leaves the tier alone rather than guessing at an unknown price', async () => {

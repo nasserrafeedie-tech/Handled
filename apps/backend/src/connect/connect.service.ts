@@ -140,7 +140,42 @@ export class ConnectService {
     }
 
     const remote = await this.pfm.listAccounts(customerId);
-    for (const acct of remote) {
+
+    // Enforce the tier's platform cap HERE, where rows are actually created.
+    // startAuth checks the limit too, but against DB state that lags the real
+    // connection — several auths started before any returns all see 0 connected
+    // and all pass. This is the writer, so it is the real gate: keep every
+    // platform already connected (reconnects/re-auths never count against the
+    // cap), then admit new platforms only until the cap is reached.
+    const tier =
+      (
+        await this.prisma.customer.findUnique({
+          where: { id: customerId },
+          select: { planTier: true },
+        })
+      )?.planTier ?? 'starter';
+    const limit = platformLimit(tier);
+    const kept = new Set(
+      (
+        await this.prisma.connectedAccount.findMany({
+          where: { customerId, revoked: false },
+          select: { platform: true },
+        })
+      ).map((r) => r.platform),
+    );
+    const admitted = remote.filter((acct) => {
+      if (kept.has(acct.platform)) return true; // already connected
+      if (kept.size < limit) {
+        kept.add(acct.platform);
+        return true;
+      }
+      this.log.warn(
+        `reconcile: ${acct.platform} exceeds the ${tier} limit of ${limit} for ${customerId} — not importing`,
+      );
+      return false;
+    });
+
+    for (const acct of admitted) {
       // Reconnecting restarts the clock, so this is set on both paths.
       const expiresAt = expiryFor(acct.platform);
       await this.prisma.connectedAccount.upsert({

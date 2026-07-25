@@ -37,6 +37,12 @@ export class FetchMetricsHandler implements TaskHandler<'FETCH_METRICS'> {
     for (const post of posts) {
       try {
         const m = await this.postForMe.fetchMetrics(post.externalPostId!);
+        // Platform metrics are cumulative totals, so we keep the LATEST snapshot
+        // per post, not one new row every daily run. Appending accumulated N
+        // rows per post and any downstream sum would multiply the numbers. Clear
+        // the post's prior metric(s) and write the current total — self-healing,
+        // and it collapses any duplicates a previous run left behind.
+        await this.prisma.metric.deleteMany({ where: { postId: post.id } });
         const row = await this.prisma.metric.create({
           data: {
             postId: post.id,

@@ -77,6 +77,19 @@ describe('churn', () => {
     assert.equal(m.churn.monthlyRatePct, 5);
   });
 
+  it('excludes customers acquired inside the window from the denominator', async () => {
+    // 10 pre-window actives, 1 pre-window churn, plus 20 brand-new signups.
+    // Real churn is 1/11 ≈ 9% ("watch/fire"), not diluted toward 3% by the 20
+    // newcomers who were never at risk of leaving yet.
+    const m = await build([
+      ...many(10),
+      ...many(1, { status: 'cancelled', updatedAt: new Date(NOW.getTime() - 3 * DAY) }),
+      ...many(20, { createdAt: new Date(NOW.getTime() - 5 * DAY) }),
+    ]).build(NOW);
+    assert.equal(m.churn.lost30d, 1);
+    assert.equal(m.churn.baseline, 11, 'in-window signups must not pad the denominator');
+  });
+
   it('ignores cancellations older than the window', async () => {
     const m = await build([
       ...many(20),

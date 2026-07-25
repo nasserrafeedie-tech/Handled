@@ -105,17 +105,22 @@ export class BusinessMetricsService {
     const active = byStatus('active');
     const cancelled = byStatus('cancelled');
 
-    // Anyone who cancelled inside the window. updatedAt is a proxy for when
-    // the status changed — good enough for a trend, and it is the trend that
-    // matters, not the third decimal place.
+    // Churn is measured against the cohort that EXISTED at the start of the
+    // window — customers created before `since`. Folding in-window signups into
+    // the denominator (the old `active` count did) dilutes the rate during
+    // growth: 10 customers, 1 lost, 20 new → the real 10% reads as 3%, "healthy"
+    // exactly when it isn't. So both the numerator and the denominator require
+    // createdAt < since. updatedAt is a proxy for when the status changed —
+    // good enough for a trend.
     const lost30d = customers.filter(
-      (c) => c.status === 'cancelled' && c.updatedAt >= since,
+      (c) => c.status === 'cancelled' && c.updatedAt >= since && c.createdAt < since,
     ).length;
-
-    // The denominator is who was around to leave: everyone still active, plus
-    // everyone who left. Using only current actives would understate churn
-    // exactly when it is worst.
-    const baseline = active + lost30d;
+    // Who was around to leave at window start: still-active accounts that
+    // predate the window, plus the ones that left during it.
+    const activeAtWindowStart = customers.filter(
+      (c) => c.status === 'active' && c.createdAt < since,
+    ).length;
+    const baseline = activeAtWindowStart + lost30d;
     const monthlyRatePct = baseline > 0 ? (lost30d / baseline) * 100 : null;
 
     const activeCustomers = customers.filter((c) => c.status === 'active');

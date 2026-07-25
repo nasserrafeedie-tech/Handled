@@ -19,6 +19,7 @@ import { isValidTimeZone } from '../common/time';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
 import { StorageService } from '../common/storage.service';
 import { ADMIN_PAGE_HTML } from './admin-page';
+import { assertAdmin } from './admin-auth';
 
 const PublishNowBody = z.object({ postId: z.string().uuid() });
 
@@ -151,8 +152,7 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Body() body: unknown,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
 
     const parsed = UpsertCustomerBody.safeParse(body);
     if (!parsed.success) {
@@ -213,8 +213,7 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Body() body: unknown,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
 
     const parsed = CustomerConfigBody.safeParse(body);
     if (!parsed.success) {
@@ -245,8 +244,7 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Body() body: unknown,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
 
     const parsed = MakeCarouselBody.safeParse(body);
     if (!parsed.success) {
@@ -315,8 +313,7 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Body() body: unknown,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
 
     const parsed = ApproveBody.safeParse(body);
     if (!parsed.success) {
@@ -379,8 +376,7 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Query('customer') customerId: string | undefined,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
 
     // Only hand-relay while there is no wire. The moment SMS_MANUAL_RELAY is
     // unset (Twilio verified), every message is actually delivered by Twilio,
@@ -438,8 +434,7 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Body() body: unknown,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
 
     const parsed = RelayedBody.safeParse(body);
     if (!parsed.success) {
@@ -467,8 +462,7 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Query('postId') postId: string | undefined,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
     if (!postId) return { error: 'pass ?postId=' };
     const post = await this.prisma.post.findUnique({
       where: { id: postId },
@@ -491,8 +485,7 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Headers('x-external-id') externalId: string | undefined,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
     if (!externalId) return { error: 'pass the external id in the x-external-id header' };
     try {
       return await this.pfm.getPost(externalId);
@@ -516,9 +509,12 @@ export class AdminController {
     @Headers('x-admin-token') token: string | undefined,
     @Body() body: unknown,
   ) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
-    const { postId } = PublishNowBody.parse(body);
+    assertAdmin(token);
+    const parsed = PublishNowBody.safeParse(body);
+    if (!parsed.success) {
+      return { error: 'bad_request', detail: parsed.error.issues };
+    }
+    const { postId } = parsed.data;
 
     const post = await this.prisma.post.findUnique({ where: { id: postId } });
     if (!post) throw new NotFoundException(`no post ${postId}`);
@@ -546,8 +542,7 @@ export class AdminController {
 
   @Get('overview')
   async overview(@Headers('x-admin-token') token: string | undefined) {
-    const expected = process.env.ADMIN_TOKEN;
-    if (!expected || token !== expected) throw new NotFoundException();
+    assertAdmin(token);
 
     const [leads, customers, recentPosts, failedPosts, archetypes] = await Promise.all([
       this.prisma.lead.findMany({ orderBy: { createdAt: 'desc' }, take: 100 }),
