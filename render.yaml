@@ -127,6 +127,20 @@ services:
         sync: false
       - key: TOKEN_ENCRYPTION_KEY
         sync: false
+      # R2 object storage. The worker reads the owner's banked clips back OUT of
+      # R2 (storage.get) to render the reel, and writes the finished mp4 back in,
+      # then hands out an R2 public URL for it — so it needs the SAME R2_* values
+      # as the web service. Copy them from aissm-backend → Environment.
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_PUBLIC_BASE_URL
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: OPENAI_API_KEY

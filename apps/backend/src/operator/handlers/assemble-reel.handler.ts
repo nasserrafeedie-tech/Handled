@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { type Task, type Result, CaptionLlmOutput } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -81,16 +82,27 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       take: 5,
     });
 
-    const mediaDir = process.env.MEDIA_DIR ?? join(__dirname, '..', '..', '..', 'media');
-    const clipPaths = clips
-      .map((c) => ({ asset: c, path: join(mediaDir, c.r2Key) }))
-      .filter(({ asset, path }) => {
-        const okFile = existsSync(path);
-        if (!okFile) this.log.warn(`clip ${asset.id} has no local file at ${path} — skipped`);
-        return okFile;
-      });
+    // Stage each banked clip on local disk for ffmpeg. The clips live in R2, and
+    // this handler runs on the WORKER service — a different machine from the web
+    // box that received the upload — so the worker's local media dir is empty.
+    // storage.get reads local-then-R2, so we download each clip through it into
+    // a private temp working dir, and clean the whole dir up in the finally below.
+    const workDir = mkdtempSync(join(tmpdir(), `reel-${task.customer_id}-`));
+    const clipPaths: { asset: (typeof clips)[number]; path: string }[] = [];
+    for (const c of clips) {
+      const bytes = await this.storage.get(c.r2Key);
+      if (!bytes) {
+        this.log.warn(`clip ${c.id} not found in storage at ${c.r2Key} — skipped`);
+        continue;
+      }
+      const ext = c.r2Key.split('.').pop() || 'mov';
+      const p = join(workDir, `${c.id}.${ext}`);
+      writeFileSync(p, bytes);
+      clipPaths.push({ asset: c, path: p });
+    }
 
     if (clipPaths.length < 2) {
+      rmSync(workDir, { recursive: true, force: true });
       return fail(
         task.task_id,
         'I need at least two clips to cut a reel — film a couple of 5–10 second videos and send them over!',
@@ -98,6 +110,8 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
         `${clipPaths.length} usable clip(s)`,
         );
     }
+
+    try {
 
     // Brand end card + hook, from the identity assigned at onboarding.
     const theme: BrandTheme = {
@@ -250,6 +264,11 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
         captioned: captionsAss.includes('Dialogue:'),
       },
     );
+    } finally {
+      // Always remove the staged clips — the render is done (or failed) and the
+      // worker moves on to the next job; leaving temp video around fills disk.
+      rmSync(workDir, { recursive: true, force: true });
+    }
   }
 }
 
