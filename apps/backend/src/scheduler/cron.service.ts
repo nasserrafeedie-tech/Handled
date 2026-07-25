@@ -19,6 +19,15 @@ import { resolveStrategy, reelClipsFor } from '../operator/llm/vertical-playbook
 type PlanResult = { data?: { slots?: CalendarSlot[] } };
 
 /**
+ * The wall clock every @Cron below is anchored to. @nestjs/schedule fires cron
+ * jobs in the SERVER'S local time unless a timeZone is given — so on a UTC host
+ * "Mon 08:00" (planWeek) would fire at 01:00 Pacific and the Friday 16:00 recap
+ * at 09:00. These jobs are described as local-morning/afternoon events, so pin
+ * the zone explicitly. Overridable per deploy; defaults to the business zone.
+ */
+const CRON_TZ = process.env.CRON_TIMEZONE ?? 'America/Los_Angeles';
+
+/**
  * The autonomous heartbeat (§10). Three recurring jobs, all routed through the
  * TaskBus so they get the same validation + audit trail as owner-triggered work:
  *   • weekly  — PLAN_WEEK for every active customer (Mon 08:00)
@@ -70,7 +79,7 @@ export class CronService {
   }
 
   /** Weekly: plan the coming week for every active customer. */
-  @Cron('0 8 * * 1')
+  @Cron('0 8 * * 1', { timeZone: CRON_TZ })
   async planWeek(): Promise<void> {
     if (!this.enabled) return;
     const ids = await this.activeCustomerIds();
@@ -284,7 +293,7 @@ export class CronService {
    * Every 15 minutes: release texts the quiet-hours guard held overnight.
    * Sends land within a quarter hour of the recipient's 8:00.
    */
-  @Cron('*/15 * * * *')
+  @Cron('*/15 * * * *', { timeZone: CRON_TZ })
   async flushQuietHoursQueue(): Promise<void> {
     if (!this.enabled) return;
     await this.concierge
@@ -303,7 +312,7 @@ export class CronService {
    * so this is a deadline we can see coming — the alternative is posting
    * stopping with no explanation. See ReauthService.
    */
-  @Cron('0 9 * * *')
+  @Cron('0 9 * * *', { timeZone: CRON_TZ })
   async askForReauth(): Promise<void> {
     if (!this.enabled) return;
     await this.reauth
@@ -319,7 +328,7 @@ export class CronService {
    * never happens and the owner finds out from their own feed. See
    * ReconcileService.
    */
-  @Cron('*/30 * * * *')
+  @Cron('*/30 * * * *', { timeZone: CRON_TZ })
   async reconcileStranded(): Promise<void> {
     if (!this.enabled) return;
     await this.reconcile
@@ -343,7 +352,7 @@ export class CronService {
    * stale archetype is a slowly-wrong strategy — see refreshStale for why
    * web-sourced rows are flagged rather than silently re-drafted.
    */
-  @Cron('0 3 * * 0')
+  @Cron('0 3 * * 0', { timeZone: CRON_TZ })
   async refreshPlaybook(): Promise<void> {
     if (!this.enabled) return;
     const { refreshed, flagged } = await this.research
@@ -360,7 +369,7 @@ export class CronService {
   }
 
   /** Hourly: publish anything now due (belt-and-suspenders with BullMQ). */
-  @Cron(CronExpression.EVERY_HOUR)
+  @Cron(CronExpression.EVERY_HOUR, { timeZone: CRON_TZ })
   async publishDue(): Promise<void> {
     if (!this.enabled) return;
     const ids = await this.activeCustomerIds();
@@ -372,7 +381,7 @@ export class CronService {
   }
 
   /** Friday recap — the service proving it worked this week (retention §2). */
-  @Cron('0 16 * * 5')
+  @Cron('0 16 * * 5', { timeZone: CRON_TZ })
   async weeklyRecap(): Promise<void> {
     if (!this.enabled) return;
     for (const id of await this.activeCustomerIds()) {
@@ -383,13 +392,24 @@ export class CronService {
   }
 
   async sendRecap(customerId: string): Promise<void> {
-    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const now = Date.now();
+    const since = new Date(now - 7 * 24 * 3600 * 1000);
+    const nextWeekEnd = new Date(now + 7 * 24 * 3600 * 1000);
     const [published, scheduled] = await Promise.all([
+      // "went out this week" must key off the real publish time, not updatedAt —
+      // any later metadata write (a failureReason, a metric touch) would move
+      // updatedAt and mis-bucket the count.
       this.prisma.post.count({
-        where: { customerId, status: 'published', updatedAt: { gte: since } },
+        where: { customerId, status: 'published', publishedAt: { gte: since } },
       }),
+      // "lined up for next week" means the coming week, not every scheduled post
+      // however far out (or a stranded one not yet reconciled).
       this.prisma.post.count({
-        where: { customerId, status: 'scheduled' },
+        where: {
+          customerId,
+          status: 'scheduled',
+          scheduledTime: { gte: new Date(now), lte: nextWeekEnd },
+        },
       }),
     ]);
     if (published === 0 && scheduled === 0) return; // nothing to brag about
@@ -406,7 +426,7 @@ export class CronService {
   }
 
   /** Daily: pull fresh metrics so next week's plan learns from results. */
-  @Cron('0 6 * * *')
+  @Cron('0 6 * * *', { timeZone: CRON_TZ })
   async fetchMetrics(): Promise<void> {
     if (!this.enabled) return;
     const ids = await this.activeCustomerIds();
@@ -430,7 +450,7 @@ export class CronService {
    * few days out. This category churns at ~46% a year and the difference is
    * whether the owner can see what they are paying for — see RecapService.
    */
-  @Cron('0 10 * * *')
+  @Cron('0 10 * * *', { timeZone: CRON_TZ })
   async sendRecaps(): Promise<void> {
     if (!this.enabled) return;
     await this.recap
