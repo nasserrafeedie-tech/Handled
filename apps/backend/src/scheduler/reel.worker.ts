@@ -62,7 +62,20 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
           })
           .catch((e) => this.log.warn(`reel notice failed: ${String(e)}`));
       },
-      { connection: this.connection, concurrency: 1 },
+      {
+        connection: this.connection,
+        concurrency: 1,
+        // Upstash bills per Redis command, and BullMQ's default idle behaviour
+        // is chatty: a blocking poll every 5s plus a stalled-job sweep every
+        // 30s runs 24/7 whether or not a reel is ever cut. That baseline is
+        // what exhausted the request quota. A newly-added job still wakes the
+        // blocking poll instantly (it's pushed onto the list the worker is
+        // blocked on), so a long drainDelay costs no pickup latency — it just
+        // stops the idle worker from re-issuing the poll every few seconds.
+        // Reels are rare and never latency-critical, so poll lazily.
+        drainDelay: 60,
+        stalledInterval: 300_000,
+      },
     );
     this.worker.on('failed', (job, err) => {
       this.log.error(`reel job ${job?.id} failed: ${err.message}`);

@@ -78,7 +78,17 @@ export class PublishWorker implements OnModuleInit, OnModuleDestroy {
           throw new Error(result.error!.message); // let BullMQ retry
         }
       },
-      { connection: this.connection, concurrency: 5 },
+      {
+        connection: this.connection,
+        concurrency: 5,
+        // Trim idle Redis chatter (Upstash bills per command) without hurting
+        // publish timeliness: a due scheduled post wakes the worker via BullMQ's
+        // delay marker regardless of drainDelay, so a 30s idle poll and a 2min
+        // stalled sweep are plenty. More conservative than the reel worker
+        // because publishing is the customer-facing, time-sensitive path.
+        drainDelay: 30,
+        stalledInterval: 120_000,
+      },
     );
     this.worker.on('failed', (job, err) =>
       this.log.warn(`publish job ${job?.id} failed: ${err.message}`),
