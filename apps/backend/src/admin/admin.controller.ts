@@ -16,6 +16,7 @@ import { BusinessMetricsService } from './business-metrics.service';
 import { PostForMeService } from '../operator/publishing/post-for-me.service';
 import { normalizePhone } from '../common/phone';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
+import { StorageService } from '../common/storage.service';
 import { ADMIN_PAGE_HTML } from './admin-page';
 
 const PublishNowBody = z.object({ postId: z.string().uuid() });
@@ -120,6 +121,7 @@ export class AdminController {
     private readonly bus: TaskBus,
     private readonly metrics: BusinessMetricsService,
     private readonly pfm: PostForMeService,
+    private readonly storage: StorageService,
   ) {}
 
   /**
@@ -451,6 +453,38 @@ export class AdminController {
   }
 
   /** Read a post's real state straight from Post for Me (debug/verify). */
+  /**
+   * The actual media attached to a post, as public URLs.
+   *
+   * The operator overview deliberately omits mediaRefs (it is a lightweight
+   * list), so there was no way to SEE a post's carousel/photo without querying
+   * the database directly. This returns the resolved URLs so a drafted post's
+   * slides can be reviewed before it publishes.
+   */
+  @Get('post-media')
+  async postMedia(
+    @Headers('x-admin-token') token: string | undefined,
+    @Query('postId') postId: string | undefined,
+  ) {
+    const expected = process.env.ADMIN_TOKEN;
+    if (!expected || token !== expected) throw new NotFoundException();
+    if (!postId) return { error: 'pass ?postId=' };
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { id: true, caption: true, mediaRefs: true, aiGeneratedMedia: true, platform: true, status: true },
+    });
+    if (!post) return { error: 'no such post' };
+    return {
+      id: post.id,
+      platform: post.platform,
+      status: post.status,
+      caption: post.caption,
+      aiGeneratedMedia: post.aiGeneratedMedia,
+      media_count: post.mediaRefs.length,
+      media_urls: post.mediaRefs.map((k) => (/^https?:\/\//.test(k) ? k : this.storage.publicUrl(k))),
+    };
+  }
+
   @Get('post-status')
   async postStatus(
     @Headers('x-admin-token') token: string | undefined,
