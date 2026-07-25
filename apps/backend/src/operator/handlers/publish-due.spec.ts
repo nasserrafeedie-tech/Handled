@@ -14,6 +14,7 @@ const READY: PublishGateInput = {
   status: 'scheduled',
   moderationState: 'passed',
   approvalState: 'approved',
+  publishStartedAt: null,
   customer: { status: 'active' },
 };
 
@@ -47,12 +48,19 @@ describe('isBlockedFromPublishing — the last gate before a post goes public', 
     assert.equal(isBlockedFromPublishing({ ...READY, approvalState: 'rejected' }), true);
   });
 
-  it('never resurrects a cancelled, failed, already-published, or mid-publish post', () => {
-    // 'publishing' means another runner has already claimed it — a second
-    // publisher must not also send it.
-    for (const status of ['cancelled', 'failed', 'published', 'publishing']) {
+  it('never resurrects a cancelled, failed, or already-published post', () => {
+    for (const status of ['cancelled', 'failed', 'published']) {
       assert.equal(isBlockedFromPublishing({ ...READY, status }), true, status);
     }
+  });
+
+  it('blocks a post already claimed by another publisher (publishStartedAt set)', () => {
+    // The atomic claim: once one runner stamps publishStartedAt, a second must
+    // not also send it.
+    assert.equal(
+      isBlockedFromPublishing({ ...READY, publishStartedAt: new Date() }),
+      true,
+    );
   });
 
   it('fails toward blocking on an unexpected moderation value', () => {

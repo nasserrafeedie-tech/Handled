@@ -31,9 +31,9 @@ function fakePrisma(rows: Row[]) {
       updateMany: async (args: any) => {
         updated.push(args);
         // Two updateMany calls now: the stale write-off (keyed on scheduledTime)
-        // and the interrupted-mid-publish sweep (keyed on status:'publishing' /
-        // updatedAt). These fixtures have no 'publishing' rows.
-        if (args.where.status === 'publishing') return { count: 0 };
+        // and the interrupted-mid-publish sweep (keyed on publishStartedAt).
+        // These fixtures have no claimed (publishStartedAt) rows.
+        if (args.where.publishStartedAt) return { count: 0 };
         const lt = args.where.scheduledTime.lt as Date;
         return { count: rows.filter((r) => r.scheduledTime < lt).length };
       },
@@ -148,7 +148,7 @@ describe('ReconcileService.sweep', () => {
   });
 
   it('flags a post stuck mid-publish as interrupted — and never re-queues it', async () => {
-    // A row left in 'publishing' (worker died after claiming it) must be
+    // A row with an old publishStartedAt (worker died after claiming it) must be
     // surfaced, not re-published: it may already be live.
     const updated: any[] = [];
     const prisma = {
@@ -156,7 +156,7 @@ describe('ReconcileService.sweep', () => {
         findMany: async () => [],
         updateMany: async (args: any) => {
           updated.push(args);
-          return { count: args.where.status === 'publishing' ? 1 : 0 };
+          return { count: args.where.publishStartedAt ? 1 : 0 };
         },
       },
     };
@@ -164,7 +164,7 @@ describe('ReconcileService.sweep', () => {
     const r = await new ReconcileService(prisma as any, queue as any).sweep(NOW);
     assert.equal(r.interrupted, 1);
     assert.equal(queue.scheduled.length, 0, 'an interrupted publish is never re-queued');
-    const interruptedCall = updated.find((u) => u.where.status === 'publishing');
+    const interruptedCall = updated.find((u) => u.where.publishStartedAt);
     assert.match(interruptedCall.data.failureReason, /interrupted|verify/i);
     assert.equal(interruptedCall.data.status, 'failed');
   });

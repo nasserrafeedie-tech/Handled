@@ -35,11 +35,12 @@ export class ReconcileService {
   private static readonly LATE_AFTER_MINUTES = 20;
 
   /**
-   * A publish claims the row ('publishing') right before the platform call. If
-   * the worker dies between the platform call and the DB write, the row stays
-   * 'publishing'. We do NOT re-publish it — it may already be live, and a double
-   * post under the owner's name is the one thing we never risk — we surface it.
-   * A real publish takes seconds, so anything here this long has crashed.
+   * A publish stamps publishStartedAt right before the platform call. If the
+   * worker dies between the platform call and the DB write, the stamp is left
+   * set on a still-scheduled/approved post. We do NOT re-publish it — it may
+   * already be live, and a double post under the owner's name is the one thing
+   * we never risk — we surface it. A real publish takes seconds, so a stamp this
+   * old means the worker crashed mid-publish.
    */
   private static readonly PUBLISHING_STUCK_MINUTES = 15;
 
@@ -75,6 +76,9 @@ export class ReconcileService {
         approvalState: { notIn: ['awaiting_owner', 'rejected'] },
         moderationState: 'passed',
         customer: { status: 'active' },
+        // Not one currently being published (claim stamped) — that is handled
+        // by the interrupted sweep below, never re-queued.
+        publishStartedAt: null,
       },
       select: { id: true, customerId: true, scheduledTime: true },
       take: 200,
@@ -88,8 +92,8 @@ export class ReconcileService {
         // Two things stop this from double-posting. The job id is derived from
         // the post id, so scheduling replaces any job that does still exist
         // rather than adding a second. And PUBLISH_DUE claims the row with an
-        // atomic scheduled/approved → publishing compare-and-swap before the
-        // platform call, so even if two runners fire at once only one publishes.
+        // atomic publishStartedAt compare-and-swap before the platform call, so
+        // even if two runners fire at once only one publishes.
         await this.queue.schedule(
           { postId: post.id, customerId: post.customerId },
           now,
@@ -115,13 +119,14 @@ export class ReconcileService {
       },
     });
 
-    // A post stuck mid-publish (worker died after claiming it). Surface it —
-    // never re-publish, since it may already be live. The operator verifies on
-    // the platform and re-runs if it truly didn't post.
+    // A post stuck mid-publish (worker died after stamping the claim). Surface
+    // it — never re-publish, since it may already be live. The operator verifies
+    // on the platform and re-runs if it truly didn't post. Keyed on an old
+    // publishStartedAt on a post that never reached 'published'.
     const interrupted = await this.prisma.post.updateMany({
       where: {
-        status: 'publishing',
-        updatedAt: { lt: publishingStuckBefore },
+        status: { in: ['scheduled', 'approved'] },
+        publishStartedAt: { not: null, lt: publishingStuckBefore },
       },
       data: {
         status: 'failed',

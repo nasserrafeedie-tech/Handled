@@ -40,6 +40,7 @@ const base = {
   status: 'approved',
   approvalState: 'approved',
   moderationState: 'passed',
+  publishStartedAt: null,
 };
 
 describe('SCHEDULE_POST guards', () => {
@@ -63,12 +64,19 @@ describe('SCHEDULE_POST guards', () => {
   });
 
   it('refuses a terminal-status post (published/failed) — no rewind to scheduled', async () => {
-    for (const status of ['published', 'publishing', 'cancelled', 'failed']) {
+    for (const status of ['published', 'cancelled', 'failed']) {
       const { handler, scheduled } = build({ ...base, status, approvalState: 'approved' });
       const r = await handler.handle(task());
       assert.equal(r.status, 'failed', status);
       assert.equal(scheduled.length, 0, status);
     }
+  });
+
+  it('refuses a post mid-publish (publishStartedAt stamped)', async () => {
+    const { handler, scheduled } = build({ ...base, status: 'scheduled', publishStartedAt: new Date() });
+    const r = await handler.handle(task());
+    assert.equal(r.status, 'failed');
+    assert.equal(scheduled.length, 0);
   });
 
   it('still honors a fresh owner yes on an awaiting_owner post', async () => {

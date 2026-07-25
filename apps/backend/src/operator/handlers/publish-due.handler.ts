@@ -16,6 +16,8 @@ export interface PublishGateInput {
   status: string;
   moderationState: string;
   approvalState: string;
+  /** Set once a publisher has claimed the post — a second must not also send. */
+  publishStartedAt: Date | null;
   customer: { status: string };
 }
 
@@ -37,8 +39,9 @@ export function isBlockedFromPublishing(post: PublishGateInput): boolean {
     post.approvalState === 'rejected' ||
     post.status === 'cancelled' ||
     post.status === 'failed' ||
-    post.status === 'publishing' ||
-    post.status === 'published'
+    post.status === 'published' ||
+    // Already claimed by another publisher — mid-flight, not ours to also send.
+    post.publishStartedAt !== null
   );
 }
 
@@ -148,13 +151,19 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
       // Atomic claim BEFORE the platform call — the guard against double-posting
       // under the owner's name. Three producers can emit PUBLISH_DUE for the same
       // due post in the same minute (per-post job, hourly sweep, reconciler); a
-      // read-then-publish lets both win the race. This compare-and-swap moves the
-      // row scheduled/approved → publishing and only the winner gets count===1;
-      // every other runner sees 0 and skips. On any failure below we move it back
-      // off 'publishing' so it is never stranded by the claim itself.
+      // read-then-publish lets both win the race. This compare-and-swap stamps
+      // publishStartedAt only where it is still null, so exactly one runner gets
+      // count===1; every other sees 0 and skips. The status stays scheduled/
+      // approved; the stamp alone marks the claim (no new enum value needed). On
+      // a failure below we clear the stamp so the post is never stranded by the
+      // claim itself.
       const claim = await this.prisma.post.updateMany({
-        where: { id: post.id, status: { in: ['scheduled', 'approved'] } },
-        data: { status: 'publishing' },
+        where: {
+          id: post.id,
+          status: { in: ['scheduled', 'approved'] },
+          publishStartedAt: null,
+        },
+        data: { publishStartedAt: new Date() },
       });
       if (claim.count === 0) {
         // Someone else claimed it (or it moved out of a publishable state
@@ -168,10 +177,10 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
       });
       if (!account?.postForMeRef) {
         // Release the claim so a later run (once an account is connected) can
-        // pick it up, rather than leaving it stuck in 'publishing'.
+        // pick it up, rather than leaving it stuck as claimed.
         await this.prisma.post.update({
           where: { id: post.id },
-          data: { status: 'scheduled' },
+          data: { publishStartedAt: null },
         });
         skipped++;
         continue;
@@ -229,12 +238,16 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
         );
         this.log.warn(`publish failed for ${post.id} [${failure.kind}]: ${failure.detail}`);
 
+        const retryable = isRetryable(failure.kind);
         await this.prisma.post.update({
           where: { id: post.id },
           data: {
             // A transient failure goes back to scheduled so the reconciliation
-            // sweep picks it up; only a settled failure is marked failed.
-            status: isRetryable(failure.kind) ? 'scheduled' : 'failed',
+            // sweep picks it up; only a settled failure is marked failed. Clear
+            // the claim on a retryable failure so the post can be re-claimed;
+            // leave it on a settled failure (status='failed' blocks it anyway).
+            status: retryable ? 'scheduled' : 'failed',
+            publishStartedAt: retryable ? null : undefined,
             failureReason: `[${failure.kind}] ${failure.detail}`,
           },
         });

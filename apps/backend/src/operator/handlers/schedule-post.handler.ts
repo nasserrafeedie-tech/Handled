@@ -35,18 +35,19 @@ export class SchedulePostHandler implements TaskHandler<'SCHEDULE_POST'> {
     // A post in a terminal state is not ours to re-schedule. Without this a
     // stray SCHEDULE_POST (a retry, a duplicate "yes", a re-run) would rewind a
     // published/cancelled/failed post to 'scheduled' and the next queue fire
-    // would re-publish or un-cancel it.
+    // would re-publish or un-cancel it. A post mid-publish (publishStartedAt
+    // stamped) is likewise off-limits.
     if (
       post.status === 'published' ||
-      post.status === 'publishing' ||
       post.status === 'cancelled' ||
-      post.status === 'failed'
+      post.status === 'failed' ||
+      post.publishStartedAt !== null
     ) {
       return fail(
         task.task_id,
         "That post isn't in a state I can schedule.",
         'not_schedulable',
-        `${post.id} is ${post.status}`,
+        `${post.id} is ${post.status}${post.publishStartedAt ? ' (publishing)' : ''}`,
       );
     }
     if (post.moderationState !== 'passed') {
