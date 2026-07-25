@@ -59,7 +59,11 @@ export const MAX_REEL_SECS = 34;
  * out-of-range clip index reads an undefined path. None of these are unlikely —
  * the model is estimating times from a transcript, not measuring the file.
  */
-export function clampEdl(edl: ReelEdl, clipDurations: number[]): ReelEdl {
+export function clampEdl(
+  edl: ReelEdl,
+  clipDurations: number[],
+  transcripts?: Array<TranscriptWord[] | undefined>,
+): ReelEdl {
   const segments: EdlSegment[] = [];
   let total = 0;
 
@@ -69,9 +73,27 @@ export function clampEdl(edl: ReelEdl, clipDurations: number[]): ReelEdl {
     // guess which real clip was meant.
     if (duration === undefined || duration <= 0) continue;
 
-    const start = Math.min(Math.max(0, seg.start), Math.max(0, duration - MIN_SEGMENT_SECS));
-    const end = Math.min(seg.end > start ? seg.end : start + MAX_SEGMENT_SECS, duration);
-    const length = Math.min(end - start, MAX_SEGMENT_SECS);
+    const rawStart = Math.min(Math.max(0, seg.start), Math.max(0, duration - MIN_SEGMENT_SECS));
+    const rawEnd = Math.min(seg.end > rawStart ? seg.end : rawStart + MAX_SEGMENT_SECS, duration);
+
+    // Snap the cut to word boundaries when we have this clip's transcript, so a
+    // segment starts and ends between spoken words instead of slicing through
+    // one. This is what makes the edit "cut on meaning": the model picks the
+    // moment, and we align the actual trim to the nearest clean word edges,
+    // trimming leading/trailing silence in the bargain. Falls back to the raw
+    // times for b-roll (no words) or when snapping can't find a valid span.
+    const words = transcripts?.[seg.clip_index];
+    const snapped = words && words.length ? snapToWords(rawStart, rawEnd, words) : null;
+
+    let start: number;
+    let length: number;
+    if (snapped) {
+      start = snapped.start;
+      length = snapped.end - snapped.start;
+    } else {
+      start = rawStart;
+      length = Math.min(rawEnd - rawStart, MAX_SEGMENT_SECS);
+    }
     if (length < MIN_SEGMENT_SECS) continue;
 
     // Stop at the length cap rather than trailing off mid-segment: a reel that
@@ -83,6 +105,40 @@ export function clampEdl(edl: ReelEdl, clipDurations: number[]): ReelEdl {
   }
 
   return { ...edl, segments };
+}
+
+/**
+ * Align a raw [start, end] window to the word timings of its clip.
+ *
+ * The model estimates cut points from a transcript, so its numbers land a few
+ * hundred milliseconds off the real word edges — enough to clip the head off a
+ * word or leave the tail of the previous one. We move the start up to the first
+ * word that begins at/after it (dropping any leading silence) and the end back
+ * to the last word that ends at/before it, capped to MAX_SEGMENT_SECS worth of
+ * whole words. A small tolerance lets a word the model meant to include but
+ * boxed a hair too tightly still count. Returns null when no whole word fits —
+ * the caller then keeps the raw times rather than dropping a real moment.
+ */
+function snapToWords(
+  rawStart: number,
+  rawEnd: number,
+  words: TranscriptWord[],
+): { start: number; end: number } | null {
+  const TOL = 0.12;
+  const startWord = words.find((w) => w.start >= rawStart - TOL);
+  if (!startWord) return null;
+  const start = Math.max(0, startWord.start);
+
+  // Take whole words up to the requested end, but never past the segment cap.
+  const hardEnd = Math.min(rawEnd, start + MAX_SEGMENT_SECS);
+  let end = 0;
+  for (const w of words) {
+    if (w.start < start) continue;
+    if (w.end <= hardEnd + TOL) end = w.end;
+    else break;
+  }
+  if (end - start < MIN_SEGMENT_SECS) return null;
+  return { start, end };
 }
 
 /**

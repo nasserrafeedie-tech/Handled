@@ -97,6 +97,49 @@ describe('clamping a model-authored edit to real footage', () => {
   });
 });
 
+describe('snapping a cut to word boundaries (cut on meaning)', () => {
+  // "the crispy chicken sandwich is here" — one word per entry, real timings.
+  const words = [
+    { text: 'the', start: 1.0, end: 1.3 },
+    { text: 'crispy', start: 1.4, end: 1.9 },
+    { text: 'chicken', start: 2.0, end: 2.6 },
+    { text: 'sandwich', start: 2.7, end: 3.4 },
+    { text: 'is', start: 3.5, end: 3.7 },
+    { text: 'here', start: 3.8, end: 4.2 },
+  ];
+
+  it('moves the trim onto word edges, never mid-word', () => {
+    // The model asked for 1.15–3.6, both landing inside words.
+    const out = clampEdl(
+      { segments: [{ clip_index: 0, start: 1.15, end: 3.6 }], hook: 'x' },
+      [10],
+      [words],
+    );
+    assert.equal(out.segments.length, 1);
+    const seg = out.segments[0];
+    // Start snaps up to a word start, end back to a word end — every boundary
+    // coincides with a real word edge.
+    assert.ok(
+      words.some((w) => Math.abs(w.start - seg.start) < 1e-9),
+      `start ${seg.start} is not a word boundary`,
+    );
+    assert.ok(
+      words.some((w) => Math.abs(w.end - seg.end) < 1e-9),
+      `end ${seg.end} is not a word boundary`,
+    );
+  });
+
+  it('keeps the raw times when the clip has no words (b-roll)', () => {
+    const out = clampEdl(
+      { segments: [{ clip_index: 0, start: 0, end: 3 }], hook: 'x' },
+      [10],
+      [[]],
+    );
+    assert.equal(out.segments.length, 1);
+    assert.equal(out.segments[0].start, 0);
+  });
+});
+
 describe('the fallback edit', () => {
   it('uses every clip in order when there is nothing to reason about', () => {
     const out = fallbackEdl([10, 10], 'Watch this');

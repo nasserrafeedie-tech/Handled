@@ -73,7 +73,11 @@ export class EdlService {
     try {
       const edl = await this.llm.completeJson(
         {
-          tier: 'bulk',
+          // Voice (Sonnet), not bulk (Haiku): choosing which moment is the
+          // payoff and where a thought begins and ends is the hardest semantic
+          // judgment in the reel, and it decides whether the cut feels
+          // intentional or random. Worth the better model — reels are Pro.
+          tier: 'voice',
           cachedContext: opts.brandContext,
           customerId: opts.customerId,
           prompt: [
@@ -95,7 +99,11 @@ export class EdlService {
         ReelEdl,
       );
 
-      const clamped = clampEdl(edl, opts.clipDurations);
+      const clamped = clampEdl(
+        edl,
+        opts.clipDurations,
+        opts.transcripts.map((t) => t.words),
+      );
       if (clamped.segments.length === 0) {
         this.log.warn('model EDL had no usable segments after clamping — falling back');
         return fallback;
