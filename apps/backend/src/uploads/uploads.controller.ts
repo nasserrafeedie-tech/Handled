@@ -9,8 +9,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { diskStorage } from 'multer';
+import { closeSync, openSync, readFileSync, readSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConciergeService } from '../concierge/concierge.service';
@@ -24,7 +25,23 @@ interface UploadedFileShape {
   originalname: string;
   mimetype: string;
   size: number;
-  buffer: Buffer;
+  /** Set by multer disk storage — the temp file we stream from, then delete. */
+  path?: string;
+  /** Set only in tests / memory storage. Prod uploads arrive on disk (path). */
+  buffer?: Buffer;
+}
+
+/** The magic bytes we sniff live in the first few bytes; 4KB is ample. */
+function readHeader(file: UploadedFileShape): Buffer {
+  if (file.buffer) return file.buffer;
+  const fd = openSync(file.path!, 'r');
+  try {
+    const buf = Buffer.alloc(4096);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
@@ -49,7 +66,20 @@ export class UploadsController {
   ) {}
 
   @Post()
-  @UseInterceptors(AnyFilesInterceptor({ limits: { fileSize: 100 * 1024 * 1024, files: 6 } }))
+  @UseInterceptors(
+    AnyFilesInterceptor({
+      // Disk storage, NOT the default in-memory buffer: a phone video is
+      // 100MB+, and holding several in RAM strains the 512MB web box (the class
+      // of failure that took the service down). multer streams each upload to a
+      // temp file; we stream that to R2 and delete it — the box never holds a
+      // whole clip in memory.
+      storage: diskStorage({
+        destination: (_req, _file, cb) => cb(null, tmpdir()),
+        filename: (_req, _file, cb) => cb(null, randomUUID()),
+      }),
+      limits: { fileSize: 100 * 1024 * 1024, files: 6 },
+    }),
+  )
   async upload(
     @Query('customer') customerId: string | undefined,
     @UploadedFiles() files: UploadedFileShape[],
@@ -60,59 +90,74 @@ export class UploadsController {
     if (!customer) throw new NotFoundException('unknown customer');
     if (!files?.length) throw new BadRequestException('no files');
 
-    if (kind === 'logo') return this.handleLogo(customerId, files[0]);
+    try {
+      if (kind === 'logo') return await this.handleLogo(customerId, files[0]);
 
-    const mediaDir = process.env.MEDIA_DIR ?? join(__dirname, '..', '..', 'media');
-    const kinds: string[] = [];
+      const kinds: string[] = [];
 
-    for (const f of files) {
-      // Read the file rather than believing its declared type. Everything we
-      // store — kind, extension, content type — comes from the bytes, so a
-      // caller cannot choose what lands in a bucket we serve.
-      const detected = detectMedia(f.buffer);
-      if (!detected) {
-        this.log.warn(
-          `rejected upload from ${customerId}: declared ${f.mimetype}, bytes say otherwise`,
+      for (const f of files) {
+        // Identify from the bytes, not the declared type — kind, extension and
+        // content type all come from what the file actually is, so a caller
+        // can't choose what lands in a bucket we serve. We read only the header,
+        // never the whole clip, so a 100MB video never enters memory.
+        const detected = detectMedia(readHeader(f));
+        if (!detected) {
+          this.log.warn(
+            `rejected upload from ${customerId}: declared ${f.mimetype}, bytes say otherwise`,
+          );
+          throw new BadRequestException(
+            "That file doesn't look like a photo or video we can use — try a JPG, PNG, or MP4.",
+          );
+        }
+        const r2Key = `${customerId}/uploads/${randomUUID()}.${detected.ext}`;
+        // Stream the temp file straight to storage — no full read into memory.
+        await this.storage.putStream(r2Key, f.path!, detected.contentType, f.size);
+        await this.prisma.mediaAsset.create({
+          data: {
+            customerId,
+            kind: detected.kind,
+            source: 'owner_upload',
+            r2Key,
+            contentType: detected.contentType,
+          },
+        });
+        kinds.push(detected.kind);
+      }
+
+      // Enough banked video → cut the reel in the background; text when done.
+      const bankedVideos = await this.prisma.mediaAsset.count({
+        where: { customerId, kind: 'video', source: 'owner_upload', postId: null },
+      });
+      if (bankedVideos >= 2 && tierHas(customer.planTier, 'reel')) {
+        void this.assembleAndNotify(customerId);
+      } else if (kinds.includes('video') && !tierHas(customer.planTier, 'reel')) {
+        void this.concierge.notify(
+          customerId,
+          'Got your videos! Quick note — reels are part of the Pro plan. Reply UPGRADE and I\'ll send the details, or I\'ll keep them on file.',
+          { promptedByOwner: true },
         );
-        throw new BadRequestException(
-          "That file doesn't look like a photo or video we can use — try a JPG, PNG, or MP4.",
+      } else {
+        void this.concierge.notify(
+          customerId,
+          `Got ${files.length === 1 ? 'it' : `all ${files.length}`} — thank you! 📥`,
+          { promptedByOwner: true },
         );
       }
-      const r2Key = `${customerId}/uploads/${randomUUID()}.${detected.ext}`;
-      await this.storage.put(r2Key, f.buffer, detected.contentType);
-      await this.prisma.mediaAsset.create({
-        data: {
-          customerId,
-          kind: detected.kind,
-          source: 'owner_upload',
-          r2Key,
-          contentType: detected.contentType,
-        },
-      });
-      kinds.push(detected.kind);
-    }
 
-    // Enough banked video → cut the reel in the background; text when done.
-    const bankedVideos = await this.prisma.mediaAsset.count({
-      where: { customerId, kind: 'video', source: 'owner_upload', postId: null },
-    });
-    if (bankedVideos >= 2 && tierHas(customer.planTier, 'reel')) {
-      void this.assembleAndNotify(customerId);
-    } else if (kinds.includes('video') && !tierHas(customer.planTier, 'reel')) {
-      void this.concierge.notify(
-        customerId,
-        'Got your videos! Quick note — reels are part of the Pro plan. Reply UPGRADE and I\'ll send the details, or I\'ll keep them on file.',
-        { promptedByOwner: true },
-      );
-    } else {
-      void this.concierge.notify(
-        customerId,
-        `Got ${files.length === 1 ? 'it' : `all ${files.length}`} — thank you! 📥`,
-        { promptedByOwner: true },
-      );
+      return { stored: files.length, kinds };
+    } finally {
+      // Always delete the temp files multer wrote to disk — on success, on a
+      // rejected file, or on any error mid-loop.
+      for (const f of files) {
+        if (f?.path) {
+          try {
+            unlinkSync(f.path);
+          } catch {
+            /* already gone */
+          }
+        }
+      }
     }
-
-    return { stored: files.length, kinds };
   }
 
   /**
@@ -126,7 +171,11 @@ export class UploadsController {
     customerId: string,
     file: UploadedFileShape,
   ): Promise<{ stored: number; kinds: string[] }> {
-    const detected = detectMedia(file.buffer);
+    // A logo is small, so reading it fully is fine — unlike the video path, we
+    // need the whole image for colour extraction and compositing. Support both
+    // disk storage (prod: file.path) and an in-memory buffer (tests).
+    const bytes = file.buffer ?? readFileSync(file.path!);
+    const detected = detectMedia(bytes);
     if (!detected || detected.kind !== 'image') {
       throw new BadRequestException(
         'That doesn\'t look like a logo image — send a PNG or JPG of your logo.',
@@ -137,7 +186,7 @@ export class UploadsController {
     // any logo. But we only STAMP the logo onto posts when it's sharp enough:
     // scaling a low-res mark up into the badge looks blurry, and a clean text
     // name beats a fuzzy logo on every post.
-    const colors = await extractBrandColors(file.buffer);
+    const colors = await extractBrandColors(bytes);
     const existing = await this.prisma.brandProfile.findUnique({
       where: { customerId },
       select: { brandColors: true },
@@ -154,7 +203,7 @@ export class UploadsController {
     let r2Key: string | undefined;
     if (sharpEnough) {
       r2Key = `${customerId}/logo.${detected.ext}`;
-      await this.storage.put(r2Key, file.buffer, detected.contentType);
+      await this.storage.put(r2Key, bytes, detected.contentType);
     }
     // Fill brand colours from the logo only when we don't already have the
     // owner's own words — an explicit "we're teal" is more intentional.

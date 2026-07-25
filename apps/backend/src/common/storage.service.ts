@@ -64,6 +64,51 @@ export class StorageService {
   }
 
   /**
+   * Stream a file already on local disk up to storage, WITHOUT loading it into
+   * memory. This is the path for owner video: a phone clip can be 100MB+, and
+   * buffering several of those in RAM is what strains the 512MB web instance.
+   * The upload is written to a temp file by multer, streamed to R2 here, and
+   * deleted by the caller. Passing ContentLength lets the SDK do a single PUT
+   * from the stream (no multipart, no in-memory buffer).
+   *
+   * When R2 isn't configured (local dev), copy the temp file into the media dir
+   * so /media keeps serving it — still no full read into memory.
+   */
+  async putStream(
+    key: string,
+    filePath: string,
+    contentType: string,
+    contentLength: number,
+  ): Promise<void> {
+    const client = this.r2();
+    if (client) {
+      const { createReadStream } = require('node:fs') as typeof import('node:fs');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { PutObjectCommand } = require('@aws-sdk/client-s3');
+      try {
+        await client.send(
+          new PutObjectCommand({
+            Bucket: process.env.R2_BUCKET,
+            Key: key,
+            Body: createReadStream(filePath),
+            ContentType: contentType,
+            ContentLength: contentLength,
+          }),
+        );
+      } catch (err) {
+        this.log.error(`R2 stream upload failed for ${key}: ${String(err)}`);
+        throw new Error(`R2 upload failed for ${key}: ${String(err)}`);
+      }
+      return;
+    }
+    // No R2 (dev): keep a local copy for /media, copied not read-then-written.
+    const { copyFileSync } = require('node:fs') as typeof import('node:fs');
+    const dest = join(this.mediaDir, key);
+    mkdirSync(dirname(dest), { recursive: true });
+    copyFileSync(filePath, dest);
+  }
+
+  /**
    * Read bytes back for a stored key — used to composite a stored logo into a
    * slide. Reads the local copy (always written by `put`) and falls back to R2
    * when the local file isn't present (e.g. a fresh dyno that never wrote it).

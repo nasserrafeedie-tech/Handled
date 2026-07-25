@@ -138,6 +138,12 @@ export class ConnectService {
     const { url } = await this.pfm.createAuthUrl({
       platform: req.platform,
       externalId: req.customerId,
+      // Connect Instagram via Facebook Login, not Instagram Login: Meta only
+      // exposes its Reels audio library to Facebook-Login connections, and we
+      // want customers audio-eligible the day Post for Me ships audio support.
+      // Switching connection type later is free and doesn't disturb scheduled
+      // posts, so defaulting this way has no downside.
+      ...(req.platform === 'instagram' ? { connectionType: 'facebook' } : {}),
     });
     return { url, offline: false };
   }

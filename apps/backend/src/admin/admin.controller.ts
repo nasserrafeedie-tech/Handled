@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete as HttpDelete,
   Get,
   Headers,
   NotFoundException,
@@ -239,6 +240,36 @@ export class AdminController {
       platform: parsed.data.platform ?? 'instagram',
     });
     return { enqueued: true, customerId: parsed.data.customerId, bankedClips: banked };
+  }
+
+  /**
+   * Hard-delete a customer and everything under them (conversation, posts,
+   * brand profile, connected accounts, media rows…). Every child relation is
+   * onDelete: Cascade, so one delete cleans the whole tree. Requires an explicit
+   * `confirm: true` so a stray call can't wipe a customer by id alone. Orphaned
+   * R2 objects are left behind — harmless, and not worth a bucket walk here.
+   * Used for test cleanup, and the seam a real account-deletion request runs on.
+   */
+  @HttpDelete('customer')
+  async deleteCustomer(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    assertAdmin(token);
+    const parsed = z
+      .object({ customerId: z.string().min(1), confirm: z.literal(true) })
+      .safeParse(body);
+    if (!parsed.success) {
+      return { error: 'bad_request', detail: 'pass {customerId, confirm: true}' };
+    }
+    const existing = await this.prisma.customer.findUnique({
+      where: { id: parsed.data.customerId },
+      select: { id: true, businessName: true, phone: true },
+    });
+    if (!existing) return { error: 'unknown_customer' };
+
+    await this.prisma.customer.delete({ where: { id: parsed.data.customerId } });
+    return { deleted: true, customer: existing };
   }
 
   /**

@@ -198,7 +198,11 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
     try {
       gen = await this.llm.completeJson(
         {
-          tier: 'bulk',
+          // Voice (Sonnet), not bulk (Haiku): the reel caption is customer-facing
+          // and reels are a Pro feature, so it's worth the better model. Haiku was
+          // also returning malformed JSON on this prompt often enough to trip the
+          // fallback on every reel — Sonnet is far more reliable at strict JSON.
+          tier: 'voice',
           cachedContext: buildBrandContext(profile),
           prompt: [
             `Write one behind_the_scenes reel caption for ${task.payload.platform}.`,
