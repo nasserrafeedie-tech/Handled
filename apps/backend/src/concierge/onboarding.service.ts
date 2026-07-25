@@ -294,7 +294,14 @@ export class OnboardingService {
     });
     const patch = await this.llm.completeJson(
       {
-        tier: 'bulk',
+        // 'voice' (Sonnet), not 'bulk' (Haiku). This runs a handful of times per
+        // customer, once, at signup — and the profile it extracts is the
+        // foundation every later strategy, plan, and caption is built on. A
+        // dropped business name or city here ("Rise in Pasadena" → just
+        // "bakery") propagates into everything. It is the highest-stakes,
+        // lowest-volume LLM call in the system, so it gets the better model.
+        // Drafting stays on 'bulk' — that runs several times a week forever.
+        tier: 'voice',
         cachedContext: [
           "You extract brand-profile fields from a small-business owner's SMS",
           'during onboarding. Return ONLY a JSON object. Keys you may use —',

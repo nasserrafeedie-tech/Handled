@@ -20,6 +20,30 @@ after(() => {
   if (hadKey !== undefined) process.env.ANTHROPIC_API_KEY = hadKey;
 });
 
+describe('onboarding — model routing', () => {
+  it('extracts the profile on the voice tier (Sonnet), not bulk (Haiku)', async () => {
+    // Onboarding runs once per customer and the profile is the foundation for
+    // everything after, so it gets the better model. Requires a key so the LLM
+    // path (not the offline fallback) runs.
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-test';
+    try {
+      let seenTier: string | undefined;
+      const spy = new OnboardingService({
+        completeJson: async (req: { tier: string }) => {
+          seenTier = req.tier;
+          return { business_type: 'bakery in Pasadena', business_name: 'Rise' };
+        },
+      } as never);
+      await spy.interpret('business_type', 'a bakery called Rise in Pasadena', null);
+      assert.equal(seenTier, 'voice');
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved;
+    }
+  });
+});
+
 describe('onboarding — standing rules', () => {
   it('requires dos_and_donts (it is asked, not skipped)', () => {
     // Everything filled except the rules → nextField must still ask for them.
