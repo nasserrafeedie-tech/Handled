@@ -18,6 +18,7 @@ import { normalizePhone } from '../common/phone';
 import { isValidTimeZone } from '../common/time';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
 import { StorageService } from '../common/storage.service';
+import { ReelQueueService } from '../scheduler/reel-queue.service';
 import { ADMIN_PAGE_HTML } from './admin-page';
 import { assertAdmin } from './admin-auth';
 
@@ -124,6 +125,7 @@ export class AdminController {
     private readonly metrics: BusinessMetricsService,
     private readonly pfm: PostForMeService,
     private readonly storage: StorageService,
+    private readonly reelQueue: ReelQueueService,
   ) {}
 
   /**
@@ -198,6 +200,45 @@ export class AdminController {
       connectLink: `${process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com'}/connect?c=${customer.id}`,
       note: tierNote(customer.planTier),
     };
+  }
+
+  /**
+   * Re-fire reel assembly for a customer whose clips are already banked — an
+   * operator/test trigger for the exact production path (web enqueues → the
+   * dedicated worker renders), without making the owner re-upload. Same queue,
+   * same handler the upload path uses; the only difference is what pushed the
+   * button. Returns immediately; the reel arrives over the owner's thread.
+   */
+  @HttpPost('reel/enqueue')
+  async enqueueReel(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    assertAdmin(token);
+    const parsed = z
+      .object({ customerId: z.string().min(1), platform: z.string().min(1).optional() })
+      .safeParse(body);
+    if (!parsed.success) {
+      return { error: 'bad_request', detail: parsed.error.issues };
+    }
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: parsed.data.customerId },
+    });
+    if (!customer) return { error: 'unknown_customer' };
+
+    const banked = await this.prisma.mediaAsset.count({
+      where: {
+        customerId: parsed.data.customerId,
+        kind: 'video',
+        source: 'owner_upload',
+        postId: null,
+      },
+    });
+    await this.reelQueue.enqueue({
+      customerId: parsed.data.customerId,
+      platform: parsed.data.platform ?? 'instagram',
+    });
+    return { enqueued: true, customerId: parsed.data.customerId, bankedClips: banked };
   }
 
   /**
