@@ -43,6 +43,14 @@ describe('moderation baseline safety', () => {
   it('is case-insensitive on baseline terms', async () => {
     assert.equal((await screen('VIOLENCE has no place here… actually it does: violence')).passed, false);
   });
+
+  it('blocks a hyphenated term in its spaced and solid spellings too', async () => {
+    // "self-harm" must also catch "self harm" and "selfharm" — a separator
+    // shouldn't be a trivial bypass.
+    for (const caption of ['self-harm', 'about self harm', 'selfharm content']) {
+      assert.equal((await screen(caption)).passed, false, caption);
+    }
+  });
 });
 
 describe('customer blackout topics', () => {

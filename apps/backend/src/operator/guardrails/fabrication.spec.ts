@@ -100,6 +100,46 @@ describe('detectFabrication', () => {
     }
   });
 
+  it('a real quote still does NOT license an invented event or result', () => {
+    // hasRealQuote justifies the quote and its speaker — not a fabricated dated
+    // event or a made-up result alongside it.
+    assert.ok(
+      detectFabrication(
+        'A regular told us: "best latte around." We roasted a fresh batch this afternoon just for the rush.',
+        true,
+      ).some((f) => f.name === 'invented_event'),
+      'invented event must still flag even with a real quote present',
+    );
+    assert.ok(
+      detectFabrication(
+        'A regular said "love this place." She now books a table every single week.',
+        true,
+      ).some((f) => f.name === 'claimed_result'),
+      'claimed result must still flag even with a real quote present',
+    );
+  });
+
+  it('does not flag ordinary membership/guest/customer CTAs', () => {
+    for (const caption of [
+      'Become a member today and save on every cleaning.',
+      'Bring a guest this weekend — first coffee is on us.',
+      'Refer a customer and you both get a free month.',
+      'Treat yourself like a regular: your usual, ready when you walk in.',
+    ]) {
+      assert.deepEqual(detectFabrication(caption), [], `false positive on CTA: ${caption}`);
+    }
+  });
+
+  it('does not flag stative/sentiment phrasing near a recency word', () => {
+    for (const caption of [
+      "This week we're featuring seasonal drinks you'll love.",
+      'We loved seeing you this weekend — come back soon.',
+      'This month we are celebrating five years in the neighborhood.',
+    ]) {
+      assert.deepEqual(detectFabrication(caption), [], `false positive on stative: ${caption}`);
+    }
+  });
+
   it('stands down when the owner gave a real quote', () => {
     const caption = 'A regular told us: "best haircut in the South Bay." We will take it.';
     assert.ok(detectFabrication(caption).length > 0, 'flagged without a source quote');

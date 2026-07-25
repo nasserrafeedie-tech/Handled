@@ -238,7 +238,12 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       blackoutTopics: profile.blackoutTopics,
     });
 
-    const risk = this.gate.classifyRisk(gen.caption);
+    // Classify over the SAME text that publishes — caption plus hashtags. A
+    // promo hidden only in a tag (#HalfOffFriday, #GrandOpening) would otherwise
+    // read as low-risk and auto-publish without the owner's OK that §8 requires.
+    const risk = this.gate.classifyRisk(
+      [gen.caption, gen.hashtags.map((h) => `#${h}`).join(' ')].filter(Boolean).join(' '),
+    );
     const decision = this.gate.decide(customer.trustLevel, risk);
 
     // Check the draft against what the platform will actually accept, before it

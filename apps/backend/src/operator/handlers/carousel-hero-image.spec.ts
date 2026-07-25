@@ -35,6 +35,7 @@ function makeHandler(opts: {
     {} as any,
     images as any,
     safety as any,
+    { screen: async () => ({ passed: true, reasons: [] }) } as any,
   );
   return handler as any;
 }

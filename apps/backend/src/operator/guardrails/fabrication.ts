@@ -86,6 +86,16 @@ const RECENCY =
 const FIRST_PERSON_ACTION =
   /\b(?:we|i|our team|the team|our (?:crew|staff|bakers?|baristas?))(?:'re|'ve| are| have| just)?\s+(?:just\s+)?[a-z]{3,}(?:-[a-z]+)*(?:ed|ing)\b/i;
 
+/**
+ * Stative / sentiment verbs that share the "-ed/-ing after we" shape but assert
+ * no discrete event — "this week we're FEATURING seasonal drinks", "we LOVED
+ * seeing you this weekend". These are ordinary current-offering and warm-close
+ * copy, not fabricated occurrences, so a recency word next to one is NOT an
+ * invented event. A real doing-verb ("tested", "baked", "roasted") is not here.
+ */
+const STATIVE_ACTION =
+  /\b(?:we|i|our team|the team)(?:'re|'ve| are| have)?\s+(?:featuring|offering|loving|loved|celebrating|welcoming|seeing|feeling|hoping|sharing|excited|thrilled|serving up|bringing you)\b/i;
+
 export interface FabricationFinding {
   name: 'attributed_quote' | 'invented_person' | 'claimed_result' | 'invented_event';
   detail: string;
@@ -103,28 +113,41 @@ export function detectFabrication(
   hasRealQuote = false,
 ): FabricationFinding[] {
   const out: FabricationFinding[] = [];
-  if (hasRealQuote) return out;
 
   const attributed = ATTRIBUTION.test(caption);
-  const person = INVENTED_PERSON.test(caption) || SITUATED_PERSON.test(caption);
+  // Two strengths of "invented person". SITUATED ("a dentist in Redondo") places
+  // one specific person somewhere — a strong signal, enough on its own. GENERIC
+  // ("a member", "a guest", "a customer") is weak: it is also how ordinary CTAs
+  // read ("become a member", "bring a guest"), so it only counts when paired
+  // with a quote or attribution, never alone.
+  const situated = SITUATED_PERSON.test(caption);
+  const generic = INVENTED_PERSON.test(caption);
+  const person = situated || generic;
   const quoted = QUOTED_SPAN.test(caption);
 
-  // Reporting what a specific person said is the shape that matters. Either
-  // half alone is ordinary copy — plural sentiment ("owners tell us…") has no
-  // one person in it, and a quoted phrase with nobody behind it is just a
-  // turn of phrase.
-  if (attributed && (person || quoted)) {
-    out.push({
-      name: 'attributed_quote',
-      detail: 'reports what a specific customer said, and we have no such quote',
-    });
-  } else if (person && quoted) {
-    out.push({
-      name: 'attributed_quote',
-      detail: 'puts words in the mouth of one invented customer',
-    });
-  } else if (person) {
-    out.push({ name: 'invented_person', detail: 'describes one specific customer' });
+  // A real owner quote justifies exactly one attributed quote and its speaker —
+  // so skip the attributed-quote / invented-person branch when we have one. It
+  // does NOT license inventing a result or a dated event, so those checks below
+  // still run. (Previously hasRealQuote early-returned and disabled everything.)
+  if (!hasRealQuote) {
+    // Reporting what a specific person said is the shape that matters. Either
+    // half alone is ordinary copy — plural sentiment ("owners tell us…") has no
+    // one person in it, and a quoted phrase with nobody behind it is just a
+    // turn of phrase.
+    if (attributed && (person || quoted)) {
+      out.push({
+        name: 'attributed_quote',
+        detail: 'reports what a specific customer said, and we have no such quote',
+      });
+    } else if (person && quoted) {
+      out.push({
+        name: 'attributed_quote',
+        detail: 'puts words in the mouth of one invented customer',
+      });
+    } else if (situated) {
+      // Only the strong signal flags on its own; a bare generic CTA does not.
+      out.push({ name: 'invented_person', detail: 'describes one specific customer' });
+    }
   }
 
   if (person && CLAIMED_RESULT.test(caption)) {
@@ -136,8 +159,13 @@ export function detectFabrication(
 
   // A dated one-off action the owner never reported. Both halves are required:
   // the action makes it a claim, the recency makes it a specific event rather
-  // than an evergreen habit.
-  if (RECENCY.test(caption) && FIRST_PERSON_ACTION.test(caption)) {
+  // than an evergreen habit. Stative/sentiment verbs ("we're featuring", "we
+  // loved seeing you") share the shape but assert no event, so they are excluded.
+  if (
+    RECENCY.test(caption) &&
+    FIRST_PERSON_ACTION.test(caption) &&
+    !STATIVE_ACTION.test(caption)
+  ) {
     out.push({
       name: 'invented_event',
       detail: 'states a specific recent event the owner never told us happened',

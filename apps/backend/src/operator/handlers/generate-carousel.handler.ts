@@ -26,6 +26,8 @@ import {
   tierHasCarousel,
   type CarouselBrief,
 } from '../graphics/carousel-content';
+import { ModerationService } from '../guardrails/moderation.service';
+import { detectFabrication } from '../guardrails/fabrication';
 import { TaskHandler, ok, fail } from './handler.interface';
 
 /**
@@ -51,6 +53,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     private readonly storage: StorageService,
     private readonly images: ImageGenService,
     private readonly safety: ImageSafetyService,
+    private readonly moderation: ModerationService,
   ) {}
 
   /**
@@ -149,6 +152,31 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       return fail(task.task_id,
         "I couldn't lay that one out as slides — I'll keep it as a plain post.",
         'carousel_copy_failed', String(e), true);
+    }
+
+    // The slides are a SEPARATE generation from the caption — the caption
+    // cleared the §8 gate, these did not. So run the same guardrails over the
+    // slide text before it is rendered onto images and attached: a slide can
+    // invent a stat/quote/event or surface an owner blackout topic the caption
+    // was scrubbed of. On any hit, don't ship bad slides — fall back to a plain
+    // (caption-only) post, exactly like a copy failure.
+    const slideText = slidesCopy
+      .map((s) => [s.headline, s.body].filter(Boolean).join(' '))
+      .join('  ');
+    const faked = detectFabrication(slideText);
+    const verdict = await this.moderation.screen({
+      caption: slideText,
+      hashtags: [],
+      blackoutTopics: profile?.blackoutTopics ?? [],
+    });
+    if (faked.length || !verdict.passed) {
+      const why = faked.length
+        ? `fabrication: ${faked.map((f) => f.name).join(', ')}`
+        : `moderation: ${verdict.reasons.join(', ')}`;
+      this.log.warn(`carousel slides for ${post.id} flagged (${why}) — keeping it a plain post`);
+      return fail(task.task_id,
+        "I couldn't lay that one out as slides — I'll keep it as a plain post.",
+        'carousel_content_flagged', why, false);
     }
 
     // Real brand colors if we have them, else a stable palette distinct to this

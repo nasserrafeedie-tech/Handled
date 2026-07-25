@@ -47,7 +47,11 @@ export class ModerationService {
       // every post flagged. Over-blocking is the safe direction (it routes to
       // owner review, never publishes something wrong), but it silently breaks
       // the product for a whole category of business.
-      if (new RegExp(`\\b${term}\\b`, 'i').test(haystack)) {
+      // A hyphenated term must also catch its spaced and solid spellings —
+      // "self-harm" has to block "self harm" and "selfharm" too, or the term is
+      // trivially evaded. Hyphens in the term become an optional separator.
+      const pattern = term.replace(/-/g, '[-\\s]?');
+      if (new RegExp(`\\b${pattern}\\b`, 'i').test(haystack)) {
         reasons.push(`baseline: "${term}"`);
       }
     }

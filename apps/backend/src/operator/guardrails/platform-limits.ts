@@ -161,9 +161,13 @@ export function truncateCaption(
 ): string {
   const max = budget ?? PLATFORM_LIMITS[platform]?.captionChars;
   if (!max || max <= 0 || caption.length <= max) return caption;
-  const cut = caption.slice(0, max - 1);
+  let cut = caption.slice(0, max - 1);
   const lastSpace = cut.lastIndexOf(' ');
   // Only break at a word if one is reasonably near the end; otherwise a caption
   // with no spaces would collapse to almost nothing.
-  return (lastSpace > max * 0.8 ? cut.slice(0, lastSpace) : cut).trimEnd() + '…';
+  cut = lastSpace > max * 0.8 ? cut.slice(0, lastSpace) : cut;
+  // Never end on a lone high surrogate — slicing mid-emoji (astral chars are two
+  // UTF-16 code units) would leave a dangling half that renders as "�".
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return cut.trimEnd() + '…';
 }
