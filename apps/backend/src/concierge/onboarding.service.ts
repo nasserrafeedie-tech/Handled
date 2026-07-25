@@ -68,9 +68,21 @@ const LlmPatch = z
 const GREETING =
   /^\s*(hi+|hey+( there)?|hello+|howdy|yo|sup|good (morning|afternoon|evening)|start|(i )?just signed up.?)\s*[!.…]*\s*$/i;
 
-/** "nope", "not really", "can't think of any" — no standing rules to give. */
+/**
+ * "nope", "no nothing special", "not really", "can't think of any" — a real
+ * answer that there are no standing rules. Tested against a comma-normalized
+ * string (see `isNoRules`), so "no, nothing special" reads as one negation and
+ * not as the rule "no". A substantive answer ("no peanuts, ever") is NOT this —
+ * it carries a real directive after the "no".
+ */
 const NO_RULES =
-  /^\s*(no+|nope|nah|none|not really|not at all|cant think of (?:any|anything)|can'?t think of (?:any|anything)|nothing(?: (?:comes to mind|really|i can think of))?|no rules|nothing off limits?|all good|we'?re good)\b[\s.!]*$/i;
+  /^\s*(?:no+|nope|nah|none|not really|not at all|not much|no rules|nothing off limits?|all good|we'?re good|(?:no |not )?nothing(?: (?:special|much|really|in particular|comes to mind|i can think of))?|(?:no )?not that i can think of|can'?t think of (?:any|anything))\s*[.!]*\s*$/i;
+
+/** A negation-only answer to "any rules?", tolerant of commas and spacing. */
+function isNoRules(answer: string): boolean {
+  const norm = answer.replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return NO_RULES.test(norm);
+}
 
 @Injectable()
 export class OnboardingService {
@@ -127,8 +139,14 @@ export class OnboardingService {
     );
   }
 
-  /** One-question-per-text prompts. Kept short: this is SMS, not a form. */
-  question(field: ProfileField): string {
+  /**
+   * One-question-per-text prompts. Kept short: this is SMS, not a form.
+   *
+   * `postsCap` is the plan's posts-per-week allowance. When known, the cadence
+   * question offers exactly that instead of a generic "3–4 a week" — a Starter
+   * (cap 3) must not be invited to pick 4 and then be under-served or over-served.
+   */
+  question(field: ProfileField, postsCap?: number): string {
     switch (field) {
       case 'business_type':
         return (
@@ -148,7 +166,10 @@ export class OnboardingService {
       case 'dos_and_donts':
         return 'Anything I should always mention — or never mention?';
       case 'posting_frequency':
-        return 'Last one: how often should I post? Most owners do 3–4 a week. Say a number, or "you pick".';
+        return postsCap
+          ? `Last one: how often should I post? Your plan includes ${postsCap} a week — ` +
+              `want all ${postsCap}, or fewer? Say a number, or "you pick".`
+          : 'Last one: how often should I post? Most owners do 3–4 a week. Say a number, or "you pick".';
     }
   }
 
@@ -210,10 +231,35 @@ export class OnboardingService {
     answer: string,
     profile: BrandProfile | null,
     businessName?: string | null,
+    postsCap?: number,
   ): Promise<Patch> {
     const text = answer.trim();
     if (!text) return {};
 
+    // "no, nothing special" is a valid answer meaning no rules — settle it
+    // before the LLM, which otherwise extracts the literal words ("no; nothing
+    // special") and stores them as brand rules that then feed captions.
+    if (asked === 'dos_and_donts' && isNoRules(text)) {
+      return { dos_and_donts: [NO_DOS_DONTS] };
+    }
+
+    const patch = await this.interpretRaw(asked, text, profile, businessName);
+    // Never store a cadence above what the plan sells. An owner who asks for 4
+    // on Starter (cap 3) is capped to 3 here, at the source, so the planner and
+    // every read-back downstream see the honest number.
+    if (patch.posting_frequency && postsCap) {
+      patch.posting_frequency = Math.min(patch.posting_frequency, postsCap);
+    }
+    return patch;
+  }
+
+  private async interpretRaw(
+    asked: ProfileField,
+    text: string,
+    profile: BrandProfile | null,
+    businessName?: string | null,
+  ): Promise<Patch> {
+    const answer = text;
     const llmOn =
       Boolean(process.env.ANTHROPIC_API_KEY) && process.env.LLM_FAKE !== '1';
     if (llmOn) {
@@ -312,7 +358,7 @@ export class OnboardingService {
         // owner has no standing rules. Mark it answered with the sentinel so
         // onboarding completes, rather than storing "nope" as a brand rule or
         // re-asking forever.
-        return NO_RULES.test(answer)
+        return isNoRules(answer)
           ? { dos_and_donts: [NO_DOS_DONTS] }
           : { dos_and_donts: splitList(answer).map((s) => s.slice(0, 300)) };
       case 'posting_frequency': {

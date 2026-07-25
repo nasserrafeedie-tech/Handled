@@ -6,6 +6,7 @@ import {
   upgradePitch,
   platformLimit,
   canConnectPlatform,
+  postsPerWeek,
 } from './tier-entitlements';
 import { tierHasCarousel } from './graphics/carousel-content';
 
@@ -67,6 +68,14 @@ describe('tier entitlements', () => {
       assert.equal(canConnectPlatform('growth', four, 'google_business'), false);
       assert.equal(canConnectPlatform('pro', four, 'google_business'), true);
     });
+  });
+
+  it('sells the 3 / 5 / 7 posts-per-week ladder, unknown fails to Starter', () => {
+    assert.equal(postsPerWeek('starter'), 3);
+    assert.equal(postsPerWeek('growth'), 5);
+    assert.equal(postsPerWeek('pro'), 7);
+    assert.equal(postsPerWeek('premium'), 3);
+    assert.equal(postsPerWeek(''), 3);
   });
 
   it('reels and video are Pro-exclusive — Growth does not include them', () => {

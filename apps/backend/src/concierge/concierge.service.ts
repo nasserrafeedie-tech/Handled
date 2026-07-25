@@ -30,7 +30,7 @@ import {
 import { z } from 'zod';
 import { strategySummary } from './strategy-summary';
 import { OWNER_CONSENT_COPY } from '../operator/graphics/image-prompt';
-import { entitlementLine, upgradePitch } from '../operator/tier-entitlements';
+import { entitlementLine, upgradePitch, postsPerWeek } from '../operator/tier-entitlements';
 
 /**
  * Intents that DO something, as opposed to being answered. Only these are
@@ -174,7 +174,7 @@ export class ConciergeService {
       where: { customerId: customer.id },
     });
     if (!this.onboarding.isComplete(profile)) {
-      return this.continueOnboarding(customer.id, customer.phone, conversation.id, msg.body, profile, customer.businessName);
+      return this.continueOnboarding(customer.id, customer.phone, conversation.id, msg.body, profile, customer.businessName, customer.planTier);
     }
 
     // 4. Graphic request ("make a graphic/carousel/quote card/promo...").
@@ -599,6 +599,15 @@ export class ConciergeService {
     const when = next.scheduledTime
       ? ` for ${formatInZone(next.scheduledTime, tz)}`
       : '';
+    // A draft with no image and no photo ask reads, to the owner, like the
+    // product is half-working — "why is there no picture?". So when the post
+    // has no media, invite their photo right here. They can text one back
+    // (it lands on THIS post) or approve as text-only. Posts that already have
+    // a carousel or photo skip the ask.
+    const needsPhoto = next.mediaRefs.length === 0;
+    const closer = needsPhoto
+      ? '📸 Text me a photo and I’ll put it on this post — or reply “yes” to post as text-only. Or tell me what to change.'
+      : 'Reply “yes” to schedule it, or tell me what to change.';
     // The owner is approving exactly what will publish, so show the WHOLE
     // caption — a truncated preview asks them to sign off on words they can't
     // see. Captions are already platform-limited upstream, so this stays a
@@ -606,7 +615,7 @@ export class ConciergeService {
     const body =
       (lead ? `${lead}\n\n` : '') +
       `Draft${when}:\n\n“${(next.caption ?? '').trim()}”\n\n` +
-      'Reply “yes” to schedule it, or tell me what to change.';
+      closer;
     await this.notify(customerId, body, opts);
     return true;
   }
@@ -877,7 +886,9 @@ export class ConciergeService {
     answer: string,
     profile: Awaited<ReturnType<PrismaService['brandProfile']['findUnique']>>,
     businessName?: string | null,
+    planTier = 'starter',
   ): Promise<void> {
+    const postsCap = postsPerWeek(planTier);
     // First contact with just a hello → welcome + question one. But a first
     // message that actually describes the business IS the first answer —
     // throwing it away and greeting them anyway reads as not listening.
@@ -902,6 +913,7 @@ export class ConciergeService {
         answer,
         profile,
         businessName,
+        postsCap,
       );
       // Belt and suspenders against re-emission: a "new" value identical to
       // what we already have is neither stored again nor re-acknowledged.
@@ -935,7 +947,7 @@ export class ConciergeService {
     });
     const next = this.onboarding.nextField(fresh);
     if (next) {
-      const q = this.onboarding.question(next);
+      const q = this.onboarding.question(next, next === 'posting_frequency' ? postsCap : undefined);
       return this.reply(phone, conversationId, ack ? `${ack} ${q}` : q);
     }
 

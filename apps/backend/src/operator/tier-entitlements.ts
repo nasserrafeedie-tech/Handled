@@ -74,6 +74,24 @@ export function platformLimit(planTier: string): number {
 }
 
 /**
+ * Posts per week each tier includes — the 3 → 5 → 7 ladder the pricing page
+ * sells (Starter 3, Growth 5, Pro daily). This is the cadence a plan is *paid*
+ * for, so it is both the cap we plan to and the number onboarding should offer.
+ * Without it the interview cheerfully accepted "4 a week" from a Starter whose
+ * plan is 3, and the planner drafted all four — delivering more than was sold.
+ */
+const POSTS_PER_WEEK: Record<Tier, number> = {
+  starter: 3,
+  growth: 5,
+  pro: 7,
+};
+
+/** How many posts a week this tier includes (and is capped at). */
+export function postsPerWeek(planTier: string): number {
+  return POSTS_PER_WEEK[norm(planTier)];
+}
+
+/**
  * Whether a customer may connect `platform`, given what they already have.
  *
  * Reconnecting a platform already on the list never counts against the limit —

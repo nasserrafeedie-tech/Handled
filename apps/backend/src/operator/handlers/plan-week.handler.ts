@@ -13,6 +13,7 @@ import { TaskHandler, ok, fail } from './handler.interface';
 import { archetypePlanningBlock } from '../../playbook/archetype-context';
 import { ArchetypePerformanceService } from '../../playbook/archetype-performance.service';
 import { isCarouselArchetype } from '../graphics/carousel-content';
+import { postsPerWeek } from '../tier-entitlements';
 
 /** The most photo asks an owner should get in one week. */
 export const MAX_ASSET_ASKS = 2;
@@ -119,7 +120,7 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     // local-discovery moves actually work in its trade (engine task 15).
     const customer = await this.prisma.customer.findUnique({
       where: { id: task.customer_id },
-      select: { archetypeSlug: true },
+      select: { archetypeSlug: true, planTier: true },
     });
     const archetype = customer?.archetypeSlug
       ? await this.prisma.playbookArchetype.findUnique({
@@ -145,8 +146,12 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     });
     const connectedPlatforms = [...new Set(connectedRows.map((r) => r.platform))];
 
-    const frequency =
+    // Cap the cadence at what the plan sells (Starter 3 / Growth 5 / Pro 7), so
+    // a profile that somehow holds a higher number never drafts more than the
+    // tier is paid for.
+    const requested =
       task.payload.posting_frequency ?? profile.postingFrequency ?? 3;
+    const frequency = Math.min(requested, postsPerWeek(customer?.planTier ?? 'starter'));
     // Flow 4: what has actually worked for this kind of business, pooled
     // across every customer on the same archetype. Null until there is enough
     // evidence, which is the honest answer for a new archetype.
