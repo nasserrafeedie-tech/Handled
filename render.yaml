@@ -83,3 +83,61 @@ services:
         sync: false
       - key: TWILIO_MESSAGING_SERVICE_SID
         sync: false
+
+  # ── Heavy-video worker ────────────────────────────────────────────────────
+  # The SAME build, run as a background worker (no HTTP). It consumes the reel
+  # queue and does the ffmpeg render off the web instance, so a 4K/HDR reel can
+  # never OOM the customer-facing service. Standard plan = 2GB RAM, which video
+  # actually needs. It does NOT run migrations (the web service owns those).
+  #
+  # ONE-TIME SETUP: this service needs the same secrets as the web service.
+  # Easiest path in Render → aissm-worker → Environment → copy the variables
+  # from aissm-backend (including the R2_* vars set directly in the dashboard).
+  - type: worker
+    name: aissm-worker
+    runtime: node
+    plan: standard
+    branch: main
+    buildCommand: >-
+      npm install --include=dev &&
+      npm run build:contracts &&
+      npm --workspace @smm/backend run prisma:generate &&
+      npm run build:backend
+    startCommand: node apps/backend/dist/main.js
+    autoDeploy: true
+    envVars:
+      - key: SERVICE_ROLE
+        value: worker
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Cron belongs to the web service; never run it on the worker.
+      - key: ENABLE_CRON
+        value: "0"
+      - key: LLM_FAKE
+        value: "0"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: PUBLIC_SITE_URL
+        sync: false
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: POST_FOR_ME_API_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: TWILIO_MESSAGING_SERVICE_SID
+        sync: false

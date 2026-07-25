@@ -4,8 +4,20 @@ import { Logger } from '@nestjs/common';
 import { json, urlencoded, static as serveStatic } from 'express';
 import { join } from 'node:path';
 import { AppModule } from './app.module';
+import { isWorkerRole } from './common/service-role';
 
 async function bootstrap() {
+  // The worker service runs the SAME build with no HTTP server — it exists only
+  // to consume the heavy-video queue (SERVICE_ROLE=worker). createApplicationContext
+  // wires up every module (so the ReelWorker's onModuleInit starts its consumer)
+  // without opening a port. The process stays alive on the Redis/BullMQ handles.
+  if (isWorkerRole()) {
+    const ctx = await NestFactory.createApplicationContext(AppModule);
+    ctx.enableShutdownHooks();
+    new Logger('bootstrap').log('SMM worker started (SERVICE_ROLE=worker)');
+    return;
+  }
+
   // Allowlisted CORS, not `cors: true`. The blanket setting reflected ANY
   // origin and allowed credentials, so a malicious page in the operator's
   // browser could drive authenticated /admin/* calls. Browsers are only allowed

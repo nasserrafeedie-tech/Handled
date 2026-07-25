@@ -3,6 +3,8 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { RedisProvider, REDIS_CONNECTION } from './redis.provider';
 import { PublishQueueService } from './publish-queue.service';
 import { PublishWorker } from './publish.worker';
+import { ReelQueueService } from './reel-queue.service';
+import { ReelWorker } from './reel.worker';
 import { CronService } from './cron.service';
 import { ReconcileService } from './reconcile.service';
 import { DevCronController } from './dev-cron.controller';
@@ -16,7 +18,15 @@ import { ConnectModule } from '../connect/connect.module';
   // the Concierge never imports the scheduler.
   imports: [ScheduleModule.forRoot(), ConciergeModule, PlaybookModule, ConnectModule],
   controllers: [DevCronController],
-  providers: [RedisProvider, PublishQueueService, PublishWorker, CronService, ReconcileService],
-  exports: [PublishQueueService, REDIS_CONNECTION],
+  providers: [
+    RedisProvider,
+    PublishQueueService,
+    PublishWorker,
+    ReelQueueService,
+    ReelWorker,
+    CronService,
+    ReconcileService,
+  ],
+  exports: [PublishQueueService, ReelQueueService, REDIS_CONNECTION],
 })
 export class SchedulerModule {}

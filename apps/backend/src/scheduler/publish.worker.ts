@@ -13,6 +13,7 @@ import { REDIS_CONNECTION } from './redis.provider';
 import { PUBLISH_QUEUE, type PublishJobData } from './queue.constants';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
+import { isWorkerRole } from '../common/service-role';
 
 /** What PUBLISH_DUE hands back for the owner's thread. */
 interface PublishNotices {
@@ -39,6 +40,9 @@ export class PublishWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
+    // Publishing stays on the web process; the dedicated worker only does
+    // heavy video, so it shouldn't also consume the publish queue.
+    if (isWorkerRole()) return;
     this.worker = new Worker<PublishJobData>(
       PUBLISH_QUEUE,
       async (job) => {

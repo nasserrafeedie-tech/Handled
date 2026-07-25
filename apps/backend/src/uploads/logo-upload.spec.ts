@@ -31,9 +31,9 @@ function makeController(existingColors: string[]) {
   const concierge = { notify: async (_id: string, m: string) => notes.push(m) };
   const ctrl = new UploadsController(
     prisma as any,
-    {} as any,
     concierge as any,
     storage as any,
+    { enqueue: async () => {} } as any,
   );
   return { ctrl, updates, notes };
 }

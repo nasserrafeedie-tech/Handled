@@ -12,12 +12,11 @@ import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Task } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
-import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import { detectMedia } from '../common/media-type';
 import { StorageService } from '../common/storage.service';
+import { ReelQueueService } from '../scheduler/reel-queue.service';
 import { extractBrandColors, MIN_LOGO_SIDE } from '../operator/graphics/logo-colors';
 import { tierHas } from '../operator/tier-entitlements';
 
@@ -44,9 +43,9 @@ export class UploadsController {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly bus: TaskBus,
     private readonly concierge: ConciergeService,
     private readonly storage: StorageService,
+    private readonly reelQueue: ReelQueueService,
   ) {}
 
   @Post()
@@ -193,25 +192,22 @@ export class UploadsController {
 
   private async assembleAndNotify(customerId: string): Promise<void> {
     try {
-      const task: Task = {
-        task_id: randomUUID(),
-        customer_id: customerId,
-        type: 'ASSEMBLE_REEL',
-        payload: { platform: 'instagram' },
-        requires_approval: false,
-        created_by: 'concierge',
-        created_at: new Date().toISOString(),
-      } as Task;
-      const result = await this.bus.emit(task);
-      await this.concierge.notify(customerId, result.summary_for_owner, {
-        promptedByOwner: true,
-      });
+      // Hand the heavy render to the worker queue instead of doing ffmpeg here
+      // on the web instance — a 4K/HDR reel needs far more memory than serving a
+      // text, and running it in-process is what took the whole service down. The
+      // worker texts the finished reel; here we just acknowledge and get out.
+      await this.reelQueue.enqueue({ customerId, platform: 'instagram' });
+      await this.concierge.notify(
+        customerId,
+        "Got your clips 🎬 I'm cutting your reel now — I'll send it over in a few minutes.",
+        { promptedByOwner: true },
+      );
     } catch (err) {
-      this.log.error(`background reel failed for ${customerId}: ${String(err)}`);
+      this.log.error(`could not queue reel for ${customerId}: ${String(err)}`);
       await this.concierge
         .notify(
           customerId,
-          'I hit a snag cutting your reel — give me a bit and I\'ll try again.',
+          'I hit a snag lining up your reel — give me a bit and I\'ll try again.',
           { promptedByOwner: true },
         )
         .catch(() => undefined);
