@@ -24,8 +24,11 @@ services:
       npm run build:contracts &&
       npm --workspace @smm/backend run prisma:generate &&
       npm run build:backend
-    # Apply DB migrations on each deploy, then start the compiled server.
+    # Clear any stuck FAILED migration record (Prisma P3009 self-heal), then
+    # apply DB migrations, then start the compiled server. The heal is scoped to
+    # one migration name and failed rows only, and never fails the boot.
     startCommand: >-
+      (npm --workspace @smm/backend exec -- prisma db execute --url "$DATABASE_URL" --file prisma/heal.sql || true) &&
       npm --workspace @smm/backend exec -- prisma migrate deploy &&
       node apps/backend/dist/main.js
     healthCheckPath: /health
