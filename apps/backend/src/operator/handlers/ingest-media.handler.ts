@@ -56,9 +56,25 @@ export class IngestMediaHandler implements TaskHandler<'INGEST_MEDIA'> {
     const detected = detectMedia(bytes);
     const contentType = detected?.contentType ?? content_type;
     const kind = detected?.kind ?? (content_type.startsWith('video') ? 'video' : 'image');
-    const r2Key = `owner/${task.customer_id}/${task.task_id}`;
+    // Append the true extension so the local static server serves the right
+    // Content-Type (it infers from the extension; a key with none serves
+    // application/octet-stream).
+    const ext = detected?.ext ? `.${detected.ext}` : '';
+    const r2Key = `owner/${task.customer_id}/${task.task_id}${ext}`;
 
-    await this.storage.put(r2Key, bytes, contentType);
+    try {
+      await this.storage.put(r2Key, bytes, contentType);
+    } catch (err) {
+      // Storage (R2) rejected it. Don't record a mediaRef that resolves to
+      // nothing — tell the owner honestly, same as a failed fetch.
+      this.log.warn(`INGEST_MEDIA store failed for ${task.customer_id}: ${String(err)}`);
+      return ok(
+        task.task_id,
+        "That photo didn't save on my end — mind sending it once more?",
+        'done',
+        { media_asset_id: null },
+      );
+    }
 
     const asset = await this.prisma.mediaAsset.create({
       data: {

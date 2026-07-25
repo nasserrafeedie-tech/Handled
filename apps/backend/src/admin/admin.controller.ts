@@ -15,6 +15,7 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { BusinessMetricsService } from './business-metrics.service';
 import { PostForMeService } from '../operator/publishing/post-for-me.service';
 import { normalizePhone } from '../common/phone';
+import { isValidTimeZone } from '../common/time';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
 import { StorageService } from '../common/storage.service';
 import { ADMIN_PAGE_HTML } from './admin-page';
@@ -37,7 +38,7 @@ const UpsertCustomerBody = z.object({
   // Matches billing's PlanId. 'premium' appears in the carousel gate but was
   // never a sellable plan, so it is deliberately not offered here.
   planTier: z.enum(['starter', 'growth', 'pro']).optional(),
-  timezone: z.string().min(1).optional(),
+  timezone: z.string().min(1).refine(isValidTimeZone, 'must be a valid IANA timezone like America/Los_Angeles').optional(),
   status: z.enum(['active', 'paused', 'cancelled']).optional(),
   // Consent to generated photography. Off by default (the owner's decision); set
   // here to turn a customer's carousel covers into generated hero images.
@@ -61,7 +62,7 @@ const CustomerConfigBody = z.object({
   trustLevel: z.enum(['approve_all', 'auto_low_risk', 'full_auto']).optional(),
   aiImagesOptIn: z.boolean().optional(),
   planTier: z.enum(['starter', 'growth', 'pro']).optional(),
-  timezone: z.string().min(1).optional(),
+  timezone: z.string().min(1).refine(isValidTimeZone, 'must be a valid IANA timezone like America/Los_Angeles').optional(),
   status: z.enum(['active', 'paused', 'cancelled']).optional(),
 });
 

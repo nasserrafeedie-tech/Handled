@@ -10,6 +10,20 @@
  * own tz database for the specific date in question.
  */
 
+/**
+ * Is this a real IANA timezone the platform can resolve? Used to reject a junk
+ * value ("PST", "California", "") at the write boundary, so the scheduling and
+ * quiet-hours helpers never silently fall back to UTC and text someone at 3am.
+ */
+export function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Milliseconds to add to a UTC-parsed wall time to get the true instant. */
 function zoneOffsetMs(instant: Date, timeZone: string): number {
   try {
@@ -27,7 +41,13 @@ function zoneOffsetMs(instant: Date, timeZone: string): number {
  */
 export function zonedToUtc(date: string, time: string, timeZone: string): Date {
   const naive = new Date(`${date}T${time}:00Z`);
-  if (Number.isNaN(naive.getTime())) return new Date();
+  if (Number.isNaN(naive.getTime())) {
+    // Returning "now" here silently turned a malformed slot into an immediate
+    // publish — a post meant for a future wall-clock slot went out on the next
+    // sweep. A bad scheduling instant is data corruption, so refuse it loudly
+    // and let the caller (which already tolerates a failed slot) skip it.
+    throw new Error(`zonedToUtc: invalid date/time "${date}T${time}"`);
+  }
   return new Date(naive.getTime() + zoneOffsetMs(naive, timeZone));
 }
 

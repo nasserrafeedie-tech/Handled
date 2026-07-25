@@ -53,9 +53,13 @@ export class StorageService {
         }),
       );
     } catch (err) {
-      // Local copy exists; publish-time URL resolution will warn if R2 is the
-      // only viable public base. Loud log, no crash.
+      // When R2 is configured it IS the backend that public URLs are served
+      // from — the local copy on an ephemeral dyno is never seen. So a failed
+      // upload is a real failure, not a swallow-and-carry-on: throwing here
+      // fails the task loudly instead of leaving a mediaRef that resolves to a
+      // 404 the owner (and their followers) would see on a published post.
       this.log.error(`R2 upload failed for ${key}: ${String(err)}`);
+      throw new Error(`R2 upload failed for ${key}: ${String(err)}`);
     }
   }
 
@@ -92,10 +96,17 @@ export class StorageService {
     }
   }
 
-  /** Public URL for a stored key (R2 public base preferred). */
+  /**
+   * Public URL for a stored key (R2 public base preferred).
+   *
+   * Only serve from the R2 base when R2 is actually CONFIGURED. Otherwise a
+   * deploy with R2_PUBLIC_BASE_URL set but an upload credential missing would
+   * hand out R2 URLs for bytes that were only ever written locally and never
+   * uploaded — a 404 on every image. If R2 isn't wired up, serve the local copy.
+   */
   publicUrl(key: string): string {
     const r2base = process.env.R2_PUBLIC_BASE_URL?.replace(/\/+$/, '');
-    if (r2base) return `${r2base}/${key}`;
+    if (r2base && this.r2()) return `${r2base}/${key}`;
     const base = (process.env.PUBLIC_BASE_URL ?? 'http://localhost:3001').replace(/\/+$/, '');
     return `${base}/media/${key}`;
   }

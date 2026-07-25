@@ -75,6 +75,21 @@ describe('detectMedia', () => {
     assert.equal(detectMedia(ftyp('xyzq'))?.kind, 'video');
   });
 
+  it('treats an uncatalogued brand that advertises a HEIC compatible-brand as an image', () => {
+    // An iPhone HEIC whose MAJOR brand we haven't catalogued must not be forced
+    // to video/mp4 and misrouted to the video publish path — scan the compatible
+    // brands and recognise the image.
+    const heicCompat = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x20]),
+      Buffer.from('ftyp', 'latin1'),
+      Buffer.from('zzzz', 'latin1'), // unknown major brand
+      Buffer.from([0, 0, 0, 0]), // minor version
+      Buffer.from('heic', 'latin1'), // compatible brand
+      Buffer.alloc(20),
+    ]);
+    assert.equal(detectMedia(heicCompat)?.kind, 'image');
+  });
+
   it('rejects things that are not media at all', () => {
     assert.equal(detectMedia(Buffer.from('<html><body>hi</body></html>')), null);
     assert.equal(detectMedia(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg">')), null);

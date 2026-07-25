@@ -91,8 +91,15 @@ export function detectMedia(buf: Buffer): DetectedMedia | null {
     const brand = buf.subarray(8, 12).toString('latin1');
     const match = FTYP_BRANDS[brand];
     if (match) return match;
-    // An unknown brand is still an ISO media file. Treat it as video/mp4 rather
-    // than rejecting an owner's clip over a brand we haven't catalogued.
+    // The major brand is uncatalogued. ISO-BMFF is shared by HEIC images and
+    // MP4/MOV video, so guessing "video" outright can misroute an iPhone photo
+    // (an uncatalogued HEIC brand) to the video publish path, where it breaks
+    // AFTER the owner approved it. Scan the compatible-brands region: if it
+    // advertises an image brand, it's an image; otherwise fall back to video.
+    const region = buf.subarray(8, Math.min(buf.length, 40)).toString('latin1');
+    if (/heic|heix|heim|heis|hevc|hevm|hevs|mif1|mif2|msf1|heif/.test(region)) {
+      return { kind: 'image', contentType: 'image/heic', ext: 'heic' };
+    }
     return { kind: 'video', contentType: 'video/mp4', ext: 'mp4' };
   }
 

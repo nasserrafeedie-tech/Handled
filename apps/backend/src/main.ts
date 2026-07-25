@@ -6,7 +6,22 @@ import { join } from 'node:path';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: true });
+  // Allowlisted CORS, not `cors: true`. The blanket setting reflected ANY
+  // origin and allowed credentials, so a malicious page in the operator's
+  // browser could drive authenticated /admin/* calls. Browsers are only allowed
+  // from our own front-ends; server-to-server webhooks (Twilio, Stripe) don't
+  // send an Origin and are unaffected. Override with CORS_ORIGINS (comma-sep).
+  const corsOrigins = (
+    process.env.CORS_ORIGINS ??
+    process.env.PUBLIC_SITE_URL ??
+    'https://texthandled.com'
+  )
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const app = await NestFactory.create(AppModule, {
+    cors: { origin: corsOrigins, credentials: true },
+  });
 
   // Twilio posts application/x-www-form-urlencoded webhooks.
   app.use(urlencoded({ extended: false }));
