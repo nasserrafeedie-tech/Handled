@@ -1,8 +1,8 @@
--- One-off recovery: a failed deploy left the 20260724 migration marked FAILED
--- in _prisma_migrations, which makes `prisma migrate deploy` refuse to run
--- (P3009) and the service won't boot. Clear ONLY the failed record (finished_at
--- IS NULL) so deploy can proceed. Scoped to this one migration name and to
--- failed rows only, so it never touches a successfully-applied migration.
+-- Boot-time self-heal for Prisma P3009/P3018: a migration that started but
+-- never finished (and wasn't rolled back) is a FAILED migration, and it blocks
+-- every subsequent `migrate deploy`. Clear those stuck records so a corrected
+-- migration can re-apply. Safe: migrate deploy runs sequentially AFTER this, so
+-- nothing is legitimately in-progress at this moment.
 DELETE FROM "_prisma_migrations"
-WHERE migration_name = '20260724_publishing_status_and_published_at'
-  AND finished_at IS NULL;
+WHERE finished_at IS NULL
+  AND rolled_back_at IS NULL;
