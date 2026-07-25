@@ -4,7 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TokenCryptoService } from '../operator/security/token-crypto.service';
 import { PostForMeService } from '../operator/publishing/post-for-me.service';
 import { GoogleBusinessService } from '../operator/publishing/google-business.service';
-import { canConnectPlatform, platformLimit } from '../operator/tier-entitlements';
+import {
+  canConnectPlatform,
+  isGoogleBusiness,
+  socialLimit,
+  socialsOffered,
+} from '../operator/tier-entitlements';
 import { platformName } from '../operator/publishing/platform-names';
 
 export interface StartAuthRequest {
@@ -71,10 +76,18 @@ export class ConnectService {
     const tier = customer?.planTier ?? 'starter';
     const already = connected.map((c) => c.platform);
     if (!canConnectPlatform(tier, already, platform)) {
+      // Two reasons it can be refused: the platform isn't offered on this tier
+      // at all (TikTok/Threads below Pro), or they've used up their social slots
+      // (GBP is always free and never the blocker).
+      const notOffered =
+        !isGoogleBusiness(platform) && !socialsOffered(tier).includes(platform);
       throw new Error(
-        `Your ${tier} plan covers ${platformLimit(tier)} connected platforms, and ` +
-          `you're already at that. Reply UPGRADE to add ${platformName(platform)}, ` +
-          `or disconnect one first.`,
+        notOffered
+          ? `${platformName(platform)} is part of the Pro plan. Reply UPGRADE to add it.`
+          : `Your ${tier} plan covers ${socialLimit(tier)} social platform` +
+            `${socialLimit(tier) > 1 ? 's' : ''} plus your Google Business Profile, ` +
+            `and you're already there. Reply UPGRADE to add ${platformName(platform)}, ` +
+            `or disconnect one first.`,
       );
     }
   }
@@ -141,12 +154,13 @@ export class ConnectService {
 
     const remote = await this.pfm.listAccounts(customerId);
 
-    // Enforce the tier's platform cap HERE, where rows are actually created.
-    // startAuth checks the limit too, but against DB state that lags the real
+    // Enforce the tier's platform allowance HERE, where rows are actually
+    // created. startAuth checks it too, but against DB state that lags the real
     // connection — several auths started before any returns all see 0 connected
-    // and all pass. This is the writer, so it is the real gate: keep every
-    // platform already connected (reconnects/re-auths never count against the
-    // cap), then admit new platforms only until the cap is reached.
+    // and all pass. This is the writer, so it is the real gate. GBP is always
+    // admitted (included in every tier, never a slot). For socials: keep the
+    // ones already connected (reconnects never count), admit new ones only if
+    // the tier offers that platform AND it is under the social cap.
     const tier =
       (
         await this.prisma.customer.findUnique({
@@ -154,23 +168,33 @@ export class ConnectService {
           select: { planTier: true },
         })
       )?.planTier ?? 'starter';
-    const limit = platformLimit(tier);
-    const kept = new Set(
+    const limit = socialLimit(tier);
+    const offered = new Set(socialsOffered(tier));
+    const keptSocials = new Set(
       (
         await this.prisma.connectedAccount.findMany({
           where: { customerId, revoked: false },
           select: { platform: true },
         })
-      ).map((r) => r.platform),
+      )
+        .map((r) => r.platform)
+        .filter((p) => !isGoogleBusiness(p)),
     );
     const admitted = remote.filter((acct) => {
-      if (kept.has(acct.platform)) return true; // already connected
-      if (kept.size < limit) {
-        kept.add(acct.platform);
+      if (isGoogleBusiness(acct.platform)) return true; // always included
+      if (keptSocials.has(acct.platform)) return true; // already connected
+      if (!offered.has(acct.platform)) {
+        this.log.warn(
+          `reconcile: ${acct.platform} is not offered on ${tier} for ${customerId} — not importing`,
+        );
+        return false;
+      }
+      if (keptSocials.size < limit) {
+        keptSocials.add(acct.platform);
         return true;
       }
       this.log.warn(
-        `reconcile: ${acct.platform} exceeds the ${tier} limit of ${limit} for ${customerId} — not importing`,
+        `reconcile: ${acct.platform} exceeds the ${tier} social cap of ${limit} for ${customerId} — not importing`,
       );
       return false;
     });

@@ -38,7 +38,7 @@ const PLANS: {
       'Swipeable branded carousels',
       'Custom generated images',
       '5 posts / week',
-      'Up to 4 platforms',
+      'Instagram, Facebook + your Google Business Profile',
       'Routine posts go out hands-off',
       'Weekly performance tuning',
     ],
@@ -53,7 +53,7 @@ const PLANS: {
     features: [
       'Reels cut from your clips',
       'Daily posts (7 / week)',
-      'All platforms',
+      'Every channel — adds TikTok & Threads',
       'Full autopilot — runs itself',
       'Everything in Growth',
     ],

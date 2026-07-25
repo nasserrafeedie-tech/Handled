@@ -48,29 +48,49 @@ export const FEATURE_LABEL: Record<Feature, string> = {
 const norm = (t: string): Tier => (t in RANK ? (t as Tier) : 'starter');
 
 /**
- * How many platforms each tier may connect at once.
+ * Platforms, the local-business way. Google Business Profile is the base — it
+ * is what makes a shop show up on "coffee near me", the highest-ROI channel and
+ * the one owners forget — so it is INCLUDED in every tier and never counts
+ * against the allowance. The allowance is the number of SOCIAL feeds on top:
  *
- * There are five platforms (Instagram, Facebook, TikTok, Threads, Google
- * Business Profile). Starter gets the essential pair a local shop needs to be
- * found — Instagram + Google — while Growth reaches almost everywhere and Pro
- * reaches all of them.
+ *   Starter  GBP + 1 social  (your main feed — Instagram)
+ *   Growth   GBP + 2 socials (both feeds — Instagram + Facebook)
+ *   Pro      GBP + all       (every channel, incl. TikTok + Threads)
  *
- * This was previously only advertised on the pricing page and NOT enforced —
- * any customer could connect all five. Adding Google Business Profile made that
- * gap matter (it is the channel worth gating), so the allowance is now real,
- * checked at connect time. Platform count is a secondary upgrade lever, not the
- * hero of any tier jump (carousels sell Growth, reels sell Pro), which is why
- * Starter can afford a generous two.
+ * Instagram and Facebook are the two feeds every local business has; TikTok and
+ * Threads are the Pro unlock (and pair with Pro-only reels). Platform reach is a
+ * secondary upgrade lever — carousels sell Growth, reels sell Pro — but "every
+ * channel" is a real reason to reach Pro, and "all" stays true as we add more.
  */
-const PLATFORM_LIMIT: Record<Tier, number> = {
-  starter: 2,
-  growth: 4,
-  pro: 5,
+export const SOCIAL_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'threads'] as const;
+
+/** GBP: the always-included base, never a counted slot. */
+export function isGoogleBusiness(platform: string): boolean {
+  return platform === 'google_business';
+}
+
+/** How many SOCIAL platforms each tier includes, on top of GBP. Pro = all. */
+const SOCIAL_LIMIT: Record<Tier, number> = {
+  starter: 1,
+  growth: 2,
+  pro: SOCIAL_PLATFORMS.length,
 };
 
-/** How many platforms this tier may connect. */
-export function platformLimit(planTier: string): number {
-  return PLATFORM_LIMIT[norm(planTier)];
+/** Which socials each tier may connect at all — TikTok/Threads are Pro-only. */
+const SOCIALS_OFFERED: Record<Tier, readonly string[]> = {
+  starter: ['instagram', 'facebook'],
+  growth: ['instagram', 'facebook'],
+  pro: [...SOCIAL_PLATFORMS],
+};
+
+/** How many social platforms this tier includes (GBP is always on top). */
+export function socialLimit(planTier: string): number {
+  return SOCIAL_LIMIT[norm(planTier)];
+}
+
+/** The social platforms this tier is allowed to connect at all. */
+export function socialsOffered(planTier: string): readonly string[] {
+  return SOCIALS_OFFERED[norm(planTier)];
 }
 
 /**
@@ -94,17 +114,24 @@ export function postsPerWeek(planTier: string): number {
 /**
  * Whether a customer may connect `platform`, given what they already have.
  *
- * Reconnecting a platform already on the list never counts against the limit —
- * re-authing an expired Instagram token must not be refused because the account
- * is "full". Only a genuinely new platform consumes a slot.
+ * - Google Business Profile is included in every tier: always connectable, and
+ *   it never consumes a social slot.
+ * - Reconnecting a platform already on the list never counts — re-authing an
+ *   expired Instagram token must not be refused for being "full".
+ * - TikTok/Threads are a Pro unlock; a lower tier can't connect them at all.
+ * - Otherwise a new social is allowed only while under the tier's social cap.
  */
 export function canConnectPlatform(
   planTier: string,
   alreadyConnected: readonly string[],
   platform: string,
 ): boolean {
+  if (isGoogleBusiness(platform)) return true;
   if (alreadyConnected.includes(platform)) return true;
-  return alreadyConnected.length < platformLimit(planTier);
+  const tier = norm(planTier);
+  if (!SOCIALS_OFFERED[tier].includes(platform)) return false;
+  const socialsUsed = alreadyConnected.filter((p) => !isGoogleBusiness(p)).length;
+  return socialsUsed < SOCIAL_LIMIT[tier];
 }
 
 /** Does this tier include this feature? */
@@ -158,13 +185,14 @@ export function upgradePitch(planTier: string): string {
     return (
       'Growth adds swipeable carousels — the branded, multi-slide posts that ' +
       'get saved and shared most — plus custom generated images, more posts a ' +
-      'week, up to three platforms, and hands-off posting for your routine content.'
+      'week, both your feeds (Instagram + Facebook), and hands-off posting for ' +
+      'your routine content.'
     );
   }
   // On Growth already → Pro, led by reels (its exclusive hero) then autopilot.
   return (
     'Pro adds reels cut from your clips — the video posts the feed pushes hardest — ' +
-    'plus daily posting across every platform and full autopilot, on top of ' +
-    'everything in Growth.'
+    'plus daily posting on every channel (including TikTok and Threads) and full ' +
+    'autopilot, on top of everything in Growth.'
   );
 }

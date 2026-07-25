@@ -16,7 +16,7 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import type { PlanId } from './billing.service';
 import { normalizePhone } from '../common/phone';
-import { platformLimit } from '../operator/tier-entitlements';
+import { socialLimit, isGoogleBusiness } from '../operator/tier-entitlements';
 
 /**
  * Plan order, for telling an upgrade from a downgrade. Only used to decide
@@ -199,19 +199,21 @@ export class StripeWebhookController {
     });
     this.log.log(`customer ${customer.id}: plan ${from} → ${plan}`);
 
-    // On a downgrade, enforce the new tier's platform cap. Feature gates
+    // On a downgrade, enforce the new tier's platform allowance. Feature gates
     // (carousels/images/reels) re-evaluate per post, but platform reach is only
     // ever checked at connect time, so without this a Pro→Starter customer keeps
     // publishing to all their platforms — paid reach they no longer pay for.
-    // Keep the oldest connections (the primary accounts), revoke the rest.
+    // GBP is included in every tier and is never revoked; only SOCIAL platforms
+    // over the new social cap are, keeping the oldest (primary) ones.
     if (RANK[plan] < RANK[from]) {
-      const limit = platformLimit(plan);
+      const limit = socialLimit(plan);
       const connected = await this.prisma.connectedAccount.findMany({
         where: { customerId: customer.id, revoked: false },
         orderBy: { connectedAt: 'asc' },
-        select: { id: true },
+        select: { id: true, platform: true },
       });
-      const toRevoke = connected.slice(limit);
+      const socials = connected.filter((c) => !isGoogleBusiness(c.platform));
+      const toRevoke = socials.slice(limit);
       if (toRevoke.length) {
         await this.prisma.connectedAccount.updateMany({
           where: { id: { in: toRevoke.map((r) => r.id) } },

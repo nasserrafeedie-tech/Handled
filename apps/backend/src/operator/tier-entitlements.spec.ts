@@ -4,7 +4,7 @@ import {
   tierHas,
   entitlementLine,
   upgradePitch,
-  platformLimit,
+  socialLimit,
   canConnectPlatform,
   postsPerWeek,
 } from './tier-entitlements';
@@ -37,36 +37,52 @@ describe('tier entitlements', () => {
     assert.equal(tierHas('pro', 'carousel'), true);
   });
 
-  it('caps connected platforms at 2 / 4 / all by tier', () => {
-    assert.equal(platformLimit('starter'), 2);
-    assert.equal(platformLimit('growth'), 4);
-    assert.equal(platformLimit('pro'), 5);
+  it('caps SOCIAL platforms at 1 / 2 / all by tier (GBP is always on top)', () => {
+    assert.equal(socialLimit('starter'), 1);
+    assert.equal(socialLimit('growth'), 2);
+    assert.equal(socialLimit('pro'), 4); // all four socials
     // An unknown tier fails closed to the smallest allowance.
-    assert.equal(platformLimit('mystery'), 2);
+    assert.equal(socialLimit('mystery'), 1);
   });
 
   describe('canConnectPlatform', () => {
-    it('lets a Starter customer connect their two, then blocks a third', () => {
-      assert.equal(canConnectPlatform('starter', [], 'instagram'), true);
+    it('includes Google Business Profile in every tier, never as a slot', () => {
+      assert.equal(canConnectPlatform('starter', [], 'google_business'), true);
+      // Even at the social cap, GBP still connects and does not count.
       assert.equal(canConnectPlatform('starter', ['instagram'], 'google_business'), true);
+    });
+
+    it('gives Starter one social — Instagram — then blocks a second', () => {
+      assert.equal(canConnectPlatform('starter', ['google_business'], 'instagram'), true);
+      // GBP does not consume the social slot, so IG still fits.
       assert.equal(
-        canConnectPlatform('starter', ['instagram', 'google_business'], 'facebook'),
+        canConnectPlatform('starter', ['google_business', 'instagram'], 'facebook'),
         false,
+      );
+    });
+
+    it('gives Growth both feeds but not a third social', () => {
+      assert.equal(canConnectPlatform('growth', ['instagram'], 'facebook'), true);
+      // Growth is not offered TikTok at all.
+      assert.equal(canConnectPlatform('growth', ['instagram', 'facebook'], 'tiktok'), false);
+    });
+
+    it('keeps TikTok/Threads as a Pro-only unlock', () => {
+      assert.equal(canConnectPlatform('starter', ['google_business'], 'tiktok'), false);
+      assert.equal(canConnectPlatform('growth', ['instagram'], 'threads'), false);
+      assert.equal(canConnectPlatform('pro', ['instagram', 'facebook'], 'tiktok'), true);
+      assert.equal(
+        canConnectPlatform('pro', ['instagram', 'facebook', 'tiktok'], 'threads'),
+        true,
       );
     });
 
     it('always allows reconnecting a platform already on the list', () => {
       // Re-authing an expired token must never be refused for being "full".
       assert.equal(
-        canConnectPlatform('starter', ['instagram', 'google_business'], 'instagram'),
+        canConnectPlatform('starter', ['google_business', 'instagram'], 'instagram'),
         true,
       );
-    });
-
-    it('gives Growth four and Pro all five', () => {
-      const four = ['instagram', 'facebook', 'tiktok', 'threads'];
-      assert.equal(canConnectPlatform('growth', four, 'google_business'), false);
-      assert.equal(canConnectPlatform('pro', four, 'google_business'), true);
     });
   });
 

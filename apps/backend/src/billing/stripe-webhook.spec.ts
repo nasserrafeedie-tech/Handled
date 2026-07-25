@@ -228,15 +228,22 @@ describe('Stripe subscription updated → plan tier', () => {
     assert.equal(calls.notified.length, 0, 'do not congratulate someone on losing features');
   });
 
-  it('revokes platforms over the new cap on a downgrade', async () => {
+  it('revokes social platforms over the new cap on a downgrade, keeping GBP', async () => {
     const rows = starterCustomer();
     rows['+14244098341'].planTier = 'pro';
     const { ctrl, calls } = makeController(rows);
-    // Pro had 5 platforms; Starter allows 2, so 3 must be revoked.
-    calls.connected = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id }));
+    // Pro had GBP + 4 socials. Starter keeps GBP (always) + 1 social, so the
+    // other 3 socials are revoked.
+    calls.connected = [
+      { id: 'gbp', platform: 'google_business' },
+      { id: 'ig', platform: 'instagram' },
+      { id: 'fb', platform: 'facebook' },
+      { id: 'tk', platform: 'tiktok' },
+      { id: 'th', platform: 'threads' },
+    ];
     await updated(ctrl, 'price_starter');
     assert.equal(rows['+14244098341'].planTier, 'starter');
-    assert.equal(calls.revoked, 3, 'the 3 platforms over the Starter cap are revoked');
+    assert.equal(calls.revoked, 3, 'the 3 socials over the Starter cap are revoked; GBP kept');
   });
 
   it('leaves the tier alone rather than guessing at an unknown price', async () => {
