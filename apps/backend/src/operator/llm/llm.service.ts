@@ -5,6 +5,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 export type LlmTier = 'bulk' | 'voice';
 
+/**
+ * A retryable Anthropic failure — an overloaded response (429/5xx) or an empty
+ * content body. Distinct from a malformed-JSON body (which completeJson retries
+ * with a corrective nudge): here the call itself didn't land, so the fix is to
+ * simply try again, not to argue with the model about its output shape.
+ */
+class TransientLlmError extends Error {}
+
 export interface LlmJsonRequest {
   /** Which model tier (§2 routing): bulk = Haiku 4.5, voice = Sonnet 5. */
   tier: LlmTier;
@@ -84,15 +92,37 @@ export class LlmService {
       return this.fakeComplete(req);
     }
 
-    // Anthropic Messages API via plain fetch (no SDK dependency). The
-    // brand_profile goes in a system block with cache_control:{type:'ephemeral'}
-    // so it's cached across calls per customer (§2 "~10x cheaper effective
-    // input"). Flips on the moment ANTHROPIC_API_KEY is set.
+    // One retry on TRANSIENT failures — an overloaded response (429/5xx) or an
+    // empty content body both happen intermittently under API load. Without
+    // this, a momentary blip drops a reel's editorial call to the dumb in-order
+    // cut, or fails a caption outright. A malformed-but-present JSON body is a
+    // different case, handled by completeJson's corrective retry.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.callAnthropic(req, apiKey as string);
+      } catch (err) {
+        if (!(err instanceof TransientLlmError) || attempt >= 1) throw err;
+        this.log.warn(
+          `LLM ${req.tier} transient failure (${err.message}) — retrying once`,
+        );
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+  }
+
+  /**
+   * A single Anthropic Messages call via plain fetch (no SDK dependency). The
+   * brand_profile goes in a system block with cache_control:{type:'ephemeral'}
+   * so it's cached across calls per customer (§2 "~10x cheaper effective
+   * input"). Throws TransientLlmError on a retryable condition (overload, empty
+   * body) and a plain Error otherwise.
+   */
+  private async callAnthropic(req: LlmJsonRequest, apiKey: string): Promise<string> {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': apiKey as string,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -119,9 +149,11 @@ export class LlmService {
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
-      throw new Error(
-        `Anthropic API ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 300)}` : ''}`,
-      );
+      const msg = `Anthropic API ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 300)}` : ''}`;
+      // 429 (rate) and 5xx (overload/instability) are worth another shot; a 4xx
+      // like a bad request is not — it'll fail identically the second time.
+      if (res.status === 429 || res.status >= 500) throw new TransientLlmError(msg);
+      throw new Error(msg);
     }
 
     const data = (await res.json()) as {
@@ -143,7 +175,7 @@ export class LlmService {
       .join('')
       .trim();
     if (!text) {
-      throw new Error('Anthropic API returned no text content');
+      throw new TransientLlmError('Anthropic API returned no text content');
     }
     return text;
   }
