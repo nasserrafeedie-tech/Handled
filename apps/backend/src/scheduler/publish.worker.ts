@@ -57,10 +57,21 @@ export class PublishWorker implements OnModuleInit, OnModuleDestroy {
         // — §3 keeps the Operator out of the text thread. Delivering it here
         // is what turns a failed publish from a silent non-event into
         // something the owner can act on.
-        await this.deliverNotices(result);
+        //
+        // But only tell them ONCE. A retryable failure re-queues (attempts: 5),
+        // and delivering on every attempt texts the same "couldn't publish" up
+        // to five times over the backoff. So a retryable failure stays quiet
+        // until the final attempt; a settled (non-retryable) failure or a
+        // success notice is delivered immediately.
+        const willRetry = result.status === 'failed' && Boolean(result.error?.retryable);
+        const finalAttempt =
+          (job.attemptsMade ?? 0) + 1 >= (job.opts.attempts ?? 1);
+        if (!willRetry || finalAttempt) {
+          await this.deliverNotices(result);
+        }
 
-        if (result.status === 'failed' && result.error?.retryable) {
-          throw new Error(result.error.message); // let BullMQ retry
+        if (willRetry) {
+          throw new Error(result.error!.message); // let BullMQ retry
         }
       },
       { connection: this.connection, concurrency: 5 },

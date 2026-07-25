@@ -30,6 +30,10 @@ function fakePrisma(rows: Row[]) {
       },
       updateMany: async (args: any) => {
         updated.push(args);
+        // Two updateMany calls now: the stale write-off (keyed on scheduledTime)
+        // and the interrupted-mid-publish sweep (keyed on status:'publishing' /
+        // updatedAt). These fixtures have no 'publishing' rows.
+        if (args.where.status === 'publishing') return { count: 0 };
         const lt = args.where.scheduledTime.lt as Date;
         return { count: rows.filter((r) => r.scheduledTime < lt).length };
       },
@@ -118,9 +122,10 @@ describe('ReconcileService.sweep', () => {
       return [];
     };
     await new ReconcileService(prisma as any, fakeQueue() as any).sweep(NOW);
-    assert.deepEqual(captured.approvalState, { not: 'awaiting_owner' });
+    assert.deepEqual(captured.approvalState, { notIn: ['awaiting_owner', 'rejected'] });
     assert.equal(captured.moderationState, 'passed');
-    assert.equal(captured.status, 'scheduled');
+    // Now sweeps both 'scheduled' and stranded-autopilot 'approved' posts.
+    assert.deepEqual(captured.status, { in: ['scheduled', 'approved'] });
     assert.deepEqual(captured.customer, { status: 'active' });
     void svc;
   });
@@ -139,6 +144,28 @@ describe('ReconcileService.sweep', () => {
 
   it('reports nothing when there is nothing to do', async () => {
     const r = await build([]).svc.sweep(NOW);
-    assert.deepEqual(r, { requeued: 0, stale: 0 });
+    assert.deepEqual(r, { requeued: 0, stale: 0, interrupted: 0 });
+  });
+
+  it('flags a post stuck mid-publish as interrupted — and never re-queues it', async () => {
+    // A row left in 'publishing' (worker died after claiming it) must be
+    // surfaced, not re-published: it may already be live.
+    const updated: any[] = [];
+    const prisma = {
+      post: {
+        findMany: async () => [],
+        updateMany: async (args: any) => {
+          updated.push(args);
+          return { count: args.where.status === 'publishing' ? 1 : 0 };
+        },
+      },
+    };
+    const queue = fakeQueue();
+    const r = await new ReconcileService(prisma as any, queue as any).sweep(NOW);
+    assert.equal(r.interrupted, 1);
+    assert.equal(queue.scheduled.length, 0, 'an interrupted publish is never re-queued');
+    const interruptedCall = updated.find((u) => u.where.status === 'publishing');
+    assert.match(interruptedCall.data.failureReason, /interrupted|verify/i);
+    assert.equal(interruptedCall.data.status, 'failed');
   });
 });

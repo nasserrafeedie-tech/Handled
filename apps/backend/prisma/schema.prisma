@@ -50,6 +50,12 @@ enum PostStatus {
   pending_approval
   approved
   scheduled
+  // Claimed by a publisher and mid-flight. A post moves scheduled/approved →
+  // publishing atomically before the platform call, so concurrent publishers
+  // (per-post job, hourly sweep, reconciler) can't each post it. Terminal on
+  // its own: a post stuck here crashed mid-publish and is surfaced, never
+  // silently re-published.
+  publishing
   published
   failed
   cancelled
@@ -384,6 +390,10 @@ model Post {
   moderationState ModerationState @default(pending)
   riskLevel       RiskLevel       @default(low)
   externalPostId  String?
+  // When the post actually went live. Distinct from updatedAt, which any later
+  // write (a metadata touch, a failureReason) disturbs — so recap counts and
+  // "went out this week" must key off this, not updatedAt.
+  publishedAt     DateTime?
   failureReason   String?
   // How an approval was obtained when it did not arrive by text — "Dr.
   // Rafeedie, in person 22 Jul". Null for the normal SMS path, where the

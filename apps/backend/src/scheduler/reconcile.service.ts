@@ -34,6 +34,15 @@ export class ReconcileService {
   /** Grace period before a post counts as late, not just in flight. */
   private static readonly LATE_AFTER_MINUTES = 20;
 
+  /**
+   * A publish claims the row ('publishing') right before the platform call. If
+   * the worker dies between the platform call and the DB write, the row stays
+   * 'publishing'. We do NOT re-publish it — it may already be live, and a double
+   * post under the owner's name is the one thing we never risk — we surface it.
+   * A real publish takes seconds, so anything here this long has crashed.
+   */
+  private static readonly PUBLISHING_STUCK_MINUTES = 15;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly queue: PublishQueueService,
@@ -44,17 +53,26 @@ export class ReconcileService {
    * log it and an operator can see whether this is firing constantly — a
    * sweep that keeps finding work means something upstream is broken.
    */
-  async sweep(now = new Date()): Promise<{ requeued: number; stale: number }> {
+  async sweep(now = new Date()): Promise<{ requeued: number; stale: number; interrupted: number }> {
     const lateBefore = new Date(now.getTime() - ReconcileService.LATE_AFTER_MINUTES * 60_000);
     const horizon = new Date(now.getTime() - ReconcileService.LOOKBACK_HOURS * 3600_000);
+    const publishingStuckBefore = new Date(
+      now.getTime() - ReconcileService.PUBLISHING_STUCK_MINUTES * 60_000,
+    );
 
     const stranded = await this.prisma.post.findMany({
       where: {
-        status: 'scheduled',
+        // 'scheduled' is the normal stranded case; 'approved' catches an
+        // autopilot post whose one best-effort SCHEDULE_POST emit failed — it
+        // has a scheduledTime but nothing ever queued it, and no other sweep
+        // looks at 'approved', so it would otherwise never publish.
+        status: { in: ['scheduled', 'approved'] },
         scheduledTime: { lt: lateBefore, gte: horizon },
         // Only posts that were actually cleared to go. A post still waiting on
-        // the owner is not stranded — it is waiting, which is correct.
-        approvalState: { not: 'awaiting_owner' },
+        // the owner is not stranded — it is waiting, which is correct. 'rejected'
+        // is excluded here too (it is not 'not awaiting_owner'... it IS, so
+        // exclude explicitly).
+        approvalState: { notIn: ['awaiting_owner', 'rejected'] },
         moderationState: 'passed',
         customer: { status: 'active' },
       },
@@ -69,9 +87,9 @@ export class ReconcileService {
         //
         // Two things stop this from double-posting. The job id is derived from
         // the post id, so scheduling replaces any job that does still exist
-        // rather than adding a second. And if a publish were somehow already in
-        // flight, PUBLISH_DUE re-reads the post and skips anything already
-        // marked published — the guard that makes the whole path idempotent.
+        // rather than adding a second. And PUBLISH_DUE claims the row with an
+        // atomic scheduled/approved → publishing compare-and-swap before the
+        // platform call, so even if two runners fire at once only one publishes.
         await this.queue.schedule(
           { postId: post.id, customerId: post.customerId },
           now,
@@ -87,9 +105,9 @@ export class ReconcileService {
     // than one recorded as missed.
     const stale = await this.prisma.post.updateMany({
       where: {
-        status: 'scheduled',
+        status: { in: ['scheduled', 'approved'] },
         scheduledTime: { lt: horizon },
-        approvalState: { not: 'awaiting_owner' },
+        approvalState: { notIn: ['awaiting_owner', 'rejected'] },
       },
       data: {
         status: 'failed',
@@ -97,11 +115,27 @@ export class ReconcileService {
       },
     });
 
-    if (requeued || stale.count) {
+    // A post stuck mid-publish (worker died after claiming it). Surface it —
+    // never re-publish, since it may already be live. The operator verifies on
+    // the platform and re-runs if it truly didn't post.
+    const interrupted = await this.prisma.post.updateMany({
+      where: {
+        status: 'publishing',
+        updatedAt: { lt: publishingStuckBefore },
+      },
+      data: {
+        status: 'failed',
+        failureReason:
+          '[interrupted] publish was claimed but never confirmed — verify on the platform before re-publishing',
+      },
+    });
+
+    if (requeued || stale.count || interrupted.count) {
       this.log.warn(
-        `reconciliation: re-queued ${requeued}, wrote off ${stale.count} as too old`,
+        `reconciliation: re-queued ${requeued}, wrote off ${stale.count} as too old, ` +
+          `flagged ${interrupted.count} interrupted mid-publish`,
       );
     }
-    return { requeued, stale: stale.count };
+    return { requeued, stale: stale.count, interrupted: interrupted.count };
   }
 }

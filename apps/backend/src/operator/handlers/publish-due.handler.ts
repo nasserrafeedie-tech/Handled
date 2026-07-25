@@ -37,6 +37,7 @@ export function isBlockedFromPublishing(post: PublishGateInput): boolean {
     post.approvalState === 'rejected' ||
     post.status === 'cancelled' ||
     post.status === 'failed' ||
+    post.status === 'publishing' ||
     post.status === 'published'
   );
 }
@@ -144,10 +145,34 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
         continue;
       }
 
+      // Atomic claim BEFORE the platform call — the guard against double-posting
+      // under the owner's name. Three producers can emit PUBLISH_DUE for the same
+      // due post in the same minute (per-post job, hourly sweep, reconciler); a
+      // read-then-publish lets both win the race. This compare-and-swap moves the
+      // row scheduled/approved → publishing and only the winner gets count===1;
+      // every other runner sees 0 and skips. On any failure below we move it back
+      // off 'publishing' so it is never stranded by the claim itself.
+      const claim = await this.prisma.post.updateMany({
+        where: { id: post.id, status: { in: ['scheduled', 'approved'] } },
+        data: { status: 'publishing' },
+      });
+      if (claim.count === 0) {
+        // Someone else claimed it (or it moved out of a publishable state
+        // between the load and here). Not ours to publish.
+        skipped++;
+        continue;
+      }
+
       const account = await this.prisma.connectedAccount.findFirst({
         where: { customerId: post.customerId, platform: post.platform, revoked: false },
       });
       if (!account?.postForMeRef) {
+        // Release the claim so a later run (once an account is connected) can
+        // pick it up, rather than leaving it stuck in 'publishing'.
+        await this.prisma.post.update({
+          where: { id: post.id },
+          data: { status: 'scheduled' },
+        });
         skipped++;
         continue;
       }
@@ -184,7 +209,11 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
         const outcome = await this.publishTo(account, post, mediaUrls);
         await this.prisma.post.update({
           where: { id: post.id },
-          data: { status: 'published', externalPostId: outcome.externalPostId },
+          data: {
+            status: 'published',
+            externalPostId: outcome.externalPostId,
+            publishedAt: new Date(),
+          },
         });
         published++;
       } catch (err) {

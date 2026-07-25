@@ -32,13 +32,38 @@ export class SchedulePostHandler implements TaskHandler<'SCHEDULE_POST'> {
     if (!post) {
       return fail(task.task_id, "I couldn't find that post to schedule.", 'post_not_found', task.payload.post_id);
     }
+    // A post in a terminal state is not ours to re-schedule. Without this a
+    // stray SCHEDULE_POST (a retry, a duplicate "yes", a re-run) would rewind a
+    // published/cancelled/failed post to 'scheduled' and the next queue fire
+    // would re-publish or un-cancel it.
+    if (
+      post.status === 'published' ||
+      post.status === 'publishing' ||
+      post.status === 'cancelled' ||
+      post.status === 'failed'
+    ) {
+      return fail(
+        task.task_id,
+        "That post isn't in a state I can schedule.",
+        'not_schedulable',
+        `${post.id} is ${post.status}`,
+      );
+    }
     if (post.moderationState !== 'passed') {
       return fail(task.task_id, "That post hasn't cleared review yet.", 'not_moderated', post.id);
     }
-    // The owner's "yes" arrives on the Task itself — record it, then proceed.
-    // Without it, an un-approved post can never reach the queue.
+    // What may be scheduled, stated as an allow-list rather than "anything that
+    // isn't awaiting_owner" — the old test let a REJECTED post through
+    // ('rejected' !== 'awaiting_owner') and even promoted it back to approved.
+    // A rejected post is one the owner (or a cancel) explicitly killed; it never
+    // schedules, and owner_approved must not resurrect it.
+    if (post.approvalState === 'rejected') {
+      return fail(task.task_id, 'That post was cancelled, so I won\'t schedule it.', 'post_rejected', post.id);
+    }
     const approved =
-      post.approvalState !== 'awaiting_owner' || task.payload.owner_approved;
+      post.approvalState === 'approved' ||
+      post.approvalState === 'not_required' ||
+      (post.approvalState === 'awaiting_owner' && Boolean(task.payload.owner_approved));
     if (!approved) {
       return fail(task.task_id, 'That post still needs your OK first.', 'awaiting_approval', post.id);
     }
