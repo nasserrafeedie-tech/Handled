@@ -97,12 +97,23 @@ export class CronService {
     });
     const tz = customer?.timezone ?? 'America/Los_Angeles';
 
-    const planned = await this.emit(customerId, 'PLAN_WEEK', {
-      week_start: nextMonday(),
-    });
-    const slots = (planned as PlanResult)?.data?.slots ?? [];
+    // A cold backend's first PLAN_WEEK LLM call can time out to zero slots.
+    // Unretried that quietly skips the customer's whole week, so try a few
+    // times before giving up — the same cold-start guard the onboarding path
+    // uses.
+    let slots: CalendarSlot[] = [];
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const planned = await this.emit(customerId, 'PLAN_WEEK', {
+        week_start: nextMonday(),
+      });
+      slots = (planned as PlanResult)?.data?.slots ?? [];
+      if (slots.length) break;
+      this.log.warn(
+        `no slots planned for ${customerId} (attempt ${attempt}/3)`,
+      );
+    }
     if (!slots.length) {
-      this.log.warn(`no slots planned for ${customerId}`);
+      this.log.error(`PLAN_WEEK yielded no slots for ${customerId} after retries`);
       return 0;
     }
 

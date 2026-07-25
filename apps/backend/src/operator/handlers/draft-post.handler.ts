@@ -114,8 +114,20 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       'HARD RULES: Never invent a named customer, patient, or a specific',
       'story about one. For a testimonial archetype with no real quote in the',
       'notes, write general sentiment ("our regulars tell us…") or an',
-      'invitation — a fabricated review is a firing offense. Hashtags are',
-      'single words: no spaces, no # prefix.',
+      'invitation — a fabricated review is a firing offense.',
+      // The invented-event failure: given only "banana bread" the drafter wrote
+      // "we taste-tested 3 batches this afternoon". Charming, and a lie under
+      // the owner\'s name.
+      'Never state that a specific thing happened on a specific day, or give a',
+      'specific number, event, or result you were not told — no "we tested 3',
+      'batches this afternoon", no "we sold out by noon". Only use facts from',
+      'the brand profile. Write offers as evergreen truth ("baked fresh daily")',
+      'or an invitation ("come try it"), never as dated news you made up.',
+      // Every post naming the city + trade ("our Glendale coffee shop") reads
+      // like SEO filler across a week. Mention the location at most rarely.
+      'Do not put the city and business type in every post — mention the',
+      'location sparingly, only where it earns its place.',
+      'Hashtags are single words: no spaces, no # prefix.',
       'Return JSON: {"caption": string, "hashtags": string[], "alt_text": string}.',
       'Caption in the brand voice. Hashtags without the # prefix.',
       ALT_TEXT_RULE,
@@ -185,7 +197,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     let faked = detectFabrication(gen.caption, realQuote);
     if (faked.length) {
       this.log.warn(
-        `invented customer in ${archetype} draft for ${task.customer_id} ` +
+        `fabrication in ${archetype} draft for ${task.customer_id} ` +
           `(${faked.map((f) => f.name).join(', ')}) — rewriting`,
       );
       try {
@@ -212,12 +224,12 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       }
       if (faked.length) {
         this.log.error(
-          `fabricated customer SURVIVED the rewrite for ${task.customer_id} — ` +
+          `fabrication SURVIVED the rewrite for ${task.customer_id} — ` +
             `pinning to owner approval: ${faked.map((f) => f.detail).join('; ')}`,
         );
       }
     }
-    const inventedCustomer = faked.length > 0;
+    const fabricated = faked.length > 0;
 
     // §8 moderation before anything is persisted as publishable.
     const verdict = await this.moderation.screen({
@@ -290,12 +302,13 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
           : null,
         riskLevel: risk,
         moderationState: verdict.passed ? 'passed' : 'blocked',
-        // A draft we could not scrub an invented customer out of never goes out
-        // on autopilot, whatever the trust level says. A human reads it first.
+        // A draft we could not scrub a fabrication out of — an invented customer
+        // or an invented event — never goes out on autopilot, whatever the trust
+        // level says. A human reads it first.
         approvalState:
-          verdict.passed && !inventedCustomer ? decision.approvalState : 'awaiting_owner',
+          verdict.passed && !fabricated ? decision.approvalState : 'awaiting_owner',
         status: verdict.passed
-          ? decision.autoPublishAllowed && !inventedCustomer
+          ? decision.autoPublishAllowed && !fabricated
             ? 'approved'
             : 'pending_approval'
           : 'draft',

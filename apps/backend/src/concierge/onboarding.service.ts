@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { BrandProfile } from '@prisma/client';
 import type { UpdateBrandProfilePayload } from '@smm/contracts';
 import { LlmService } from '../operator/llm/llm.service';
+import { NO_DOS_DONTS } from '../operator/llm/brand-context';
 
 /**
  * §6 onboarding as a checklist of profile fields, NOT a step counter — so an
@@ -32,12 +33,20 @@ export type ProfileField =
 
 type Patch = UpdateBrandProfilePayload['patch'];
 
-/** Fields required before we consider onboarding complete and plan week 1. */
+/**
+ * Fields required before we consider onboarding complete and plan week 1.
+ *
+ * dos_and_donts is here on purpose: it is the one moment we ask what to always
+ * or never mention, and for a food business that is where allergens, claims to
+ * avoid, and off-limits topics get captured — before we ever post on their
+ * behalf. Asked just before posting_frequency so "last one" stays true.
+ */
 const REQUIRED: ProfileField[] = [
   'business_type',
   'voice_tone',
   'target_customer',
   'offers',
+  'dos_and_donts',
   'posting_frequency',
 ];
 
@@ -58,6 +67,10 @@ const LlmPatch = z
 /** "hi", "hey there", "start" — a greeting, not information. */
 const GREETING =
   /^\s*(hi+|hey+( there)?|hello+|howdy|yo|sup|good (morning|afternoon|evening)|start|(i )?just signed up.?)\s*[!.…]*\s*$/i;
+
+/** "nope", "not really", "can't think of any" — no standing rules to give. */
+const NO_RULES =
+  /^\s*(no+|nope|nah|none|not really|not at all|cant think of (?:any|anything)|can'?t think of (?:any|anything)|nothing(?: (?:comes to mind|really|i can think of))?|no rules|nothing off limits?|all good|we'?re good)\b[\s.!]*$/i;
 
 @Injectable()
 export class OnboardingService {
@@ -170,6 +183,13 @@ export class OnboardingService {
       profile.offers.length
         ? `Showing off: ${profile.offers.join(', ')}`
         : null,
+      // Standing rules are the one field where a wrong reading is dangerous —
+      // an allergen we DON'T flag, a competitor we DO. Read it back too (but
+      // never the "no rules" sentinel, which isn't a rule).
+      (() => {
+        const rules = profile.dosAndDonts.filter((r) => r !== NO_DOS_DONTS);
+        return rules.length ? `Rules: ${rules.join('; ')}` : null;
+      })(),
       // Derived palettes are hexes; only read back colors the owner SAID.
       profile.brandColors.some((c) => !c.startsWith('#'))
         ? `Colors: ${profile.brandColors.filter((c) => !c.startsWith('#')).join(', ')}`
@@ -288,7 +308,13 @@ export class OnboardingService {
       case 'offers':
         return { offers: splitList(answer).map((s) => s.slice(0, 200)) };
       case 'dos_and_donts':
-        return { dos_and_donts: splitList(answer).map((s) => s.slice(0, 300)) };
+        // "nope", "not really", "cant think of any" — a real answer that the
+        // owner has no standing rules. Mark it answered with the sentinel so
+        // onboarding completes, rather than storing "nope" as a brand rule or
+        // re-asking forever.
+        return NO_RULES.test(answer)
+          ? { dos_and_donts: [NO_DOS_DONTS] }
+          : { dos_and_donts: splitList(answer).map((s) => s.slice(0, 300)) };
       case 'posting_frequency': {
         const num = /(\d{1,2})\s*(?:x|times?|posts?|\/)?/i.exec(answer);
         let n = 3; // the suggested default

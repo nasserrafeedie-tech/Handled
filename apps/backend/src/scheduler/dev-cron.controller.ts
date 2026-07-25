@@ -53,13 +53,32 @@ export class DevCronController {
   async runRecap(
     @Headers('x-admin-token') token: string | undefined,
     @Body() body: unknown,
-  ): Promise<{ ok: boolean }> {
+  ): Promise<{ ok: boolean; texts: string[] }> {
     this.assertDevAllowed(token);
     const { from } = RunWeekBody.parse(body);
-    const customer = await this.prisma.customer.findUnique({ where: { phone: from } });
+    const customer = await this.prisma.customer.findUnique({
+      where: { phone: from },
+      include: { conversation: true },
+    });
     if (!customer) throw new NotFoundException();
+
+    // Return what the recap actually said, the same way run-week does. The
+    // recap is composed by the scheduler and lands in the outbox, which prod
+    // gates off unless SMS_MANUAL_RELAY=1 — so without this a tester gets {ok}
+    // and no way to read the text they just generated.
+    const t0 = new Date();
     await this.cron.sendRecap(customer.id);
-    return { ok: true };
+    const texts = customer.conversation
+      ? await this.prisma.message.findMany({
+          where: {
+            conversationId: customer.conversation.id,
+            direction: 'outbound',
+            createdAt: { gte: t0 },
+          },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+    return { ok: true, texts: texts.map((m) => m.body ?? '') };
   }
 
   @Post('flush-texts')

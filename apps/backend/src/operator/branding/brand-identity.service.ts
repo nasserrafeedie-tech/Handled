@@ -231,7 +231,12 @@ export class BrandIdentityService {
             '"reel_clips": exactly 3 clip requests forming one coherent reel, ' +
             '"reel_hook": on-screen hook under 60 chars}. Authentic beats ' +
             'polished; transformations and process win; sends and saves are ' +
-            'the goal.',
+            'the goal. CRITICAL: ideas must be reusable angles grounded in the ' +
+            'offers the owner actually gave — never invent a specific event, ' +
+            'number, or result that happened ("we tested 3 batches this week", ' +
+            '"sold out by noon"). If you did not hear it from the owner, do not ' +
+            'assert it as fact. Frame ideas as evergreen themes or invitations ' +
+            'a writer can use any week, not one-off news you made up.',
           prompt:
             `Owner's words — business: "${profile.businessType}" · voice: ` +
             `"${profile.voiceTone}" · audience: "${profile.targetCustomer}" · ` +

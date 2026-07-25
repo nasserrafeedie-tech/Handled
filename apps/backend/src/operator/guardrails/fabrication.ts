@@ -58,8 +58,36 @@ const SITUATED_PERSON =
 const CLAIMED_RESULT =
   /\b(?:she|he|they)\s+(?:now\s+)?(?:gets?|got|sees?|saw|books?|booked|earns?|made|doubled|tripled|grew)\b/i;
 
+/**
+ * A specific recent event the owner never told us happened.
+ *
+ * The invented customer is not the only lie the drafter writes. Given only
+ * "banana bread" in the offers, it produced "we taste-tested 3 batches this
+ * afternoon to get the crumb right — which one won?" — a specific event, on a
+ * specific day, that as far as we know never took place. It reads charming and
+ * it is fiction, published under the owner's name. The owner caught it here;
+ * on autopilot nobody would.
+ *
+ * The tell is a first-person ACTION ("we're testing", "we baked", "I roasted")
+ * pinned to a RECENT moment ("this afternoon", "today", "this week"). That pair
+ * is a claim that a particular thing happened — which the drafter has no way to
+ * know. Evergreen habit ("we bake fresh every morning") and plain state ("we're
+ * open today") are deliberately NOT this: no recent one-off action is asserted,
+ * so they stay clean. Numbers alone are fine too ("3 new flavors") — it is the
+ * dated action, not the digit, that fabricates.
+ */
+const RECENCY =
+  /\b(?:this (?:morning|afternoon|evening|week|weekend|month)|today|yesterday|last (?:week|night|month)|earlier (?:today|this week)|just now)\b/i;
+// Actor + a doing-verb in -ed/-ing. Excludes "we'll …" (future, not an event)
+// and "we're open" (state, not a -ed/-ing action), which is why the "allows"
+// cases below stay clean.
+// The action word may be hyphenated ("taste-tested"), so an internal hyphen
+// segment is allowed before the -ed/-ing ending.
+const FIRST_PERSON_ACTION =
+  /\b(?:we|i|our team|the team|our (?:crew|staff|bakers?|baristas?))(?:'re|'ve| are| have| just)?\s+(?:just\s+)?[a-z]{3,}(?:-[a-z]+)*(?:ed|ing)\b/i;
+
 export interface FabricationFinding {
-  name: 'attributed_quote' | 'invented_person' | 'claimed_result';
+  name: 'attributed_quote' | 'invented_person' | 'claimed_result' | 'invented_event';
   detail: string;
 }
 
@@ -105,17 +133,43 @@ export function detectFabrication(
       detail: 'claims a result for a customer we invented',
     });
   }
+
+  // A dated one-off action the owner never reported. Both halves are required:
+  // the action makes it a claim, the recency makes it a specific event rather
+  // than an evergreen habit.
+  if (RECENCY.test(caption) && FIRST_PERSON_ACTION.test(caption)) {
+    out.push({
+      name: 'invented_event',
+      detail: 'states a specific recent event the owner never told us happened',
+    });
+  }
   return out;
 }
 
 /** Feedback for the one retry, naming what to do instead. */
 export function fabricationFeedback(findings: FabricationFinding[]): string {
-  return [
-    'That draft invents a customer, which we never do: ' +
+  const hasEvent = findings.some((f) => f.name === 'invented_event');
+  const hasPerson = findings.some((f) => f.name !== 'invented_event');
+  const lines = [
+    'That draft states something we cannot know is true: ' +
       findings.map((f) => f.detail).join('; ') + '.',
-    'Rewrite it with NO specific customer and NO quotation marks. Say what the',
-    'business does and who it is for, or use plural sentiment that claims',
-    'nothing about one person ("owners tell us…", "the people we work with…").',
-    'Do not describe results any individual got.',
-  ].join(' ');
+  ];
+  if (hasPerson) {
+    lines.push(
+      'Rewrite it with NO specific customer and NO quotation marks. Say what the',
+      'business does and who it is for, or use plural sentiment that claims',
+      'nothing about one person ("owners tell us…", "the people we work with…").',
+      'Do not describe results any individual got.',
+    );
+  }
+  if (hasEvent) {
+    lines.push(
+      'Do NOT invent a specific event or say a particular thing happened on a',
+      'given day ("we tested 3 batches this afternoon"): we only know what the',
+      'owner told us. Write about what the business offers as an evergreen truth',
+      '("our banana bread is baked fresh") or an invitation ("come try it"),',
+      'never as dated news we made up.',
+    );
+  }
+  return lines.join(' ');
 }

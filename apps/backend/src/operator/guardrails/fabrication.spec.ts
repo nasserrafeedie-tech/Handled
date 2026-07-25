@@ -69,6 +69,37 @@ describe('detectFabrication', () => {
     );
   });
 
+  // The invented-event failure: given only "banana bread" in the offers, the
+  // live drafter wrote a specific dated bake-off that never happened.
+  it('catches a specific recent event the owner never reported', () => {
+    for (const caption of [
+      "3 banana bread batches, different bake times. We're testing all three this afternoon — which crumb wins?",
+      'We taste-tested three batches this week to get the crumb right.',
+      'We roasted a fresh single-origin yesterday and it is singing.',
+    ]) {
+      const found = detectFabrication(caption);
+      assert.ok(
+        found.some((f) => f.name === 'invented_event'),
+        `should flag invented event: ${caption}`,
+      );
+    }
+  });
+
+  it('leaves evergreen habits and plain state alone', () => {
+    for (const caption of [
+      'Our banana bread is baked fresh every morning — come grab a slice.',
+      "We're open today until 6. Swing by the patio.",
+      'We write your posts and you approve them by text.',
+      'Baked fresh daily. Lavender honey latte on the menu all week.',
+    ]) {
+      assert.deepEqual(
+        detectFabrication(caption),
+        [],
+        `false positive on evergreen/state: ${caption}`,
+      );
+    }
+  });
+
   it('stands down when the owner gave a real quote', () => {
     const caption = 'A regular told us: "best haircut in the South Bay." We will take it.';
     assert.ok(detectFabrication(caption).length > 0, 'flagged without a source quote');

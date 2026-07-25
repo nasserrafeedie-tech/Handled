@@ -599,9 +599,13 @@ export class ConciergeService {
     const when = next.scheduledTime
       ? ` for ${formatInZone(next.scheduledTime, tz)}`
       : '';
+    // The owner is approving exactly what will publish, so show the WHOLE
+    // caption — a truncated preview asks them to sign off on words they can't
+    // see. Captions are already platform-limited upstream, so this stays a
+    // sane length.
     const body =
       (lead ? `${lead}\n\n` : '') +
-      `Draft${when}:\n\n“${preview(next.caption ?? '')}”\n\n` +
+      `Draft${when}:\n\n“${(next.caption ?? '').trim()}”\n\n` +
       'Reply “yes” to schedule it, or tell me what to change.';
     await this.notify(customerId, body, opts);
     return true;
@@ -1019,6 +1023,30 @@ export class ConciergeService {
    * nextMonday() like the cron does, so the two never draft the same week: the
    * cron always plans the week after whatever is next.
    */
+  /**
+   * Emit PLAN_WEEK, retrying while it comes back empty. A cold backend's first
+   * LLM call can time out to zero slots; a second attempt almost always lands
+   * (observed in prod testing). Bounded so a genuinely un-plannable customer
+   * fails fast rather than looping.
+   */
+  private async planWeekWithRetry(
+    customerId: string,
+    attempts = 3,
+  ): Promise<CalendarSlot[]> {
+    for (let i = 0; i < attempts; i++) {
+      const planned = await this.bus.emit(
+        this.task(customerId, 'PLAN_WEEK', { week_start: nextMonday() }, 'concierge'),
+      );
+      const slots =
+        (planned.data as { slots?: CalendarSlot[] } | null | undefined)?.slots ?? [];
+      if (slots.length) return slots;
+      this.log.warn(
+        `PLAN_WEEK empty for ${customerId} (attempt ${i + 1}/${attempts})`,
+      );
+    }
+    return [];
+  }
+
   private async draftFirstWeek(customerId: string): Promise<number> {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
@@ -1026,11 +1054,18 @@ export class ConciergeService {
     });
     const tz = customer?.timezone ?? 'America/Los_Angeles';
 
-    const planned = await this.bus.emit(
-      this.task(customerId, 'PLAN_WEEK', { week_start: nextMonday() }, 'concierge'),
-    );
-    const slots =
-      (planned.data as { slots?: CalendarSlot[] } | null | undefined)?.slots ?? [];
+    // PLAN_WEEK runs a real LLM call, and the first request to a cold backend
+    // can time out and come back with zero slots. Left unretried that silently
+    // eats the owner's entire first week — they get the "writing your week"
+    // promise and no post ever arrives, because nothing runs again until the
+    // Monday cron (which plans a LATER week). One retry turns the cold-start
+    // miss into a hiccup.
+    const slots = await this.planWeekWithRetry(customerId);
+    if (!slots.length) {
+      // Loud, because a signup that produced no week is a failed signup and the
+      // owner is still sitting there. Better an operator alert than a silent gap.
+      this.log.error(`PLAN_WEEK yielded no slots for ${customerId} after retries`);
+    }
 
     let drafted = 0;
     for (const slot of slots) {
@@ -1219,12 +1254,6 @@ function stripCommand(text: string): string {
     )
     .replace(/^["“]|["”]$/g, '')
     .trim();
-}
-
-/** Keep SMS short — Result.summary_for_owner caps at 480 chars total. */
-function preview(caption: string): string {
-  const flat = caption.replace(/\s+/g, ' ').trim();
-  return flat.length > 180 ? `${flat.slice(0, 177)}…` : flat;
 }
 
 function nextMonday(): string {

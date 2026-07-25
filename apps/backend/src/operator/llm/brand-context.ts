@@ -1,6 +1,14 @@
 import type { BrandProfile } from '@prisma/client';
 
 /**
+ * Stored in dosAndDonts when the owner is asked for standing rules and says
+ * there are none. It marks the question answered (so onboarding completes)
+ * without inventing a rule — and is filtered out everywhere it would otherwise
+ * be read as one.
+ */
+export const NO_DOS_DONTS = '(no special rules)';
+
+/**
  * Render a brand_profile into the stable system context that is cached on every
  * LLM call for this customer (§2, §12). Because it's identical call-to-call, the
  * prompt cache makes effective input ~10x cheaper. Keep the ordering stable —
@@ -27,7 +35,8 @@ export function buildBrandContext(p: BrandProfile): string {
     '',
   ];
   if (p.offers.length) lines.push(`Offers: ${p.offers.join('; ')}`);
-  if (p.dosAndDonts.length) lines.push(`Dos and don'ts: ${p.dosAndDonts.join('; ')}`);
+  const dosAndDonts = p.dosAndDonts.filter((r) => r !== NO_DOS_DONTS);
+  if (dosAndDonts.length) lines.push(`Dos and don'ts: ${dosAndDonts.join('; ')}`);
   if (p.blackoutTopics.length) lines.push(`Never mention: ${p.blackoutTopics.join('; ')}`);
   if (p.brandColors.length) lines.push(`Brand colors: ${p.brandColors.join(', ')}`);
   return lines.join('\n');
