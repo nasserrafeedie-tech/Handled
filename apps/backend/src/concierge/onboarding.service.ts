@@ -105,7 +105,12 @@ export class OnboardingService {
 
   /** Is this first message just a hello, or does it actually say something? */
   isGreetingOnly(text: string): boolean {
-    return GREETING.test(text) || text.trim().length < 12;
+    // Match the greeting shape, or an all-but-empty message. The old `< 12`
+    // length gate discarded real short business answers — "gym", "bakery",
+    // "car wash" — as if they were greetings, re-asking and reading as not
+    // listening. A genuine business name/type can be tiny; only a near-empty
+    // token (a stray "k", "ok") is treated as a non-answer.
+    return GREETING.test(text) || text.trim().length < 3;
   }
 
   /** Would applying `patch` to `profile` finish the checklist? */
@@ -362,11 +367,23 @@ export class OnboardingService {
           ? { dos_and_donts: [NO_DOS_DONTS] }
           : { dos_and_donts: splitList(answer).map((s) => s.slice(0, 300)) };
       case 'posting_frequency': {
-        const num = /(\d{1,2})\s*(?:x|times?|posts?|\/)?/i.exec(answer);
+        const lower = answer.toLowerCase();
+        const WORDS: Record<string, number> = {
+          once: 1, twice: 2, thrice: 3,
+          one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+        };
+        // A digit that is actually about cadence — "3", "3x", "3 times",
+        // "3 posts", "3/week", "3 a week" — not a stray "20% off" or "$5".
+        const cued =
+          /(\d{1,2})\s*(?:x\b|times?\b|posts?\b|\/|(?:a|per)\s*week)/i.exec(answer) ??
+          /^\s*(\d{1,2})\s*$/.exec(answer);
+        const word = new RegExp(`\\b(${Object.keys(WORDS).join('|')})\\b`, 'i').exec(lower);
         let n = 3; // the suggested default
-        if (/daily|every ?day/i.test(answer)) n = 7;
-        else if (num) n = Number(num[1]);
-        else if (!agreed.test(answer)) n = 3;
+        if (/daily|every ?day/i.test(lower)) n = 7;
+        else if (cued) n = Number(cued[1]);
+        else if (word) n = WORDS[word[1].toLowerCase()];
+        // else: an agreement ("you pick") or anything with no readable number
+        // keeps the default of 3.
         return { posting_frequency: Math.max(1, Math.min(21, n)) };
       }
     }

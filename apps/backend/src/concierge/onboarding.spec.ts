@@ -72,4 +72,30 @@ describe('onboarding — cadence is capped to the plan', () => {
   it('the cadence question names the plan allowance', () => {
     assert.match(svc.question('posting_frequency', 3), /3 a week/);
   });
+
+  it('reads worded frequencies and ignores stray numbers (offline)', async () => {
+    const freq = async (a: string, cap?: number) =>
+      (await svc.interpret('posting_frequency', a, null, null, cap)).posting_frequency;
+    assert.equal(await freq('twice a week', 5), 2);
+    assert.equal(await freq('once a week', 5), 1);
+    assert.equal(await freq('three times', 5), 3);
+    assert.equal(await freq('daily', 7), 7);
+    assert.equal(await freq('5x', 5), 5);
+    // A stray promo number must not be read as cadence — falls to the default 3.
+    assert.equal(await freq('post about our 20% special', 5), 3);
+  });
+});
+
+describe('onboarding — greeting vs a real short answer', () => {
+  it('treats an actual greeting as a non-answer', () => {
+    for (const g of ['hi', 'hey there', 'hello!', 'yo', 'k']) {
+      assert.equal(svc.isGreetingOnly(g), true, g);
+    }
+  });
+
+  it('does NOT discard a short but real business answer', () => {
+    for (const a of ['gym', 'bakery', 'car wash', 'nail salon']) {
+      assert.equal(svc.isGreetingOnly(a), false, a);
+    }
+  });
 });

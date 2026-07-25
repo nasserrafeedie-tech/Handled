@@ -18,9 +18,17 @@ const svc = new ConciergeService(
 const isStop = (b: string) => svc.isStop(b);
 
 describe('kill-switch keyword detection', () => {
-  it('fires on the bare opt-out keywords', () => {
-    for (const w of ['STOP', 'stop', 'Stop', 'cancel', 'unsubscribe', 'end', 'quit', 'pause', 'halt']) {
+  it('fires on the standard carrier opt-out keywords', () => {
+    for (const w of ['STOP', 'stop', 'Stop', 'stopall', 'unsubscribe', 'end', 'quit']) {
       assert.equal(isStop(w), true, `"${w}" alone should stop`);
+    }
+  });
+
+  it('does NOT fire on bare "cancel"/"pause"/"halt" — those are draft actions', () => {
+    // A bare "cancel"/"pause" is how an owner skips the draft in front of them;
+    // routing it to a full-account stop is the wrong, destructive read.
+    for (const w of ['cancel', 'Cancel', 'pause', 'halt']) {
+      assert.equal(isStop(w), false, `"${w}" must reach draft-level intent, not the kill switch`);
     }
   });
 

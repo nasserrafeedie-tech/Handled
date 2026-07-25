@@ -225,14 +225,19 @@ export class ConciergeService {
         intent = awaiting;
         confidence = 1; // they just told us in as many words
         justConfirmed = true;
-      } else if (intent === 'other' || intent === 'question') {
+      } else {
+        // Anything that is not a clear "yes" is a decline. Previously only
+        // 'other'/'question' declined and everything else "fell through and was
+        // honoured" — so "no, don't do that" (classified as cancel/revise) was
+        // executed against the pending DRAFT, an action the owner never asked
+        // for. A confirmation is a yes/no gate: no means leave it, act on
+        // nothing. If they meant a fresh command, they can say it again.
         return this.reply(
           phone,
           conversationId,
           "No problem — I've left everything as it is. What would you like to do?",
         );
       }
-      // Anything else (a fresh, clear request) falls through and is honoured.
     }
 
     // Interpretation is less certain than a keyword, so ask when the reading
@@ -396,24 +401,23 @@ export class ConciergeService {
             regenerate_media: false,
           }),
         );
-        // If the rewrite cleared the post for autopilot (a high-risk draft that
-        // came back low-risk on an auto-publishing plan), REGENERATE_POST leaves
-        // it status='approved' — which nothing schedules, so it would strand
-        // exactly like an auto-drafted post. Enqueue it here, the same way the
-        // weekly rhythm does. On an approval plan the post stays
-        // pending_approval and this is a no-op.
+        // A revise is an explicit "let me see it again" — so the rewrite always
+        // goes back to the owner before it can publish, even on autopilot. If
+        // REGENERATE_POST cleared it to 'approved' (a high-risk draft that came
+        // back low-risk on an auto-publishing plan), scheduling it here would
+        // send a version the owner never saw — the one post they actively
+        // engaged with. Instead, hold it for their eyes: pull it back to
+        // awaiting the owner and let their next "yes" schedule it, exactly like
+        // an approval plan. The reworked caption is in the reply below.
         const revised = await this.prisma.post.findUnique({
           where: { id: pending!.id },
-          select: { status: true, scheduledTime: true },
+          select: { status: true },
         });
-        if (revised?.status === 'approved' && revised.scheduledTime) {
-          await this.bus.emit(
-            this.task(customerId, 'SCHEDULE_POST', {
-              post_id: pending!.id,
-              scheduled_time: revised.scheduledTime.toISOString(),
-              owner_approved: false,
-            }),
-          );
+        if (revised?.status === 'approved') {
+          await this.prisma.post.update({
+            where: { id: pending!.id },
+            data: { status: 'pending_approval', approvalState: 'awaiting_owner' },
+          });
         }
         return this.reply(phone, conversationId, result.summary_for_owner);
       }
@@ -895,9 +899,6 @@ export class ConciergeService {
     const outboundCount = await this.prisma.message.count({
       where: { conversationId, direction: 'outbound' },
     });
-    if (outboundCount === 0 && this.onboarding.isGreetingOnly(answer)) {
-      return this.reply(phone, conversationId, this.onboarding.welcome());
-    }
 
     // Interpret the answer to whichever field we asked about last (§6 — one
     // chatty answer may fill several fields; Haiku handles that when keyed,
@@ -906,6 +907,22 @@ export class ConciergeService {
       outboundCount === 0
         ? ('business_type' as const)
         : this.onboarding.nextField(profile);
+
+    // A greeting is not the first answer. This guard used to run ONLY on a cold
+    // inbound-first contact (outboundCount === 0), so a "hey!" sent right AFTER
+    // the welcome was interpreted as the business_type and stored as the
+    // business name. Re-check whenever we are still waiting on business_type:
+    // re-welcome on a cold start, otherwise re-ask the question, rather than
+    // storing the greeting.
+    if (asked === 'business_type' && this.onboarding.isGreetingOnly(answer)) {
+      return this.reply(
+        phone,
+        conversationId,
+        outboundCount === 0
+          ? this.onboarding.welcome()
+          : this.onboarding.question('business_type'),
+      );
+    }
     let ack = '';
     if (asked) {
       const patch = await this.onboarding.interpret(
@@ -1194,16 +1211,16 @@ export class ConciergeService {
   }
 
   private isStop(body: string): boolean {
-    // The kill switch must be the WHOLE message, not a prefix. The old prefix
-    // match (`\b`) turned "cancel that one" or "pause the promo" — the exact
-    // things an owner types while looking at a draft the prompt invites them to
-    // change — into a full-account pause, shadowing the draft-level cancel
-    // intent entirely. Carrier opt-out compliance only requires the bare
-    // keyword to work, which anchoring preserves; a sentence that merely starts
-    // with one now flows to normal intent handling.
-    return /^\s*(stop|stopall|unsubscribe|end|quit|cancel|pause|halt)\s*[!.]?\s*$/i.test(
-      body,
-    );
+    // The kill switch must be the WHOLE message, not a prefix — a sentence that
+    // merely starts with one flows to normal intent handling.
+    //
+    // AND it must be an UNAMBIGUOUS opt-out word. "cancel"/"pause"/"halt" were
+    // here too, but a bare "cancel" is exactly what an owner texts to skip the
+    // draft in front of them ("cancel", "pause") — routing that to a full-account
+    // stop is the wrong, destructive read. So only the standard carrier opt-out
+    // keywords fire the kill switch; a bare "cancel"/"pause" now reaches the
+    // draft-level cancel intent, where it cancels one post, not the account.
+    return /^\s*(stop|stopall|unsubscribe|end|quit)\s*[!.]?\s*$/i.test(body);
   }
 
   private task(

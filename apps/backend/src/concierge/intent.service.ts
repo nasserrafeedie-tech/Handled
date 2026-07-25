@@ -92,7 +92,7 @@ const LlmIntent = z
 /* Ordered most- to least-specific: a cancel often contains revise-ish words
    ("don't make it longer"), so cancel is tested before revise. */
 const CANCEL_RE =
-  /\b(skip (?:it|this|that)|cancel (?:it|this|that|the post)|don'?t post|do not post|scrap (?:it|this|that)|kill (?:it|this)|not this one|never ?mind|forget (?:it|this))\b/i;
+  /^\s*(?:cancel|skip|pass|nope)\s*[!.]?\s*$|\b(skip (?:it|this|that)|cancel (?:it|this|that|the post)|don'?t post|do not post|scrap (?:it|this|that)|kill (?:it|this)|not this one|never ?mind|forget (?:it|this))\b/i;
 /* Real approvals are rarely a bare "yes" — they trail off into praise
    ("yes looks great", "perfect, thanks!"). So we match on how the message
    *opens*, having already ruled out cancels and edit requests above. */
