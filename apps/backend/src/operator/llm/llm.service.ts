@@ -158,6 +158,7 @@ export class LlmService {
 
     const data = (await res.json()) as {
       content?: Array<{ type: string; text?: string }>;
+      stop_reason?: string;
       usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -175,7 +176,14 @@ export class LlmService {
       .join('')
       .trim();
     if (!text) {
-      throw new TransientLlmError('Anthropic API returned no text content');
+      // Say WHY the body was empty. `stop_reason: "max_tokens"` with only
+      // non-text blocks (e.g. a model that emitted reasoning and ran out of
+      // budget before the answer) reads very differently from a genuine blank,
+      // and the two want different fixes (more tokens vs a real retry).
+      const kinds = (data.content ?? []).map((b) => b.type).join(',') || 'none';
+      throw new TransientLlmError(
+        `Anthropic API returned no text content (stop_reason=${data.stop_reason ?? '?'}, blocks=[${kinds}], out_tokens=${data.usage?.output_tokens ?? '?'})`,
+      );
     }
     return text;
   }

@@ -94,7 +94,10 @@ export class EdlService {
             'duration. hook is the on-screen text for the opening seconds: max',
             '8 words, a bold claim or a question, no hashtags, no emoji.',
           ].join('\n'),
-          maxTokens: 1200,
+          // Generous headroom: the edit JSON for a 8–12 cut reel is long, and a
+          // too-tight cap is one way the model returns a body with no usable
+          // text. Cheap insurance against the editor silently degrading.
+          maxTokens: 2500,
         },
         ReelEdl,
       );
