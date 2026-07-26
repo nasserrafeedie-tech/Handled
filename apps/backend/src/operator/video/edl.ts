@@ -45,8 +45,17 @@ export type ReelEdl = z.infer<typeof ReelEdl>;
 
 /** Shortest slice worth cutting to — below this the cut reads as a stutter. */
 const MIN_SEGMENT_SECS = 0.8;
-/** Longest single slice. The playbook wants a shot change every 2–3 seconds. */
+/** Longest B-ROLL slice (no speech). Visual shots stay punchy, ~2–3s. */
 const MAX_SEGMENT_SECS = 4;
+/**
+ * Longest SPEECH slice. A spoken sentence routinely runs 4–6s, and the whole
+ * point of cutting on meaning is to keep a thought intact — chopping it at the
+ * b-roll cap is exactly the "cut off mid-sentence" complaint. So a segment that
+ * ends on a sentence boundary is allowed to run to here before we force a cut.
+ */
+const MAX_SPEECH_SEGMENT_SECS = 7;
+/** A silence longer than this between words reads as a sentence/phrase break. */
+const PHRASE_GAP_SECS = 0.5;
 /** Upper bound on the finished reel, before the end card. */
 export const MAX_REEL_SECS = 34;
 
@@ -76,14 +85,16 @@ export function clampEdl(
     const rawStart = Math.min(Math.max(0, seg.start), Math.max(0, duration - MIN_SEGMENT_SECS));
     const rawEnd = Math.min(seg.end > rawStart ? seg.end : rawStart + MAX_SEGMENT_SECS, duration);
 
-    // Snap the cut to word boundaries when we have this clip's transcript, so a
-    // segment starts and ends between spoken words instead of slicing through
-    // one. This is what makes the edit "cut on meaning": the model picks the
-    // moment, and we align the actual trim to the nearest clean word edges,
-    // trimming leading/trailing silence in the bargain. Falls back to the raw
-    // times for b-roll (no words) or when snapping can't find a valid span.
+    // Snap the cut to SENTENCE boundaries when we have this clip's transcript,
+    // so a segment starts and ends on a complete spoken thought instead of
+    // slicing through one. This is what makes the edit "cut on meaning": the
+    // model picks the moment, and we align the actual trim to whole phrases —
+    // extending a hair past the model's end to finish a sentence rather than
+    // chop it. Falls back to raw times for b-roll (no words) or when no phrase
+    // fits.
     const words = transcripts?.[seg.clip_index];
-    const snapped = words && words.length ? snapToWords(rawStart, rawEnd, words) : null;
+    const snapped =
+      words && words.length ? snapToPhrases(rawStart, rawEnd, words) : null;
 
     let start: number;
     let length: number;
@@ -107,36 +118,85 @@ export function clampEdl(
   return { ...edl, segments };
 }
 
+/** One spoken phrase/sentence: a run of words with no big pause or end-stop. */
+interface Phrase {
+  start: number;
+  end: number;
+}
+
 /**
- * Align a raw [start, end] window to the word timings of its clip.
+ * Group a clip's words into phrases. A phrase ends at sentence punctuation
+ * (. ? !) or a silence longer than PHRASE_GAP_SECS — the two signals of a
+ * complete thought that Whisper gives us. These are the units we cut on.
+ */
+function phrasesFromWords(words: TranscriptWord[]): Phrase[] {
+  const phrases: Phrase[] = [];
+  let startIdx = 0;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const next = words[i + 1];
+    const endsSentence = /[.!?]["')\]]?$/.test(w.text.trim());
+    const gap = next ? next.start - w.end : Infinity;
+    if (endsSentence || gap > PHRASE_GAP_SECS || !next) {
+      phrases.push({ start: words[startIdx].start, end: w.end });
+      startIdx = i + 1;
+    }
+  }
+  return phrases;
+}
+
+/**
+ * Align a raw [start, end] window to whole spoken phrases.
  *
  * The model estimates cut points from a transcript, so its numbers land a few
- * hundred milliseconds off the real word edges — enough to clip the head off a
- * word or leave the tail of the previous one. We move the start up to the first
- * word that begins at/after it (dropping any leading silence) and the end back
- * to the last word that ends at/before it, capped to MAX_SEGMENT_SECS worth of
- * whole words. A small tolerance lets a word the model meant to include but
- * boxed a hair too tightly still count. Returns null when no whole word fits —
- * the caller then keeps the raw times rather than dropping a real moment.
+ * hundred ms off — and worse, a hard length cap used to chop a segment in the
+ * middle of a sentence. Here we start at the phrase the model's start falls in
+ * (or the next one, dropping any leading silence) and take whole phrases up to
+ * about the model's end, ending ON a phrase boundary and extending slightly to
+ * finish the current sentence rather than cut it. A single run-on phrase past
+ * the speech cap is trimmed to whole words so nothing is sliced mid-word.
+ * Returns null when no phrase fits, so the caller keeps the raw times.
  */
-function snapToWords(
+function snapToPhrases(
   rawStart: number,
   rawEnd: number,
   words: TranscriptWord[],
 ): { start: number; end: number } | null {
   const TOL = 0.12;
-  const startWord = words.find((w) => w.start >= rawStart - TOL);
-  if (!startWord) return null;
-  const start = Math.max(0, startWord.start);
+  const phrases = phrasesFromWords(words);
+  if (!phrases.length) return null;
 
-  // Take whole words up to the requested end, but never past the segment cap.
-  const hardEnd = Math.min(rawEnd, start + MAX_SEGMENT_SECS);
-  let end = 0;
-  for (const w of words) {
-    if (w.start < start) continue;
-    if (w.end <= hardEnd + TOL) end = w.end;
-    else break;
+  // The phrase the model's start lands inside; else the next upcoming phrase
+  // (model aimed into a silence), else give up.
+  let i = phrases.findIndex(
+    (p) => rawStart >= p.start - TOL && rawStart <= p.end + TOL,
+  );
+  if (i === -1) i = phrases.findIndex((p) => p.start >= rawStart - TOL);
+  if (i === -1) return null;
+
+  const start = Math.max(0, phrases[i].start);
+  let end = phrases[i].end;
+  // Add whole phrases until we reach the model's intended end, capped so a
+  // segment stays a sentence or two — not a monologue.
+  for (let j = i + 1; j < phrases.length; j++) {
+    if (end >= rawEnd - TOL) break;
+    if (phrases[j].end - start > MAX_SPEECH_SEGMENT_SECS) break;
+    end = phrases[j].end;
   }
+
+  // A single phrase longer than the cap (a run-on with no pause/punctuation):
+  // fall back to trimming on whole words within it, so we never slice a word.
+  if (end - start > MAX_SPEECH_SEGMENT_SECS) {
+    const hardEnd = start + MAX_SPEECH_SEGMENT_SECS;
+    let wordEnd = 0;
+    for (const w of words) {
+      if (w.start < start) continue;
+      if (w.end <= hardEnd + TOL) wordEnd = w.end;
+      else break;
+    }
+    end = wordEnd;
+  }
+
   if (end - start < MIN_SEGMENT_SECS) return null;
   return { start, end };
 }

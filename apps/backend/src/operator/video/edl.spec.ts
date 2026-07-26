@@ -138,6 +138,38 @@ describe('snapping a cut to word boundaries (cut on meaning)', () => {
     assert.equal(out.segments.length, 1);
     assert.equal(out.segments[0].start, 0);
   });
+
+  it('extends to finish a sentence instead of cutting through it', () => {
+    // Two sentences: "Welcome to the shop." then "We make everything fresh
+    // daily here". The model asks to end at 3.5 — the middle of the second
+    // sentence. The cut must extend to the sentence's end (4.9), never stop
+    // mid-thought.
+    const words = [
+      { text: 'Welcome', start: 1.0, end: 1.4 },
+      { text: 'to', start: 1.4, end: 1.6 },
+      { text: 'the', start: 1.6, end: 1.8 },
+      { text: 'shop.', start: 1.8, end: 2.2 },
+      { text: 'We', start: 2.6, end: 2.8 },
+      { text: 'make', start: 2.8, end: 3.1 },
+      { text: 'everything', start: 3.1, end: 3.7 },
+      { text: 'fresh', start: 3.7, end: 4.1 },
+      { text: 'daily', start: 4.1, end: 4.5 },
+      { text: 'here', start: 4.5, end: 4.9 },
+    ];
+    const out = clampEdl(
+      { segments: [{ clip_index: 0, start: 1.0, end: 3.5 }], hook: 'x' },
+      [10],
+      [words],
+    );
+    assert.equal(out.segments.length, 1);
+    const seg = out.segments[0];
+    const sentenceEnds = [2.2, 4.9]; // the two complete-thought boundaries
+    assert.ok(
+      sentenceEnds.some((e) => Math.abs(e - seg.end) < 1e-9),
+      `end ${seg.end} did not land on a sentence boundary`,
+    );
+    assert.ok(seg.end > 3.5, 'should have extended to finish the sentence, not chopped at 3.5');
+  });
 });
 
 describe('the fallback edit', () => {
