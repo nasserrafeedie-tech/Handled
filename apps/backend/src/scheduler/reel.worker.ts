@@ -49,7 +49,12 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
           task_id: randomUUID(),
           customer_id: job.data.customerId,
           type: 'ASSEMBLE_REEL',
-          payload: { platform: job.data.platform },
+          payload: {
+            platform: job.data.platform,
+            ...(job.data.mediaAssetIds?.length
+              ? { media_asset_ids: job.data.mediaAssetIds }
+              : {}),
+          },
           requires_approval: false,
           created_by: 'concierge',
           created_at: new Date().toISOString(),

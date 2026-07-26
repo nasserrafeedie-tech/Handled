@@ -217,7 +217,13 @@ export class AdminController {
   ) {
     assertAdmin(token);
     const parsed = z
-      .object({ customerId: z.string().min(1), platform: z.string().min(1).optional() })
+      .object({
+        customerId: z.string().min(1),
+        platform: z.string().min(1).optional(),
+        // Re-cut the customer's most recent clips even if a prior reel already
+        // claimed them — for iterating on edit quality without a re-upload.
+        reCutLatest: z.boolean().optional(),
+      })
       .safeParse(body);
     if (!parsed.success) {
       return { error: 'bad_request', detail: parsed.error.issues };
@@ -226,6 +232,20 @@ export class AdminController {
       where: { id: parsed.data.customerId },
     });
     if (!customer) return { error: 'unknown_customer' };
+
+    let mediaAssetIds: string[] | undefined;
+    if (parsed.data.reCutLatest) {
+      const recent = await this.prisma.mediaAsset.findMany({
+        where: { customerId: parsed.data.customerId, kind: 'video', source: 'owner_upload' },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: { id: true },
+      });
+      mediaAssetIds = recent.map((m) => m.id).reverse(); // oldest-first for the cut
+      if (mediaAssetIds.length < 2) {
+        return { error: 'not_enough_clips', found: mediaAssetIds.length };
+      }
+    }
 
     const banked = await this.prisma.mediaAsset.count({
       where: {
@@ -238,8 +258,14 @@ export class AdminController {
     await this.reelQueue.enqueue({
       customerId: parsed.data.customerId,
       platform: parsed.data.platform ?? 'instagram',
+      ...(mediaAssetIds ? { mediaAssetIds } : {}),
     });
-    return { enqueued: true, customerId: parsed.data.customerId, bankedClips: banked };
+    return {
+      enqueued: true,
+      customerId: parsed.data.customerId,
+      bankedClips: banked,
+      ...(mediaAssetIds ? { reCutClips: mediaAssetIds.length } : {}),
+    };
   }
 
   /**

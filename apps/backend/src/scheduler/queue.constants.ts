@@ -17,6 +17,12 @@ export const REEL_QUEUE = 'reel';
 export interface ReelJobData {
   customerId: string;
   platform: string;
+  /**
+   * Cut from these specific clips instead of the customer's unclaimed banked
+   * video. Lets an operator re-cut the SAME footage after an edit-logic change
+   * (banked clips get claimed by the first reel), without a re-upload.
+   */
+  mediaAssetIds?: string[];
 }
 
 /**
