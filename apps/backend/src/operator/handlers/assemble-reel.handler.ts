@@ -172,7 +172,13 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
     const captionsAss = captionsToAss(
       mapWordsToTimeline(edl, transcripts.map((t) => t.words)),
       {
-        accentHex: toSvgColors(profile.brandColors ?? [])[1],
+        // Highlight the karaoke word in the brand's own colour: the accent
+        // (second colour) when they have one, else the primary, so a brand with
+        // a single colour still sees it — only a brand with no colours at all
+        // falls back to the default. Captions read as unmistakably theirs.
+        accentHex:
+          toSvgColors(profile.brandColors ?? [])[1] ??
+          toSvgColors(profile.brandColors ?? [])[0],
         brandStyle: theme.style,
         // The hook rides in the same subtitle file as the captions — libass
         // draws it, because the drawtext filter is absent from the ffmpeg build

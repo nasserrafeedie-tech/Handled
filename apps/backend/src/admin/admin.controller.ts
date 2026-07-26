@@ -50,6 +50,10 @@ const UpsertCustomerBody = z.object({
   // auto_low_risk (low-risk auto, high-risk confirmed), full_auto (low-risk auto
   // including generated imagery; high-risk still always confirmed by the gate).
   trustLevel: z.enum(['approve_all', 'auto_low_risk', 'full_auto']).optional(),
+  // Brand colours, written to the brandProfile (not the customer). Colour words
+  // ("teal") or hexes both work — the reel/graphics engines normalise them. The
+  // first is the primary, the second the accent used for caption highlights.
+  brandColors: z.array(z.string().min(1)).max(6).optional(),
 });
 
 /**
@@ -161,7 +165,9 @@ export class AdminController {
     if (!parsed.success) {
       return { error: 'bad_request', detail: parsed.error.issues };
     }
-    const { phone: rawPhone, ...fields } = parsed.data;
+    // brandColors live on the brandProfile, not the customer, so pull them out
+    // of the fields written to the customer row and apply them separately.
+    const { phone: rawPhone, brandColors, ...fields } = parsed.data;
 
     const phone = normalizePhone(rawPhone);
     if (!phone) {
@@ -186,6 +192,14 @@ export class AdminController {
       },
       update: fields,
     });
+
+    // Apply brand colours to the profile the create/prior-run guaranteed exists.
+    if (brandColors?.length) {
+      await this.prisma.brandProfile.update({
+        where: { customerId: customer.id },
+        data: { brandColors },
+      });
+    }
 
     return {
       created: !existing,
