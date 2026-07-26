@@ -140,9 +140,27 @@ function escapeAssText(s: string): string {
   return s.replace(/\\/g, '／').replace(/[{}]/g, '').replace(/\r?\n/g, ' ').trim();
 }
 
-/** A caption line: the words that show together, and which one is emphasised. */
+/**
+ * Filler sounds dropped from on-screen captions. Removing them is what makes the
+ * text read "edited" rather than a raw transcript — the owner asked for captions
+ * that don't feel verbatim. Kept deliberately conservative: only true
+ * non-words, never real words like "like" or "so" that carry meaning.
+ */
+const FILLER_WORDS = new Set([
+  'um', 'umm', 'uhm', 'uh', 'uhh', 'erm', 'er', 'hmm', 'mm', 'mmm', 'ah', 'uhhuh',
+]);
+
+function isFiller(text: string): boolean {
+  const w = text.trim().toLowerCase().replace(/[.,!?;:"'’]+$/g, '');
+  return FILLER_WORDS.has(w);
+}
+
+/** A caption line: the timed words that show together. */
 export interface CaptionLine {
+  /** The whole line, for tests and any non-karaoke fallback. */
   text: string;
+  /** Per-word timings on the reel timeline — drives the karaoke highlight. */
+  words: TranscriptWord[];
   start: number;
   end: number;
   /** Index within this line's words to highlight in the brand accent. */
@@ -155,7 +173,9 @@ export interface CaptionLine {
  * stop reads as two unrelated thoughts stuck together.
  */
 export function groupWordsIntoLines(words: TranscriptWord[]): CaptionLine[] {
-  const usable = words.filter((w) => w.text.trim().length > 0 && w.end > w.start);
+  const usable = words.filter(
+    (w) => w.text.trim().length > 0 && w.end > w.start && !isFiller(w.text),
+  );
   const lines: CaptionLine[] = [];
   let buf: TranscriptWord[] = [];
 
@@ -165,6 +185,7 @@ export function groupWordsIntoLines(words: TranscriptWord[]): CaptionLine[] {
     const spoken = buf[buf.length - 1].end;
     lines.push({
       text: buf.map((w) => w.text.trim()).join(' '),
+      words: [...buf],
       start,
       end: Math.max(spoken, start + MIN_LINE_SECS),
       // Emphasise the longest word: the keyword in a phrase is almost always
@@ -238,19 +259,34 @@ export function buildAssFile(lines: CaptionLine[], style: CaptionStyle = {}): st
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
 
-  const events = lines.map((line) => {
-    const words = escapeAssText(line.text).split(/\s+/).filter(Boolean);
-    const painted = words
-      .map((w, i) =>
-        i === line.emphasisIndex
-          ? // Recolour for the keyword, then hand the line back to the style's
-            // white via \r so the emphasis cannot bleed into later words.
-            `{\\c${accent}}${w}{\\r}`
-          : w,
-      )
-      .join(' ');
-    return `Dialogue: 0,${assTime(line.start)},${assTime(line.end)},Cap,,0,0,0,,${painted}`;
-  });
+  // Karaoke: the whole line stays on screen, but the word being spoken RIGHT NOW
+  // pops in the brand accent and grows slightly, moving word to word in time with
+  // the audio. This is the modern reel-caption look, and because the highlight
+  // colour is the brand accent, every brand's reels read as distinctly theirs.
+  // One event per word (each covering that word's on-screen window) rather than
+  // one static line, so the highlight can travel.
+  const events: string[] = [];
+  for (const line of lines) {
+    const painted = line.words.map((w) => escapeAssText(w.text)).filter(Boolean);
+    if (!painted.length) continue;
+    for (let i = 0; i < line.words.length; i++) {
+      const start = i === 0 ? line.start : line.words[i].start;
+      const end = i < line.words.length - 1 ? line.words[i + 1].start : line.end;
+      if (end <= start) continue;
+      const text = painted
+        .map((w, j) =>
+          j === i
+            ? // Accent colour + a slight size bump for the live word, then \r
+              // hands the rest of the line back to the style default (white,
+              // 100%) so the highlight never bleeds forward. Colour and scale are
+              // separate blocks so each override reads cleanly.
+              `{\\c${accent}}{\\fscx112\\fscy112}${w}{\\r}`
+            : w,
+        )
+        .join(' ');
+      events.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${text}`);
+    }
+  }
 
   // The hook goes on its own layer so it draws over a caption that happens to
   // share the opening seconds, rather than libass picking one arbitrarily.

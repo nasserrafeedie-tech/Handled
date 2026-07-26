@@ -159,10 +159,20 @@ describe('the ASS file', () => {
     assert.match(captionsToAss(sample), /,1,6,3,8,/);
   });
 
-  it('emits one event per line', () => {
+  it('emits a karaoke event per word, together spanning the line', () => {
+    // The line stays on screen while the highlight travels word to word, so
+    // there is one Cap event per word, back to back across the line's window.
     const events = captionsToAss(sample).split('\n').filter((l) => l.startsWith('Dialogue:'));
-    assert.equal(events.length, 1, 'three short words belong on one line');
-    assert.match(events[0], /Dialogue: 0,0:00:00\.00,0:00:01\.40,Cap,,0,0,0,,/);
+    assert.equal(events.length, 3, 'one event per spoken word');
+    assert.match(events[0], /Dialogue: 0,0:00:00\.00,0:00:00\.40,Cap,,0,0,0,,/);
+    assert.match(events[2], /,0:00:01\.40,Cap,/, 'last word runs to the line end');
+  });
+
+  it('drops filler words (um, uh) from the on-screen captions', () => {
+    const ass = captionsToAss(words([['So', 0, 0.3], ['um', 0.3, 0.6], ['fresh', 0.6, 1.0]]));
+    const dialogue = ass.split('\n').filter((l) => l.startsWith('Dialogue:')).join(' ');
+    assert.ok(!/\bum\b/.test(dialogue), 'filler word reached the caption');
+    assert.ok(/fresh/.test(dialogue), 'real words must survive');
   });
 
   it('neutralises libass control characters in the transcript', () => {
