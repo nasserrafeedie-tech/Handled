@@ -223,6 +223,9 @@ export class AdminController {
         // Re-cut the customer's most recent clips even if a prior reel already
         // claimed them — for iterating on edit quality without a re-upload.
         reCutLatest: z.boolean().optional(),
+        // How many of the most-recent clips to re-cut (default 5). Lets a test
+        // target just the last N real clips and skip older leftovers.
+        count: z.number().int().min(2).max(6).optional(),
       })
       .safeParse(body);
     if (!parsed.success) {
@@ -238,7 +241,7 @@ export class AdminController {
       const recent = await this.prisma.mediaAsset.findMany({
         where: { customerId: parsed.data.customerId, kind: 'video', source: 'owner_upload' },
         orderBy: { createdAt: 'desc' },
-        take: 5,
+        take: parsed.data.count ?? 5,
         select: { id: true },
       });
       mediaAssetIds = recent.map((m) => m.id).reverse(); // oldest-first for the cut

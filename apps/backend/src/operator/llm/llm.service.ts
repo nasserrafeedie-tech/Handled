@@ -127,7 +127,19 @@ export class LlmService {
       },
       body: JSON.stringify({
         model: this.model(req.tier),
-        max_tokens: req.maxTokens ?? 1024,
+        // Voice (Sonnet 5) does extended THINKING by default, and on a complex
+        // prompt it will spend the whole budget reasoning and hit max_tokens
+        // before emitting any answer — the response then has only a `thinking`
+        // block and no text, which read as "no text content" and dropped the
+        // reel to a dumb cut. Give voice a generous floor so thinking AND the
+        // JSON answer both fit. This is free: Anthropic bills tokens actually
+        // generated, not the cap, and thinking is adaptive (a high cap doesn't
+        // make it think more), so latency is unchanged too. Bulk (Haiku) has no
+        // such behaviour and keeps the small default.
+        max_tokens:
+          req.tier === 'voice'
+            ? Math.max(req.maxTokens ?? 0, 8000)
+            : req.maxTokens ?? 1024,
         // Only send a system block when there is context to cache. The API
         // rejects cache_control on an empty text block (400), so a caller with
         // no per-customer context — the preference extractor, the image
