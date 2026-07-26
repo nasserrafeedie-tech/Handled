@@ -272,6 +272,27 @@ export class AdminController {
   }
 
   /**
+   * The customer's most recent assembled reel, as a public URL. A direct way to
+   * fetch the latest render without scraping worker logs — used for QA and for
+   * showing an owner their reel. Returns the newest 'assembled' video asset.
+   */
+  @Get('latest-reel')
+  async latestReel(
+    @Headers('x-admin-token') token: string | undefined,
+    @Query('customer') customerId: string | undefined,
+  ) {
+    assertAdmin(token);
+    if (!customerId) return { error: 'missing customer' };
+    const asset = await this.prisma.mediaAsset.findFirst({
+      where: { customerId, kind: 'video', source: 'assembled' },
+      orderBy: { createdAt: 'desc' },
+      select: { r2Key: true, createdAt: true },
+    });
+    if (!asset) return { error: 'no_reel' };
+    return { url: this.storage.publicUrl(asset.r2Key), createdAt: asset.createdAt };
+  }
+
+  /**
    * Hard-delete a customer and everything under them (conversation, posts,
    * brand profile, connected accounts, media rows…). Every child relation is
    * onDelete: Cascade, so one delete cleans the whole tree. Requires an explicit
