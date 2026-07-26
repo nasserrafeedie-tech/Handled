@@ -6,6 +6,7 @@ import {
   clampEdl,
   edlDuration,
   fallbackEdl,
+  tightenEdl,
   mapWordsToTimeline,
   MAX_REEL_SECS,
 } from './edl';
@@ -169,6 +170,51 @@ describe('snapping a cut to word boundaries (cut on meaning)', () => {
       `end ${seg.end} did not land on a sentence boundary`,
     );
     assert.ok(seg.end > 3.5, 'should have extended to finish the sentence, not chopped at 3.5');
+  });
+});
+
+describe('keep-and-tighten (CapCut speech-pause style)', () => {
+  // Two spoken runs with 1.8s of dead air between them.
+  const words = [
+    { text: 'Welcome', start: 1.0, end: 1.4 },
+    { text: 'to', start: 1.4, end: 1.6 },
+    { text: 'the', start: 1.6, end: 1.9 },
+    { text: 'shop', start: 1.9, end: 2.2 },
+    // --- 1.8s silence ---
+    { text: 'We', start: 4.0, end: 4.2 },
+    { text: 'make', start: 4.2, end: 4.5 },
+    { text: 'everything', start: 4.5, end: 5.1 },
+    { text: 'fresh', start: 5.1, end: 5.5 },
+  ];
+
+  it('keeps every speech run and drops the dead air between them', () => {
+    const edl = tightenEdl([10], [words], 'hook');
+    assert.equal(edl.segments.length, 2, 'both runs kept');
+    // Boundaries land on run edges, never mid-phrase.
+    assert.deepEqual(
+      edl.segments.map((s) => [s.start, s.end]),
+      [
+        [1.0, 2.2],
+        [4.0, 5.5],
+      ],
+    );
+    // The 2.2–4.0 silence appears in no segment.
+    for (const s of edl.segments) {
+      assert.ok(!(s.start < 4.0 && s.end > 2.2 && s.end < 4.0), 'silence leaked in');
+    }
+  });
+
+  it('keeps a b-roll clip (no speech) whole but capped', () => {
+    const edl = tightenEdl([12], [[]], 'hook');
+    assert.equal(edl.segments.length, 1);
+    assert.equal(edl.segments[0].start, 0);
+    assert.ok(edl.segments[0].end <= 4, 'b-roll shot stays punchy');
+  });
+
+  it('never exceeds the reel cap even with lots of speech', () => {
+    const many = { text: 'word', start: 0, end: 40 };
+    const edl = tightenEdl([50], [[{ ...many }]], 'hook');
+    assert.ok(edlDuration(edl) <= MAX_REEL_SECS, 'tighten respected the reel cap');
   });
 });
 

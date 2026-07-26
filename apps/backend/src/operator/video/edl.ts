@@ -201,6 +201,86 @@ function snapToPhrases(
   return { start, end };
 }
 
+/** Default silence (seconds) between speech that counts as dead air to remove. */
+export const SILENCE_GAP_SECS = 0.45;
+
+/**
+ * Split one clip's words into speech RUNS — stretches of talking with no pause
+ * longer than `silence`. The gaps between runs are the dead air we drop.
+ */
+function speechRuns(
+  words: TranscriptWord[],
+  silence: number,
+): Array<{ start: number; end: number }> {
+  if (!words.length) return [];
+  const runs: Array<{ start: number; end: number }> = [];
+  let start = words[0].start;
+  let prevEnd = words[0].end;
+  for (let i = 1; i < words.length; i++) {
+    if (words[i].start - prevEnd >= silence) {
+      runs.push({ start, end: prevEnd });
+      start = words[i].start;
+    }
+    prevEnd = words[i].end;
+  }
+  runs.push({ start, end: prevEnd });
+  return runs;
+}
+
+/**
+ * The keep-and-tighten edit (CapCut "Speech Pause Detection" style).
+ *
+ * Instead of SELECTING a few highlight moments and dropping the rest — which
+ * left owners asking "where's half my video?" — this KEEPS everything they said
+ * and only removes the dead air between phrases. Each clip becomes its speech
+ * runs, in order, with the silences cut out; the cuts land on pauses, so a
+ * sentence is never sliced. Clips with no speech (b-roll) are kept whole, capped
+ * to a punchy length. Total is capped at MAX_REEL_SECS, trimming the tail.
+ *
+ * This is deterministic — no model call — so it can never fail to a dumb cut,
+ * and it is the right default for footage an owner deliberately filmed.
+ */
+export function tightenEdl(
+  clipDurations: number[],
+  transcripts: Array<TranscriptWord[] | undefined>,
+  hook: string,
+  silence: number = SILENCE_GAP_SECS,
+): ReelEdl {
+  const segments: EdlSegment[] = [];
+  let total = 0;
+
+  for (let ci = 0; ci < clipDurations.length; ci++) {
+    const duration = clipDurations[ci];
+    if (!duration || duration <= 0) continue;
+    if (total >= MAX_REEL_SECS) break;
+
+    const words = transcripts[ci] ?? [];
+    if (!words.length) {
+      // B-roll: keep the shot, punchy length, if there's room in the reel.
+      const end = Math.min(duration, MAX_SEGMENT_SECS, MAX_REEL_SECS - total);
+      if (end >= MIN_SEGMENT_SECS) {
+        segments.push({ clip_index: ci, start: 0, end });
+        total += end;
+      }
+      continue;
+    }
+
+    for (const run of speechRuns(words, silence)) {
+      if (total >= MAX_REEL_SECS) break;
+      const start = Math.max(0, run.start);
+      let end = Math.min(run.end, duration);
+      // Trim the last run to fit the overall reel cap.
+      if (total + (end - start) > MAX_REEL_SECS) end = start + (MAX_REEL_SECS - total);
+      if (end - start < MIN_SEGMENT_SECS) continue;
+      segments.push({ clip_index: ci, start, end });
+      total += end - start;
+    }
+  }
+
+  if (!segments.length) return fallbackEdl(clipDurations, hook);
+  return { segments, hook };
+}
+
 /**
  * The fallback edit: every clip in the order it was sent, capped.
  *

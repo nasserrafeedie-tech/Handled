@@ -1,6 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
-import { ReelEdl, clampEdl, fallbackEdl, MAX_REEL_SECS } from './edl';
+import {
+  ReelEdl,
+  clampEdl,
+  fallbackEdl,
+  tightenEdl,
+  SILENCE_GAP_SECS,
+  MAX_REEL_SECS,
+} from './edl';
 import type { ClipTranscript } from './transcription.service';
 
 /**
@@ -71,6 +78,27 @@ export class EdlService {
     if (!anySpeech) {
       this.log.log('no speech in any clip — using the plain in-order cut');
       return fallback;
+    }
+
+    // Default: KEEP-AND-TIGHTEN (CapCut "Speech Pause Detection" style). Keep
+    // everything the owner said and only remove the dead air, cutting on pauses
+    // so a sentence is never sliced. This is what fixed "where's half my video?"
+    // — the highlight selector was dropping their content — and it's
+    // deterministic, so it can never fail to a dumb cut. REEL_EDIT_MODE=highlight
+    // switches back to the model-driven highlight selector below.
+    if (process.env.REEL_EDIT_MODE !== 'highlight') {
+      const raw = Number(process.env.REEL_SILENCE_SECS);
+      const silence = Number.isFinite(raw) && raw > 0 ? raw : SILENCE_GAP_SECS;
+      const tightened = tightenEdl(
+        opts.clipDurations,
+        opts.transcripts.map((t) => t.words),
+        opts.defaultHook,
+        silence,
+      );
+      this.log.log(
+        `tighten: kept ${tightened.segments.length} speech run(s) across ${opts.clipDurations.length} clip(s)`,
+      );
+      return tightened;
     }
 
     try {
