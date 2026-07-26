@@ -17,6 +17,7 @@ import { ReelService } from '../video/reel.service';
 import { TranscriptionService } from '../video/transcription.service';
 import { EdlService } from '../video/edl.service';
 import { probeDuration } from '../video/probe';
+import { probeMotion } from '../video/motion';
 import { mapWordsToTimeline, edlDuration } from '../video/edl';
 import { captionsToAss } from '../video/captions';
 import { TaskHandler, ok, fail } from './handler.interface';
@@ -148,10 +149,26 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       customerId: task.customer_id,
     });
 
+    // Dynamic cold-open (#1): the editor is transcript-blind, so measure the
+    // PICTURE. Score each clip's motion and, if one clip has a moment that
+    // clearly stands out from its baseline, open the reel on that ~1.2s window
+    // (muted). Static talking-head footage has nothing that stands out, so it
+    // gets no cold-open rather than a pointless flash. Best-effort: any failure
+    // just means no cold-open.
+    const coldOpen = await this.pickColdOpen(paths, durations);
+    const offsetSecs = coldOpen ? coldOpen.duration : 0;
+    if (coldOpen) {
+      this.log.log(
+        `cold-open: clip ${coldOpen.clipIndex} @ ${coldOpen.start.toFixed(1)}s ` +
+          `for ${coldOpen.duration}s`,
+      );
+    }
+
     // Captions are timed against the FINISHED edit, not the source clips — a
     // word spoken 6s into clip 2 lands somewhere else entirely once the edit
     // reorders and trims. Skipping this remap still renders captions; they just
-    // describe a different moment than the one on screen.
+    // describe a different moment than the one on screen. `offsetSecs` pushes
+    // them past the cold-open so they stay in sync with the audio.
     const captionsAss = captionsToAss(
       mapWordsToTimeline(edl, transcripts.map((t) => t.words)),
       {
@@ -161,6 +178,7 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
         // draws it, because the drawtext filter is absent from the ffmpeg build
         // that runs in production.
         hookText: edl.hook || defaultHook,
+        offsetSecs,
       },
     );
 
@@ -173,6 +191,7 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
         captionsAss,
         endCardPng,
         fontsDir: font?.dir,
+        coldOpen,
       });
     } catch (err) {
       return fail(
@@ -292,6 +311,47 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       // worker moves on to the next job; leaving temp video around fills disk.
       rmSync(workDir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Choose the reel's dynamic cold-open, or nothing.
+   *
+   * Scores each clip's motion and takes the standout window — but only if it
+   * clearly beats that clip's own baseline (ratio ≥ MIN_RATIO). Uniformly static
+   * footage produces no standout and gets no cold-open, which is correct: a
+   * silent flash of a still frame is worse than just starting the reel. Among
+   * clips that DO have a standout, the most motion-heavy window wins. All
+   * best-effort — a probe failure simply drops that clip from the running.
+   */
+  private async pickColdOpen(
+    paths: string[],
+    durations: number[],
+  ): Promise<{ clipIndex: number; start: number; duration: number } | undefined> {
+    const COLD_OPEN_SECS = 1.2;
+    const MIN_RATIO = 1.5;
+
+    const windows = await Promise.all(
+      paths.map((p, i) =>
+        (durations[i] ?? 0) >= COLD_OPEN_SECS + 0.3
+          ? probeMotion(p, COLD_OPEN_SECS)
+          : Promise.resolve(null),
+      ),
+    );
+
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+    windows.forEach((w, i) => {
+      if (!w || w.ratio < MIN_RATIO) return;
+      if (w.score > bestScore) {
+        bestScore = w.score;
+        bestIdx = i;
+      }
+    });
+    if (bestIdx < 0) return undefined;
+
+    const w = windows[bestIdx]!;
+    const start = Math.min(w.start, Math.max(0, durations[bestIdx] - COLD_OPEN_SECS));
+    return { clipIndex: bestIdx, start, duration: COLD_OPEN_SECS };
   }
 }
 

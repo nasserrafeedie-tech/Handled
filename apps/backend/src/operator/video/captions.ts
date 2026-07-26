@@ -58,6 +58,13 @@ export interface CaptionStyle {
    * through a format string.
    */
   hookText?: string;
+  /**
+   * Seconds to push every event (captions and hook) later on the timeline. A
+   * dynamic cold-open is prepended to the finished video, so the speech — and
+   * therefore its captions — starts that much further in. Without this shift the
+   * captions would play over the cold-open, out of sync with the audio.
+   */
+  offsetSecs?: number;
 }
 
 /** How long the hook holds the screen — the window that earns distribution. */
@@ -259,6 +266,10 @@ export function buildAssFile(lines: CaptionLine[], style: CaptionStyle = {}): st
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
 
+  // Everything is pushed later by the cold-open's length, if any, so captions
+  // and hook line up with the audio after the prepended opener.
+  const off = Math.max(0, style.offsetSecs ?? 0);
+
   // Karaoke: the whole line stays on screen, but the word being spoken RIGHT NOW
   // pops in the brand accent and grows slightly, moving word to word in time with
   // the audio. This is the modern reel-caption look, and because the highlight
@@ -284,7 +295,7 @@ export function buildAssFile(lines: CaptionLine[], style: CaptionStyle = {}): st
             : w,
         )
         .join(' ');
-      events.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${text}`);
+      events.push(`Dialogue: 0,${assTime(start + off)},${assTime(end + off)},Cap,,0,0,0,,${text}`);
     }
   }
 
@@ -293,7 +304,7 @@ export function buildAssFile(lines: CaptionLine[], style: CaptionStyle = {}): st
   const hook = style.hookText?.trim();
   if (hook) {
     events.unshift(
-      `Dialogue: 1,${assTime(0)},${assTime(HOOK_SECS)},Hook,,0,0,0,,${escapeAssText(hook)}`,
+      `Dialogue: 1,${assTime(off)},${assTime(HOOK_SECS + off)},Hook,,0,0,0,,${escapeAssText(hook)}`,
     );
   }
 

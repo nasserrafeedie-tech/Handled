@@ -64,6 +64,15 @@ export class ReelService {
     endCardPng?: Buffer;
     /** Directory of bundled TTFs, so libass can resolve the caption font. */
     fontsDir?: string;
+    /**
+     * A dynamic cold-open (#1): the most visually active window found in the
+     * footage, prepended as a short SILENT lead so the reel opens on motion, not
+     * a static talking head. Muted on purpose — with no music yet, a fragment of
+     * mid-sentence audio at the very top would be jarring; the picture carries it.
+     * The caption/hook timeline is shifted by `duration` to compensate (see the
+     * handler). Omitted when the footage has no standout moment.
+     */
+    coldOpen?: { clipIndex: number; start: number; duration: number };
   }): Promise<Buffer> {
     if (opts.clipPaths.length === 0) throw new Error('no clips to assemble');
     const work = mkdtempSync(join(tmpdir(), 'reel-'));
@@ -79,7 +88,13 @@ export class ReelService {
         hdrByPath.set(p, await isHdr(p).catch(() => false));
       }
 
-      const cuts = opts.edl?.segments.length
+      const cuts: Array<{
+        path: string;
+        start: number;
+        duration: number;
+        hdr: boolean;
+        mute?: boolean;
+      }> = opts.edl?.segments.length
         ? opts.edl.segments.map((s) => ({
             path: opts.clipPaths[s.clip_index],
             start: s.start,
@@ -92,6 +107,20 @@ export class ReelService {
             duration: ReelService.PER_CLIP,
             hdr: hdrByPath.get(path) ?? false,
           }));
+
+      // Prepend the dynamic cold-open as a muted lead segment, if one was found
+      // and points at a real clip.
+      const co = opts.coldOpen;
+      const coPath = co ? opts.clipPaths[co.clipIndex] : undefined;
+      if (co && coPath) {
+        cuts.unshift({
+          path: coPath,
+          start: co.start,
+          duration: co.duration,
+          hdr: hdrByPath.get(coPath) ?? false,
+          mute: true,
+        });
+      }
 
       const segments: string[] = [];
       for (let i = 0; i < cuts.length; i++) {
@@ -111,13 +140,20 @@ export class ReelService {
           '-threads', '2',
           ...(cut.start > 0 ? ['-ss', String(cut.start)] : []),
           '-i', cut.path,
+          // A muted cold-open takes its audio from a silence source, not the
+          // clip — a mid-sentence fragment at the very top would be jarring, and
+          // a silent track keeps the concat's audio streams aligned (same reason
+          // the end card uses anullsrc).
+          ...(cut.mute
+            ? ['-f', 'lavfi', '-t', String(cut.duration), '-i', 'anullsrc=r=44100:cl=stereo']
+            : []),
           '-t', String(cut.duration),
           // Map explicitly. iPhone clips arrive carrying a second, 4-channel
           // spatial-audio track in a codec ffmpeg cannot decode, plus several
           // timed-metadata streams. Letting ffmpeg choose the "best" audio
           // stream means the reel's soundtrack depends on which track the
           // phone happened to write first. `?` keeps silent b-roll working.
-          '-map', '0:v:0', '-map', '0:a:0?',
+          '-map', '0:v:0', ...(cut.mute ? ['-map', '1:a:0'] : ['-map', '0:a:0?']),
           '-vf', videoFilter(cut.hdr),
           ...X264_LOW_MEMORY,
           '-c:a', 'aac', '-ar', '44100', '-ac', '2',
