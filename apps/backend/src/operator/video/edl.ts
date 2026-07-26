@@ -203,6 +203,13 @@ function snapToPhrases(
 
 /** Default silence (seconds) between speech that counts as dead air to remove. */
 export const SILENCE_GAP_SECS = 0.45;
+/**
+ * Padding (seconds) added to each speech run's end. Whisper clips the final
+ * word's end timestamp, so without this the last syllable is cut ("santa barb-").
+ * Bounded by the next run's start and the clip end, so it never overlaps or
+ * re-adds real dead air — it just recovers the tail and softens the cut.
+ */
+const RUN_TAIL_PAD_SECS = 0.35;
 
 /**
  * Split one clip's words into speech RUNS — stretches of talking with no pause
@@ -265,10 +272,18 @@ export function tightenEdl(
       continue;
     }
 
-    for (const run of speechRuns(words, silence)) {
+    const runs = speechRuns(words, silence);
+    for (let r = 0; r < runs.length; r++) {
       if (total >= MAX_REEL_SECS) break;
+      const run = runs[r];
       const start = Math.max(0, run.start);
-      let end = Math.min(run.end, duration);
+      // Whisper under-reports the LAST word's end, clipping the final syllable
+      // ("...santa barb-"). Pad the run's end back into the silence we were
+      // dropping — recovering the tail and leaving a little breathing room so
+      // the cut isn't abrupt — but never past the next run's start (no overlap)
+      // or the clip's end.
+      const nextStart = runs[r + 1]?.start ?? duration;
+      let end = Math.min(run.end + RUN_TAIL_PAD_SECS, nextStart, duration);
       // Trim the last run to fit the overall reel cap.
       if (total + (end - start) > MAX_REEL_SECS) end = start + (MAX_REEL_SECS - total);
       if (end - start < MIN_SEGMENT_SECS) continue;

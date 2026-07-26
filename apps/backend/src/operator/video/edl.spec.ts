@@ -190,18 +190,17 @@ describe('keep-and-tighten (CapCut speech-pause style)', () => {
   it('keeps every speech run and drops the dead air between them', () => {
     const edl = tightenEdl([10], [words], 'hook');
     assert.equal(edl.segments.length, 2, 'both runs kept');
-    // Boundaries land on run edges, never mid-phrase.
-    assert.deepEqual(
-      edl.segments.map((s) => [s.start, s.end]),
-      [
-        [1.0, 2.2],
-        [4.0, 5.5],
-      ],
-    );
-    // The 2.2–4.0 silence appears in no segment.
-    for (const s of edl.segments) {
-      assert.ok(!(s.start < 4.0 && s.end > 2.2 && s.end < 4.0), 'silence leaked in');
-    }
+    const [a, b] = edl.segments;
+    // Run starts are the phrase starts.
+    assert.equal(a.start, 1.0);
+    assert.equal(b.start, 4.0);
+    // First run's end is padded a little past the last word (2.2) for breathing
+    // room, but never into the next run (4.0) — the dead air is still dropped.
+    assert.ok(a.end > 2.2 && a.end < 4.0, `first run end ${a.end} leaked the silence`);
+    assert.ok(a.end < b.start, 'silence between runs was dropped');
+    // Last run's end is padded past the final word (5.5) to recover the tail,
+    // capped at the clip duration.
+    assert.ok(b.end >= 5.5 && b.end <= 10, `last run end ${b.end} out of range`);
   });
 
   it('keeps a b-roll clip (no speech) whole but capped', () => {
