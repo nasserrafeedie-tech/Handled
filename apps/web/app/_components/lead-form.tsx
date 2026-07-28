@@ -32,12 +32,15 @@ export function LeadForm({
   const api = process.env.NEXT_PUBLIC_API_URL;
   const [phone, setPhone] = useState('');
   const [consented, setConsented] = useState(false);
+  const [optedIn, setOptedIn] = useState(false);
   const [state, setState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!api || phone.replace(/\D/g, '').length < 10 || !consented)
-      return setState('error');
+    // Consent is NEVER required to submit — A2P 10DLC (error 30923) prohibits
+    // making SMS consent a condition of signing up. Only the phone must be
+    // valid; the box is the visitor's free, separate choice.
+    if (!api || phone.replace(/\D/g, '').length < 10) return setState('error');
     try {
       setState('busy');
       const res = await fetch(`${api}/leads`, {
@@ -46,14 +49,16 @@ export function LeadForm({
         body: JSON.stringify({
           phone,
           source,
-          // Consent audit trail — ignored by the API until the Lead model
-          // grows consent columns, but harmless to send now.
-          smsConsent: true,
-          smsConsentText: CONSENT_TEXT,
-          smsConsentAt: new Date().toISOString(),
+          // Record consent truthfully — only a checked box is consent, and the
+          // language + timestamp go with it as the audit trail.
+          smsConsent: consented,
+          ...(consented
+            ? { smsConsentText: CONSENT_TEXT, smsConsentAt: new Date().toISOString() }
+            : {}),
         }),
       });
       if (!res.ok) throw new Error();
+      setOptedIn(consented);
       setState('done');
     } catch {
       setState('error');
@@ -63,7 +68,9 @@ export function LeadForm({
   if (state === 'done') {
     return (
       <p className="rounded-2xl bg-paper/10 px-5 py-4 text-center text-sm text-paper/90 backdrop-blur-sm">
-        {doneText}
+        {optedIn
+          ? doneText
+          : "Thanks — you're on file. Handled runs entirely over text, so tick the consent box above whenever you're ready and your first text will get you started."}
       </p>
     );
   }
@@ -85,7 +92,6 @@ export function LeadForm({
       <label className="flex items-start gap-2.5 text-left text-[11px] leading-relaxed text-paper/65">
         <input
           type="checkbox"
-          required
           checked={consented}
           onChange={(e) => { setConsented(e.target.checked); if (state === 'error') setState('idle'); }}
           className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-clay-500"
@@ -99,7 +105,7 @@ export function LeadForm({
       </label>
       {state === 'error' && (
         <p className="text-xs text-clay-300">
-          {consented ? "That number didn't look right — try again?" : 'Please check the consent box so we can legally text you.'}
+          That number didn&rsquo;t look right — try again?
         </p>
       )}
     </form>

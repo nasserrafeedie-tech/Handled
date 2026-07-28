@@ -67,9 +67,11 @@ export default function StartPage() {
           Sign up and opt in to texts
         </h2>
         <p className="text-sm text-ink/70">
-          Enter your mobile number and check the box to agree to receive the
-          account text messages described above. We never share or sell your
-          number — see our{' '}
+          Enter your mobile number, then — if you&rsquo;d like the text updates
+          described above — check the box to opt in. Checking the box is{' '}
+          <strong>optional and not required</strong> to sign up; it&rsquo;s
+          simply how you tell us it&rsquo;s okay to text you. We never share or
+          sell your number — see our{' '}
           <a className="underline" href="/privacy">Privacy Policy</a> and{' '}
           <a className="underline" href="/terms">Terms</a>.
         </p>
