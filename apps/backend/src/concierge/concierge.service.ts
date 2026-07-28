@@ -133,6 +133,7 @@ export class ConciergeService {
         conversation.id,
         "Handled runs your social media over text. Just tell me what you need in " +
           "your own words — see your plan, change a post, post more often, pause. " +
+          "Questions? nasser@texthandled.com. " +
           "Reply STOP to cancel any time. Msg & data rates may apply.",
       );
     }
