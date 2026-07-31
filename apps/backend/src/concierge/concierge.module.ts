@@ -3,6 +3,7 @@ import { PlaybookModule } from '../playbook/playbook.module';
 import { ConciergeController } from './concierge.controller';
 import { DevSmsController } from './dev-sms.controller';
 import { SignupController } from './signup.controller';
+import { EmailInboundController } from './email-inbound.controller';
 import { ConciergeService } from './concierge.service';
 import { RecapService } from './recap.service';
 import { TwilioService } from './twilio.service';
@@ -13,7 +14,12 @@ import { LlmService } from '../operator/llm/llm.service';
 
 @Module({
   imports: [PlaybookModule],
-  controllers: [ConciergeController, DevSmsController, SignupController],
+  controllers: [
+    ConciergeController,
+    DevSmsController,
+    SignupController,
+    EmailInboundController,
+  ],
   // LlmService is stateless, so providing our own instance here keeps the
   // Concierge decoupled from OperatorModule (§3 hard separation).
   providers: [

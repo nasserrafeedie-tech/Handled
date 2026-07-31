@@ -74,7 +74,7 @@ const CONFIRMATIONS: Record<string, string> = {
 const AnswerOutput = z.object({ reply: z.string().min(1).max(600) });
 
 export interface InboundSms {
-  from: string; // E.164
+  from: string; // E.164 phone (SMS) or an email address (email channel)
   body: string;
   mediaUrls: string[];
   mediaContentTypes: string[];
@@ -113,6 +113,7 @@ export class ConciergeService {
       data: {
         conversationId: conversation.id,
         direction: 'inbound',
+        channel: msg.from.includes('@') ? 'email' : 'sms',
         body: msg.body,
         mediaUrls: msg.mediaUrls,
         twilioSid: msg.twilioSid,
@@ -1174,33 +1175,32 @@ export class ConciergeService {
     );
   }
 
-  private async resolveCustomer(rawPhone: string) {
-    // Every inbound path funnels through here, so this is the one place that
-    // has to agree on spelling. Lookup is an exact match: if the stored number
-    // says "+14244098341" and this call says "4244098341", we don't find the
-    // owner and silently start them over from question one.
-    //
-    // Twilio always sends E.164, so a failure here means something unusual —
-    // a short code, or a country we don't serve. We keep the raw value rather
-    // than dropping the message, and log it loudly, because losing an inbound
-    // text is worse than storing an odd one.
-    const normalized = normalizePhone(rawPhone);
-    if (!normalized) {
-      this.log.error(`could not normalize inbound number "${rawPhone}" — storing as-is`);
-    }
-    const phone = normalized ?? rawPhone;
+  private async resolveCustomer(rawFrom: string) {
+    // Every inbound path funnels through here — SMS or email — so this is the
+    // one place identity is resolved. An '@' means it came in over email; look
+    // up (or create) by email and mark the channel. Otherwise it's a phone.
+    const isEmail = rawFrom.includes('@');
 
     let customer = await this.prisma.customer.findUnique({
-      where: { phone },
+      where: isEmail
+        ? { email: rawFrom.trim().toLowerCase() }
+        : { phone: this.normalizeInboundPhone(rawFrom) },
       include: { conversation: true },
     });
     if (!customer) {
       customer = await this.prisma.customer.create({
-        data: {
-          phone,
-          conversation: { create: {} },
-          brandProfile: { create: {} },
-        },
+        data: isEmail
+          ? {
+              email: rawFrom.trim().toLowerCase(),
+              preferredChannel: 'email',
+              conversation: { create: {} },
+              brandProfile: { create: {} },
+            }
+          : {
+              phone: this.normalizeInboundPhone(rawFrom),
+              conversation: { create: {} },
+              brandProfile: { create: {} },
+            },
         include: { conversation: true },
       });
     }
@@ -1208,6 +1208,21 @@ export class ConciergeService {
       customer.conversation ??
       (await this.prisma.conversation.create({ data: { customerId: customer.id } }));
     return { customer, conversation };
+  }
+
+  /**
+   * Normalize an inbound phone to the stored spelling. Lookup is an exact match:
+   * if the stored number says "+14244098341" and this call says "4244098341" we
+   * don't find the owner and silently start them over. Twilio always sends
+   * E.164, so a failure here is unusual — we keep the raw value and log loudly,
+   * because losing an inbound text is worse than storing an odd one.
+   */
+  private normalizeInboundPhone(rawPhone: string): string {
+    const normalized = normalizePhone(rawPhone);
+    if (!normalized) {
+      this.log.error(`could not normalize inbound number "${rawPhone}" — storing as-is`);
+    }
+    return normalized ?? rawPhone;
   }
 
   /**
