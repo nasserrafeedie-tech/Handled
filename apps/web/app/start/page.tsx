@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { EmailSignup } from '../_components/email-signup';
 
 /**
  * The A2P / toll-free opt-in proof page — rebuilt around USER-INITIATED consent.
@@ -97,12 +98,17 @@ export default function StartPage() {
           Prefer not to text?
         </h2>
         <p className="text-sm text-ink/70">
-          Texting is optional. You never have to give a phone number or opt in
-          to messaging to work with us — email{' '}
+          Texting is entirely optional — you never have to give a phone number
+          or opt in to messaging to use Handled. Sign up with your email instead
+          and we&rsquo;ll run the whole thing over email.
+        </p>
+        <EmailSignup />
+        <p className="text-xs text-ink/50">
+          Or just email us at{' '}
           <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>
             {SUPPORT_EMAIL}
-          </a>{' '}
-          and we&rsquo;ll get you set up the same way, over email instead.
+          </a>
+          .
         </p>
       </section>
 

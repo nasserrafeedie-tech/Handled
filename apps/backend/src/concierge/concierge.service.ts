@@ -6,6 +6,7 @@ import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
+import { EmailService } from './email.service';
 import { OnboardingService } from './onboarding.service';
 import {
   IntentService,
@@ -97,6 +98,7 @@ export class ConciergeService {
     private readonly prisma: PrismaService,
     private readonly bus: TaskBus,
     private readonly twilio: TwilioService,
+    private readonly email: EmailService,
     private readonly onboarding: OnboardingService,
     private readonly intent: IntentService,
     private readonly llm: LlmService,
@@ -122,14 +124,14 @@ export class ConciergeService {
       const result = await this.bus.emit(
         this.task(customer.id, 'PAUSE_CUSTOMER', { reason: 'owner_stop', resume: false }),
       );
-      return this.reply(customer.phone, conversation.id, result.summary_for_owner);
+      return this.reply(this.addressOf(customer), conversation.id, result.summary_for_owner);
     }
 
     // 1b. HELP — carrier-mandated, like STOP. Must be exact and must not go
     //     through interpretation.
     if (/^\s*help\s*[!.]?\s*$/i.test(msg.body)) {
       return this.reply(
-        customer.phone,
+        this.addressOf(customer),
         conversation.id,
         "Handled runs your social media over text. Just tell me what you need in " +
           "your own words — see your plan, change a post, post more often, pause. " +
@@ -167,7 +169,7 @@ export class ConciergeService {
         );
         lastSummary = result.summary_for_owner;
       }
-      return this.reply(customer.phone, conversation.id, lastSummary);
+      return this.reply(this.addressOf(customer), conversation.id, lastSummary);
     }
 
     // 3. Onboarding interview (§6) — resume at the next empty profile field.
@@ -175,7 +177,7 @@ export class ConciergeService {
       where: { customerId: customer.id },
     });
     if (!this.onboarding.isComplete(profile)) {
-      return this.continueOnboarding(customer.id, customer.phone, conversation.id, msg.body, profile, customer.businessName, customer.planTier);
+      return this.continueOnboarding(customer.id, this.addressOf(customer), conversation.id, msg.body, profile, customer.businessName, customer.planTier);
     }
 
     // 4. Graphic request ("make a graphic/carousel/quote card/promo...").
@@ -184,11 +186,11 @@ export class ConciergeService {
       const result = await this.bus.emit(
         this.task(customer.id, 'MAKE_GRAPHIC', { slides }),
       );
-      return this.reply(customer.phone, conversation.id, result.summary_for_owner);
+      return this.reply(this.addressOf(customer), conversation.id, result.summary_for_owner);
     }
 
     // 5. Steady-state loop (§6): approve / revise / cancel / question.
-    return this.handleSteadyState(customer.id, customer.phone, conversation.id, msg.body);
+    return this.handleSteadyState(customer.id, this.addressOf(customer), conversation.id, msg.body);
   }
 
   /**
@@ -489,7 +491,11 @@ export class ConciergeService {
     // would never see it. Persist it now so it surfaces in the outbox; the human
     // already controls the timing.
     const manualRelay = process.env.SMS_MANUAL_RELAY === '1';
+    // Quiet hours are a TCPA rule about SMS/calls — they don't apply to email,
+    // which the owner reads on their own schedule. Only defer texts.
+    const isSms = customer.preferredChannel !== 'email';
     if (
+      isSms &&
       !opts?.promptedByOwner &&
       !manualRelay &&
       !inTextingWindow(now, customer.timezone)
@@ -506,7 +512,7 @@ export class ConciergeService {
     const conversation =
       customer.conversation ??
       (await this.prisma.conversation.create({ data: { customerId } }));
-    await this.reply(customer.phone, conversation.id, body);
+    await this.reply(this.addressOf(customer), conversation.id, body);
   }
 
   /**
@@ -545,7 +551,7 @@ export class ConciergeService {
         (await this.prisma.conversation.create({
           data: { customerId: customer.id },
         }));
-      await this.reply(customer.phone, conversation.id, item.body);
+      await this.reply(this.addressOf(customer), conversation.id, item.body);
       await this.prisma.queuedText.update({
         where: { id: item.id },
         data: { sentAt: new Date() },
@@ -1204,11 +1210,36 @@ export class ConciergeService {
     return { customer, conversation };
   }
 
-  private async reply(phone: string, conversationId: string, body: string): Promise<void> {
-    await this.twilio.send(phone, body);
+  /**
+   * Send one outbound message and record it. `to` is the customer's address on
+   * their channel — an email address routes over the email provider, anything
+   * else over Twilio SMS. Everything upstream is channel-agnostic; this is the
+   * one place the two wires diverge.
+   */
+  private async reply(to: string, conversationId: string, body: string): Promise<void> {
+    const channel = to.includes('@') ? 'email' : 'sms';
+    if (channel === 'email') {
+      await this.email.send(to, body);
+    } else {
+      await this.twilio.send(to, body);
+    }
     await this.prisma.message.create({
-      data: { conversationId, direction: 'outbound', body },
+      data: { conversationId, direction: 'outbound', channel, body },
     });
+  }
+
+  /**
+   * The address to reach a customer on. Both phone and email are optional in the
+   * schema (a customer arrives over exactly one), so prefer the one their
+   * channel names, then fall back to whichever is set.
+   */
+  private addressOf(c: {
+    phone: string | null;
+    email: string | null;
+    preferredChannel: string;
+  }): string {
+    const primary = c.preferredChannel === 'email' ? c.email : c.phone;
+    return primary ?? c.phone ?? c.email ?? '';
   }
 
   private isStop(body: string): boolean {

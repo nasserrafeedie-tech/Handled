@@ -108,7 +108,16 @@ enum TaskStatus {
 // ─── customers ───────────────────────────────────────────────────────────
 model Customer {
   id              String         @id @default(uuid()) @db.Uuid
-  phone           String         @unique
+  // A customer reaches us over one of two channels. Phone (SMS) OR email — at
+  // least one is always set, both are unique. Phone is nullable because an
+  // email-first customer (who signed up without ever giving a number) has no
+  // phone, and forcing one would mean inventing a fake unique value.
+  phone           String?        @unique
+  email           String?        @unique
+  // Which channel we reach this customer on: 'sms' or 'email'. Drives whether
+  // an outbound message goes over Twilio or the email provider, and whether
+  // TCPA quiet-hours apply (SMS only).
+  preferredChannel String        @default("sms")
   businessName    String?
   // IANA zone the business actually operates in. Every scheduled time is a
   // wall-clock hour in here — without it, a 9am post lands at 2am. Defaulted
@@ -508,6 +517,9 @@ model Message {
   id             String           @id @default(uuid()) @db.Uuid
   conversationId String           @db.Uuid
   direction      MessageDirection
+  // 'sms' or 'email' — which wire this message went over. Defaults to sms for
+  // the whole history that predates the email channel.
+  channel        String           @default("sms")
   body           String?
   mediaUrls      String[]
   twilioSid      String?          @unique
