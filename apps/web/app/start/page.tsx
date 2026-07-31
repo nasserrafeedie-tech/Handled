@@ -1,27 +1,36 @@
 import type { Metadata } from 'next';
-import { LeadForm } from '../_components/lead-form';
-
-export const metadata: Metadata = {
-  title: 'Start with Handled — text sign-up',
-  description:
-    'Sign up for Handled, the done-for-you social media service run over text. Provide your number and consent to receive account text messages.',
-};
 
 /**
- * The A2P 10DLC opt-in proof page.
+ * The A2P / toll-free opt-in proof page — rebuilt around USER-INITIATED consent.
  *
- * The campaign was rejected (error 30909 / CTA verification) because the
- * reviewer could not verify the opt-in: the submission used the internal name
- * "AISSM" and did not hand them a single URL that shows the whole consent flow.
- * Carriers grade the exact things laid out here — the business and messaging
- * use case (30919), the messages the user will get, message frequency, rates,
- * STOP/HELP, an UNCHECKED-by-default consent box (30925), the consent language
- * (30924), and links to Privacy (30933) and Terms (30934) — all publicly
- * reachable with no login (30921).
+ * A carrier reviewer rejected the previous web-form version (30923 + an explicit
+ * OPT-IN note): "mandatory consent box … phone number is also mandatory …
+ * modify your form mechanics so SMS opt-in is entirely optional … consumers must
+ * be able to decline messaging and still use your business services." For an
+ * SMS-native product there is no way to make a business-initiated web form
+ * "optional" — the form itself is the forced-consent problem.
  *
- * This is the exact URL to give in the resubmission: <site>/start. Everything a
- * reviewer needs is above the fold on one page, under the real brand name.
+ * So the opt-in is now text-to-join: the customer TEXTS us to start, and their
+ * inbound message IS the consent — voluntary by definition, nothing captured on
+ * a form, nothing forced. A separate, no-phone email path lets anyone engage
+ * without messaging at all, which is exactly what the reviewer asked for.
+ *
+ * Required disclosures still live here (program name, message types, frequency,
+ * rates, STOP/HELP, Privacy/Terms) — carriers grade those regardless of the
+ * opt-in mechanism. Set NEXT_PUBLIC_SMS_NUMBER to the provisioned number.
  */
+
+const SMS_KEYWORD = 'HANDLED';
+const SMS_NUMBER = process.env.NEXT_PUBLIC_SMS_NUMBER; // e.g. "+1 (866) 747-7513"
+const SUPPORT_EMAIL = 'nasser@texthandled.com';
+
+export const metadata: Metadata = {
+  title: 'Start with Handled — text to begin',
+  description:
+    'Handled is a done-for-you social media service run over text. Text ' +
+    'HANDLED to get started, entirely optional — or email us instead, no phone required.',
+};
+
 export default function StartPage() {
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-8 px-6 py-16 leading-relaxed">
@@ -32,12 +41,31 @@ export default function StartPage() {
         </h1>
         <p className="text-ink/75">
           Handled is a done-for-you social media service for local small
-          businesses, operated entirely over text message. You send us a few
-          details about your business; we write, design, and (with your
-          approval) publish your posts. There is nothing to install and no
-          dashboard to learn.
+          businesses, operated entirely over text message. We write, design,
+          and (with your approval) publish your posts. There is nothing to
+          install and no dashboard to learn.
         </p>
       </div>
+
+      {/* PRIMARY opt-in: user-initiated. Texting us IS the consent — voluntary,
+          no form, nothing forced. */}
+      <section className="flex flex-col gap-3 rounded-2xl bg-ink p-6 text-paper">
+        <h2 className="font-display text-lg font-medium">Get started</h2>
+        <p className="text-sm text-paper/80">
+          Text the word <strong>{SMS_KEYWORD}</strong> to{' '}
+          <strong>{SMS_NUMBER ?? '(our number)'}</strong> from your phone. That
+          first text is how you opt in — sending it is entirely your choice, and
+          you can reply <strong>STOP</strong> at any time to opt out.
+        </p>
+        {SMS_NUMBER && (
+          <a
+            href={`sms:${SMS_NUMBER.replace(/[^\d+]/g, '')}?&body=${SMS_KEYWORD}`}
+            className="btn-clay mt-1 justify-center"
+          >
+            Text {SMS_KEYWORD} to {SMS_NUMBER}
+          </a>
+        )}
+      </section>
 
       <section className="flex flex-col gap-3 rounded-2xl border border-ink/10 bg-parchment/50 p-6">
         <h2 className="font-display text-lg font-medium">
@@ -62,30 +90,27 @@ export default function StartPage() {
         </p>
       </section>
 
-      <section className="flex flex-col gap-4">
+      {/* The explicit "decline messaging and still use the business" path the
+          reviewer required — no phone number, no SMS. */}
+      <section className="flex flex-col gap-2 rounded-2xl border border-ink/10 p-6">
         <h2 className="font-display text-lg font-medium">
-          Sign up and opt in to texts
+          Prefer not to text?
         </h2>
         <p className="text-sm text-ink/70">
-          Enter your mobile number, then — if you&rsquo;d like the text updates
-          described above — check the box to opt in. Checking the box is{' '}
-          <strong>optional and not required</strong> to sign up; it&rsquo;s
-          simply how you tell us it&rsquo;s okay to text you. We never share or
-          sell your number — see our{' '}
-          <a className="underline" href="/privacy">Privacy Policy</a> and{' '}
-          <a className="underline" href="/terms">Terms</a>.
+          Texting is optional. You never have to give a phone number or opt in
+          to messaging to work with us — email{' '}
+          <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>
+            {SUPPORT_EMAIL}
+          </a>{' '}
+          and we&rsquo;ll get you set up the same way, over email instead.
         </p>
-        {/* Reuses the same consent component as the homepage: phone field, an
-            unchecked-by-default consent checkbox, the TCPA consent language, and
-            Privacy/Terms links — the whole opt-in the reviewer must verify. */}
-        <div className="rounded-2xl bg-ink p-6">
-          <LeadForm
-            source="start-optin"
-            cta="Sign up for Handled"
-            doneText="You're signed up ✳ Your first text will confirm your details and get you started."
-          />
-        </div>
       </section>
+
+      <p className="text-xs text-ink/50">
+        We never share or sell your number. See our{' '}
+        <a className="underline" href="/privacy">Privacy Policy</a> and{' '}
+        <a className="underline" href="/terms">Terms</a>.
+      </p>
     </main>
   );
 }
