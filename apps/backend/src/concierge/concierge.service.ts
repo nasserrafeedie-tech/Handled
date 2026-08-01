@@ -73,6 +73,18 @@ const CONFIRMATIONS: Record<string, string> = {
 /** Shape of a grounded question-answer from the LLM. */
 const AnswerOutput = z.object({ reply: z.string().min(1).max(600) });
 
+/**
+ * The one-time SMS opt-in confirmation, sent the first time a NEW number texts
+ * in (text-to-join). This is the CTIA/A2P disclosure the campaign registers:
+ * what they'll get, frequency, rates, HELP/STOP, and Terms/Privacy. Email
+ * opt-in shows the same disclosures on the web form, so this is SMS-only.
+ */
+const SMS_OPTIN_DISCLOSURE =
+  'Handled: You are opted in ✳ Expect a few texts a week — content to review, ' +
+  'approval requests, publish confirmations, and your weekly plan. Msg & data ' +
+  'rates may apply. Reply HELP for help, STOP to opt out. ' +
+  'Terms: texthandled.com/terms  Privacy: texthandled.com/privacy';
+
 export interface InboundSms {
   from: string; // E.164 phone (SMS) or an email address (email channel)
   body: string;
@@ -108,7 +120,7 @@ export class ConciergeService {
   ) {}
 
   async handleInbound(msg: InboundSms): Promise<void> {
-    const { customer, conversation } = await this.resolveCustomer(msg.from);
+    const { customer, conversation, created } = await this.resolveCustomer(msg.from);
     await this.prisma.message.create({
       data: {
         conversationId: conversation.id,
@@ -139,6 +151,15 @@ export class ConciergeService {
           "Questions? nasser@texthandled.com. " +
           "Reply STOP to cancel any time. Msg & data rates may apply.",
       );
+    }
+
+    // 1c. Text-to-join opt-in: the FIRST time a new number texts us, that
+    //     inbound message is the opt-in, so confirm it with the registered
+    //     compliance disclosure (frequency, rates, HELP/STOP, Terms/Privacy)
+    //     before the conversation proceeds. SMS only — email opt-in carries the
+    //     same disclosures on the web form. Sent once (only when just created).
+    if (created && !msg.from.includes('@')) {
+      await this.reply(this.addressOf(customer), conversation.id, SMS_OPTIN_DISCLOSURE);
     }
 
     // 2. Media in → ingest each attachment, and aim it at whatever is waiting:
@@ -1181,6 +1202,7 @@ export class ConciergeService {
     // up (or create) by email and mark the channel. Otherwise it's a phone.
     const isEmail = rawFrom.includes('@');
 
+    let created = false;
     let customer = await this.prisma.customer.findUnique({
       where: isEmail
         ? { email: rawFrom.trim().toLowerCase() }
@@ -1188,6 +1210,7 @@ export class ConciergeService {
       include: { conversation: true },
     });
     if (!customer) {
+      created = true;
       customer = await this.prisma.customer.create({
         data: isEmail
           ? {
@@ -1207,7 +1230,7 @@ export class ConciergeService {
     const conversation =
       customer.conversation ??
       (await this.prisma.conversation.create({ data: { customerId: customer.id } }));
-    return { customer, conversation };
+    return { customer, conversation, created };
   }
 
   /**
