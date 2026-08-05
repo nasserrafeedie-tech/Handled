@@ -138,6 +138,12 @@ model Customer {
   trustLevel      TrustLevel     @default(approve_all) // §8: everyone starts here
   status          CustomerStatus @default(onboarding)
   stripeCustomerId String?       @unique
+  // Text-to-join paywall: an unpaid lead gets exactly ONE free drafted caption
+  // (the taste that converts a business-card text into a subscriber). Stamped
+  // when that draft is delivered; never reset, so a number can't farm drafts.
+  // stripeCustomerId null + this set = every further inbound gets the static
+  // paywall reply. See handleFreeTaste in concierge.service.ts.
+  freeDraftUsedAt DateTime?
   // Referral loop: my shareable code, and the code that brought me here.
   referralCode    String?        @unique
   referredByCode  String?
