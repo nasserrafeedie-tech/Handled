@@ -43,10 +43,23 @@ const carousel = (seed: number, n = 5) =>
     renderSlideSvg(slide({ seed, variant: i }), theme));
 
 describe('a carousel is one post, so its slides look like a set', () => {
-  it('gives every slide in the set the same surface', () => {
+  it('alternates surface value within a deck — dark, light, dark — deterministically', () => {
     const svgs = carousel(3);
-    const surfaces = new Set(svgs.map(surfaceOf));
-    assert.equal(surfaces.size, 1, 'all slides in a carousel share one surface');
+    const surfaces = svgs.map(surfaceOf);
+    // The deck rhythm: exactly two surfaces (its dark and its light),
+    // alternating — not one card recoloured five times, not five strangers.
+    assert.equal(new Set(surfaces).size, 2, 'a body-slide deck uses its dark and its light');
+    assert.equal(surfaces[0], surfaces[2], 'value alternates: slides 0 and 2 match');
+    assert.equal(surfaces[1], surfaces[3], 'value alternates: slides 1 and 3 match');
+    assert.notEqual(surfaces[0], surfaces[1], 'adjacent slides differ in value');
+    // Deterministic: a re-render of the same post is identical.
+    assert.equal(surfaceOf(renderSlideSvg(slide({ seed: 3, variant: 0 }), theme)), surfaces[0]);
+  });
+
+  it('floods the CTA slide in the accent, whatever the alternation', () => {
+    const cta = surfaceOf(renderSlideSvg(slide({ seed: 3, variant: 4, kind: 'cta' }), theme));
+    const bodies = new Set(carousel(3, 4).map(surfaceOf));
+    assert.ok(!bodies.has(cta), 'the closing slide pops against the body slides');
   });
 
   it('still varies the decoration slide to slide, so it is not five identical cards', () => {
@@ -56,11 +69,16 @@ describe('a carousel is one post, so its slides look like a set', () => {
 });
 
 describe('variety lives between posts, not inside one', () => {
-  it('gives different posts different surfaces', () => {
-    // Walk a full rotation: consecutive seeds must not repeat a surface.
-    const seen = Array.from({ length: 7 }, (_, s) =>
-      surfaceOf(renderSlideSvg(slide({ seed: s, variant: 0 }), theme)));
-    assert.equal(new Set(seen).size, 7, 'each seed in the rotation is a distinct surface');
+  it('gives different posts different decks', () => {
+    // A deck's identity is its (opening, second) surface pair. Consecutive
+    // seeds walk lead parity and both pools, so a week of posts reads varied.
+    const fingerprints = Array.from({ length: 7 }, (_, s) =>
+      surfaceOf(renderSlideSvg(slide({ seed: s, variant: 0 }), theme)) +
+      surfaceOf(renderSlideSvg(slide({ seed: s, variant: 1 }), theme)));
+    assert.ok(
+      new Set(fingerprints).size >= 5,
+      `expected consecutive posts to differ, got ${new Set(fingerprints).size} distinct decks in 7`,
+    );
   });
 
   it('two carousels running back to back do not look alike', () => {
@@ -124,11 +142,16 @@ describe('two different businesses should not share a look', () => {
 
   it('the same brand still gets feed variety across its own posts', () => {
     const id = ids[0];
-    const surfaces = new Set(
-      [0, 1, 2, 3, 4, 5, 6].map((made) =>
-        surfaceOf(renderSlideSvg(slide({ seed: made + stableSeed(id), variant: 0 }), theme))),
+    const decks = new Set(
+      [0, 1, 2, 3, 4, 5, 6].map((made) => {
+        const seed = made + stableSeed(id);
+        return (
+          surfaceOf(renderSlideSvg(slide({ seed, variant: 0 }), theme)) +
+          surfaceOf(renderSlideSvg(slide({ seed, variant: 1 }), theme))
+        );
+      }),
     );
-    assert.ok(surfaces.size >= 5, 'a brand walking its own post counts still varies');
+    assert.ok(decks.size >= 5, 'a brand walking its own post counts still varies');
   });
 });
 
