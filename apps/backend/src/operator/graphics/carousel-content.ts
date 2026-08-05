@@ -64,8 +64,14 @@ export const CarouselSlide = z
     kind: z.enum(['title', 'body', 'quote', 'promo', 'cta']),
     headline: z.string().min(1).max(90),
     body: z.string().max(220).optional(),
-    /** Button words on the CTA slide — the business's REAL action. */
-    cta_label: z.string().min(2).max(24).optional(),
+    /** Button words on the CTA slide — the business's REAL action. Truncation
+     *  beats rejection: a 30-char label is a style miss, not a bad deck. */
+    cta_label: z
+      .string()
+      .min(2)
+      .max(60)
+      .transform((s) => s.slice(0, 28))
+      .optional(),
   })
   .strict();
 export type CarouselSlide = z.infer<typeof CarouselSlide>;
@@ -119,7 +125,8 @@ export function carouselInstruction(brief: CarouselBrief): string {
     '  plainly ("Text us one line about your week", "Book online", "Come in").',
     '  Set `cta_label` to the button words for that SAME action — "Text us",',
     '  "Book now", "Come by" — never a generic "Visit us" that contradicts the',
-    '  headline. If the business works over text, the CTA is about texting.',
+    '  headline; keep it under 20 characters, it is printed on a small button.',
+    '  If the business works over text, the CTA is about texting.',
     brief.brandName ? `  You may name the business ("${brief.brandName}") here; nowhere else needs it.` : '',
     '',
     'Rules:',
