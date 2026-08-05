@@ -182,6 +182,20 @@ describe('free-taste paywall', () => {
     assert.equal(world.updates.length, 0);
   });
 
+  it('the opt-in keyword from an EXISTING customer re-asks — never becomes the blurb', async () => {
+    // The bug: a reset/re-engaged customer texting HANDLED got a caption about
+    // the word "handled" — their one free taste spent on nothing.
+    world.seed({ ...UNPAID });
+    for (const kw of ['Handled', 'HANDLED', 'start', 'yes', 'hi', 'Hey!']) {
+      world.sent.length = 0;
+      await world.svc.handleInbound(sms(kw));
+      assert.equal(world.sent.length, 1, `"${kw}" should get exactly one reply`);
+      assert.match(world.sent[0], /text me back|free/i, `"${kw}" must re-ask, not draft`);
+    }
+    assert.equal(world.llmCalls(), 0, 'keywords must never reach the LLM');
+    assert.equal(world.updates.length, 0, 'keywords must not spend the taste');
+  });
+
   it('an empty body (photo only) re-asks instead of drafting from nothing', async () => {
     world.seed({ ...UNPAID });
     await world.svc.handleInbound({ ...sms('   '), mediaUrls: ['https://x/y.jpg'], mediaContentTypes: ['image/jpeg'] });

@@ -328,6 +328,14 @@ export class ConciergeService {
       return this.reply(addr, conversationId, FREE_TASTE_INTRO);
     }
 
+    // The advertised keyword (or a bare greeting) is an opt-in, not a business
+    // description. Without this, an existing customer texting HANDLED again
+    // got a caption about the word "handled" — their one taste, spent on
+    // nothing. Ask the real question instead.
+    if (/^(handled|start|yes|unstop|join|hi|hello|hey|yo|sup)[!.?\s]*$/i.test(blurb)) {
+      return this.reply(addr, conversationId, FREE_TASTE_INTRO);
+    }
+
     // Global circuit-breaker: cycling burner numbers hits this wall long
     // before it runs up the LLM bill. Counted by stamp, so only delivered
     // drafts consume the budget.
