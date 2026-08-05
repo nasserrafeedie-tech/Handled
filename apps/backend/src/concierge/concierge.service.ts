@@ -1132,13 +1132,28 @@ export class ConciergeService {
       where: { conversationId, direction: 'outbound' },
     });
 
+    // A pending follow-up ("what are the three tiers?") claims this answer
+    // for ITS field — otherwise the reply about tiers would be interpreted
+    // against whatever empty field comes next in the checklist.
+    const clarifyState = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { pendingIntent: true },
+    });
+    const CLARIFY_PREFIX = 'onboard_clarify:';
+    const clarifiedField = clarifyState?.pendingIntent?.startsWith(CLARIFY_PREFIX)
+      ? (clarifyState.pendingIntent.slice(CLARIFY_PREFIX.length) as ReturnType<
+          OnboardingService['nextField']
+        >)
+      : null;
+
     // Interpret the answer to whichever field we asked about last (§6 — one
     // chatty answer may fill several fields; Haiku handles that when keyed,
     // deterministic parsing covers the asked field offline).
     const asked =
-      outboundCount === 0
+      clarifiedField ??
+      (outboundCount === 0
         ? ('business_type' as const)
-        : this.onboarding.nextField(profile);
+        : this.onboarding.nextField(profile));
 
     // A greeting is not the first answer. This guard used to run ONLY on a cold
     // inbound-first contact (outboundCount === 0), so a "hey!" sent right AFTER
@@ -1158,12 +1173,7 @@ export class ConciergeService {
     // One follow-up per field, ever: the marker survives in pendingIntent
     // (unused during onboarding) so a twice-vague answer gets best-effort
     // extraction instead of an interrogation loop.
-    const convo = await this.prisma.conversation.findUnique({
-      where: { id: conversationId },
-      select: { pendingIntent: true },
-    });
-    const clarifyMarker = asked ? `onboard_clarify:${asked}` : '';
-    const alreadyClarified = convo?.pendingIntent === clarifyMarker;
+    const alreadyClarified = clarifiedField !== null;
 
     let ack = '';
     let clarify: string | undefined;
@@ -1209,13 +1219,17 @@ export class ConciergeService {
     });
     const next = this.onboarding.nextField(fresh);
 
-    // The answer was too thin for the asked field and the model has ONE
-    // specific follow-up — ask it instead of moving on with junk. Only when
-    // the field genuinely stayed empty (a filled field never re-asks).
-    if (clarify && asked && next === asked && !alreadyClarified) {
+    // The model has ONE specific follow-up worth asking — ask it before
+    // moving on. This fires even when something WAS stored: "we have 3
+    // tiers" is stored as-is AND still needs "what are the tiers?", or every
+    // caption about them is guesswork. Bounded to one per field.
+    if (clarify && asked && !alreadyClarified) {
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data: { pendingIntent: clarifyMarker, pendingIntentAt: new Date() },
+        data: {
+          pendingIntent: `${CLARIFY_PREFIX}${asked}`,
+          pendingIntentAt: new Date(),
+        },
       });
       return this.reply(
         phone,
@@ -1223,8 +1237,8 @@ export class ConciergeService {
         ack && ack !== 'Got it.' ? `${ack} ${clarify}` : clarify,
       );
     }
-    // Advancing past a clarified field → retire the marker.
-    if (convo?.pendingIntent?.startsWith('onboard_clarify:')) {
+    // The outstanding follow-up was just answered → retire the marker.
+    if (clarifiedField) {
       await this.prisma.conversation.update({
         where: { id: conversationId },
         data: { pendingIntent: null, pendingIntentAt: null },
