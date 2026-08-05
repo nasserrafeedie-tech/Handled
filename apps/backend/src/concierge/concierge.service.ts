@@ -941,10 +941,17 @@ export class ConciergeService {
     // (it lands on THIS post) or approve as text-only. Posts that already have
     // a carousel or photo skip the ask.
     const needsPhoto = next.mediaRefs.length === 0;
+    // The whole carousel travels with the draft — the owner is approving the
+    // deck, not its cover. MMS caps at 10 attachments / ~5MB; slides are flat
+    // PNGs well under that, and the catch below degrades to slide 1 if a
+    // heavy deck ever bounces.
+    const mediaUrls = next.mediaRefs
+      .slice(0, 10)
+      .map((k) => (/^https?:\/\//.test(k) ? k : this.storage.publicUrl(k)));
     const closer = needsPhoto
       ? '📸 Text me a photo and I’ll put it on this post — or reply “yes” to post as text-only. Or tell me what to change.'
-      : next.mediaRefs.length > 1
-        ? `(That’s slide 1 of ${next.mediaRefs.length} — the full carousel goes out when it posts.) Reply “yes” to schedule it, or tell me what to change.`
+      : mediaUrls.length > 1
+        ? `(All ${mediaUrls.length} slides attached — that’s the carousel that posts.) Reply “yes” to schedule it, or tell me what to change.`
         : 'Reply “yes” to schedule it, or tell me what to change.';
     // The owner is approving exactly what will publish, so show the WHOLE
     // caption — a truncated preview asks them to sign off on words they can't
@@ -954,13 +961,24 @@ export class ConciergeService {
       (lead ? `${lead}\n\n` : '') +
       `Draft${when}:\n\n“${(next.caption ?? '').trim()}”\n\n` +
       closer;
-    // The visual rides with the caption — approving a post without seeing the
-    // picture isn't approving the post. First slide/image only; MMS is not a
-    // gallery.
-    const mediaUrls = next.mediaRefs
-      .slice(0, 1)
-      .map((k) => (/^https?:\/\//.test(k) ? k : this.storage.publicUrl(k)));
-    await this.notify(customerId, body, { ...opts, mediaUrls });
+    try {
+      await this.notify(customerId, body, { ...opts, mediaUrls });
+    } catch (e) {
+      if (mediaUrls.length <= 1) throw e;
+      // A full deck can exceed a carrier's MMS budget; the draft still has to
+      // arrive. Slide 1 + honest note beats a silent failure.
+      this.log.warn(
+        `full-deck MMS failed (${mediaUrls.length} slides) — retrying with 1: ${String(e)}`,
+      );
+      const fallbackBody = body.replace(
+        `(All ${mediaUrls.length} slides attached — that’s the carousel that posts.)`,
+        `(Slide 1 of ${mediaUrls.length} — the full carousel goes out when it posts.)`,
+      );
+      await this.notify(customerId, fallbackBody, {
+        ...opts,
+        mediaUrls: mediaUrls.slice(0, 1),
+      });
+    }
     // Stamp AFTER the send: a failed send leaves presentedAt null, so the
     // reconcile sweep knows this draft was never actually shown.
     await this.prisma.post.update({

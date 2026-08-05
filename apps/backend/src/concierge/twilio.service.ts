@@ -45,9 +45,9 @@ export class TwilioService {
       to,
       body,
       // MMS: a draft's visual rides with its caption — approving a post
-      // without seeing the picture isn't approving the post. Carriers cap
-      // attachments, so callers send one representative image, not the deck.
-      ...(mediaUrls?.length ? { mediaUrl: mediaUrls.slice(0, 2) } : {}),
+      // without seeing the picture isn't approving the post. Twilio caps MMS
+      // at 10 attachments / ~5MB total; callers degrade to fewer on failure.
+      ...(mediaUrls?.length ? { mediaUrl: mediaUrls.slice(0, 10) } : {}),
       messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID,
       from: process.env.TWILIO_FROM_NUMBER,
     });
