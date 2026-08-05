@@ -74,9 +74,11 @@ export class BusinessResearchService {
     const system = [
       'You research ONE specific small business on the live web and return',
       'JSON. You are given its link (website, Instagram, or Google listing)',
-      'and what the owner said it is. Search for the business itself — its',
-      'site, social profiles, Google listing, reviews — and extract facts a',
-      'social media writer needs:',
+      'and what the owner said it is. FETCH THE GIVEN LINK FIRST and read the',
+      'actual pages — a small business site is often too new for search',
+      'indexes, and the page itself is the richest source. Then search for',
+      'the rest — social profiles, Google listing, reviews — and extract',
+      'facts a social media writer needs:',
       '- what it sells/does, named concretely (dishes, services, packages,',
       '  price points if published)',
       '- specials, signature items, what reviewers repeatedly praise',
@@ -108,6 +110,7 @@ export class BusinessResearchService {
       prompt,
       maxTokens: 8000,
       maxSearches: 6,
+      fetchUrls: true,
     });
     const findings = Findings.parse(JSON.parse(extractJsonObject(text)));
     this.log.log(

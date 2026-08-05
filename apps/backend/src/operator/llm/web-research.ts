@@ -144,6 +144,13 @@ export interface ResearchRequest {
   maxSearches?: number;
   /** Steer the search itself — e.g. bias toward 2025-2026 sources. */
   searchHint?: string;
+  /**
+   * Also allow fetching URLs named in the prompt (server-side web_fetch).
+   * Essential when researching a SPECIFIC business: a brand-new local site
+   * is invisible to search indexes, but the owner just handed us its URL —
+   * reading the page directly is the whole job.
+   */
+  fetchUrls?: boolean;
 }
 
 /**
@@ -187,6 +194,12 @@ export async function researchWithSearch(
             name: 'web_search',
             max_uses: req.maxSearches ?? MAX_SEARCHES_PER_PASS,
           },
+          // Direct page reads for URLs already in the prompt. Search can only
+          // surface what indexes know; a week-old small-business site is
+          // invisible there while its URL sits right in the request.
+          ...(req.fetchUrls
+            ? [{ type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 5 }]
+            : []),
         ],
       }),
     });
