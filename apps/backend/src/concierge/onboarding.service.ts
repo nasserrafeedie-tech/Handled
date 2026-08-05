@@ -144,6 +144,8 @@ export class OnboardingService {
     return (
       'Hey — this is Handled ✳ From here on out I plan, write, design, and ' +
       'post your social media, and you mostly just reply to my texts. ' +
+      'Save me as a contact so you always know it\'s me: ' +
+      'texthandled.com/contact\n\n' +
       "First things first: tell me about your business — what do you do, " +
       "what's it called, and where are you?"
     );
