@@ -946,7 +946,57 @@ export class ConciergeService {
       `Draft${when}:\n\n“${(next.caption ?? '').trim()}”\n\n` +
       closer;
     await this.notify(customerId, body, opts);
+    // Stamp AFTER the send: a failed send leaves presentedAt null, so the
+    // reconcile sweep knows this draft was never actually shown.
+    await this.prisma.post.update({
+      where: { id: next.id },
+      data: { presentedAt: new Date() },
+    });
     return true;
+  }
+
+  /**
+   * The presentation backstop. The post-onboarding pipeline (research → plan
+   * → draft → present) runs minutes-long in process; a deploy or crash in
+   * that window creates drafts that no one was ever shown — the owner is left
+   * waiting on a text that isn't coming. Present the oldest never-shown draft
+   * for each customer whose queue has gone quiet. Skips customers already
+   * looking at a presented draft (one at a time, never a pile).
+   */
+  async presentStrandedDrafts(olderThanMinutes = 5): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanMinutes * 60_000);
+    const stranded = await this.prisma.post.findMany({
+      where: {
+        status: 'pending_approval',
+        presentedAt: null,
+        createdAt: { lt: cutoff },
+        customer: { status: 'active' },
+      },
+      select: { customerId: true },
+      distinct: ['customerId'],
+    });
+    let sent = 0;
+    for (const { customerId } of stranded) {
+      // Only rescue when the OLDEST pending draft is the unshown one — if a
+      // presented draft is already awaiting the owner, they have their next
+      // step and the queue advances through the normal approve flow.
+      const oldest = await this.prisma.post.findFirst({
+        where: { customerId, status: 'pending_approval' },
+        orderBy: { createdAt: 'asc' },
+        select: { presentedAt: true },
+      });
+      if (!oldest || oldest.presentedAt) continue;
+      const shown = await this.presentNextDraft(
+        customerId,
+        'Your first draft is ready ✳',
+      ).catch((e) => {
+        this.log.warn(`stranded-draft present failed for ${customerId}: ${String(e)}`);
+        return false;
+      });
+      if (shown) sent++;
+    }
+    if (sent) this.log.log(`presented ${sent} stranded draft(s)`);
+    return sent;
   }
 
   /**

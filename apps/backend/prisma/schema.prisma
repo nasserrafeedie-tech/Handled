@@ -393,6 +393,9 @@ model BrandProfile {
 }
 
 // ─── posts ───────────────────────────────────────────────────────────────
+// (presentedAt below: when the draft was last texted to the owner for
+// approval — null means drafted but never shown, the state a mid-pipeline
+// restart leaves behind; the cron sweep presents those.)
 model Post {
   id              String          @id @default(uuid()) @db.Uuid
   customerId      String          @db.Uuid
@@ -420,6 +423,11 @@ model Post {
   // needed. Cleared on a retryable failure so it can be re-claimed; a stamp
   // left set well past a publish window means the worker died mid-publish.
   publishStartedAt DateTime?
+  // When this draft was last texted to the owner for approval. Null on a
+  // pending_approval post = drafted but never shown (a deploy or crash killed
+  // the pipeline between drafting and presenting) — the cron sweep presents
+  // exactly those.
+  presentedAt     DateTime?
   failureReason   String?
   // How an approval was obtained when it did not arrive by text — "Dr.
   // Rafeedie, in person 22 Jul". Null for the normal SMS path, where the

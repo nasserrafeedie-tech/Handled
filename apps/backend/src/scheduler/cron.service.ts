@@ -307,6 +307,23 @@ export class CronService {
   }
 
   /**
+   * Every 10 minutes: present drafts that were written but never shown.
+   *
+   * The post-onboarding pipeline (research → plan → draft → present) runs
+   * minutes-long inside one process; a deploy landing in that window creates
+   * drafts nobody was ever texted — the owner sits waiting on a message that
+   * isn't coming. This sweep is the difference between "hiccup" and "lost
+   * customer on day one". See ConciergeService.presentStrandedDrafts.
+   */
+  @Cron('*/10 * * * *', { timeZone: CRON_TZ })
+  async presentStranded(): Promise<void> {
+    if (!this.enabled) return;
+    await this.concierge
+      .presentStrandedDrafts()
+      .catch((e) => this.log.warn(`stranded-draft sweep failed: ${e.message}`));
+  }
+
+  /**
    * Daily (09:00): ask owners whose platform connection is about to lapse to
    * reconnect. Meta's tokens expire every ~60 days with no server-side renewal,
    * so this is a deadline we can see coming — the alternative is posting
