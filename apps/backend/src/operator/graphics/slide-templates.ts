@@ -590,20 +590,38 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
 /**
  * Choose the look for one slide.
  *
- * `seed` picks the surface and is shared by every slide in a carousel, so the
- * set is cohesive — one post, one look. `variant` (the slide's index) only moves
- * the decorative arrangement, giving the set rhythm without breaking it apart.
- * Two different posts get different seeds and therefore different surfaces,
- * which is where the variety in a feed comes from.
+ * A deck alternates VALUE slide-to-slide — dark, light, dark, light — with the
+ * CTA slide flooded in the accent colour. That rhythm is what makes a swipe
+ * feel designed instead of one card recoloured five times; every surface still
+ * derives from the same brand palette, so the set stays cohesive. `seed`
+ * (shared by the whole carousel) anchors WHICH dark and WHICH light the deck
+ * uses and whether it leads dark or light, so consecutive posts differ;
+ * `variant` (the slide index) walks the alternation and moves the shapes.
  */
 function pickLook(
   theme: BrandTheme,
   seed: number,
   variant: number,
+  kind?: SlideKind,
 ): { p: Palette; bg: string } {
   const b = basePalette(theme);
   const rotation = surfaceRotation(b);
-  const surf = rotation[Math.abs(seed) % rotation.length]();
+  const s = Math.abs(seed);
+  // Pools by value, guarded by the brand's own luminance: a light primary
+  // makes "solid brand" a light surface, so it swaps pools.
+  const primaryIsLight = luminance(b.primary) > 0.5;
+  const darkPool = primaryIsLight ? [0] : [0, 2];
+  const lightPool = primaryIsLight ? [1, 3, 5, 2] : [1, 3, 5];
+  const dark = darkPool[s % darkPool.length];
+  const light = lightPool[s % lightPool.length];
+  const leadsDark = s % 2 === 0;
+  const idx =
+    kind === 'cta'
+      ? 4 // accent flood — the closing slide pops (rotation[4] = accentSurface)
+      : (variant % 2 === 0) === leadsDark
+        ? dark
+        : light;
+  const surf = rotation[idx]();
   let bg = surf.bg;
   if (surf.allowDeco) {
     // Offset by the seed as well as the slide index so two carousels that
@@ -800,7 +818,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   // `seed` falls back to `variant` for single one-off graphics that have no set.
   const surface = layout
     ? undefined
-    : pickLook(theme, spec.seed ?? spec.variant ?? 0, spec.variant ?? 0);
+    : pickLook(theme, spec.seed ?? spec.variant ?? 0, spec.variant ?? 0, spec.kind);
   const p = surface ? surface.p : photoPalette(theme);
   const t = typeSet(theme.style);
   const footer = spec.footer ?? theme.brandName ?? '';
