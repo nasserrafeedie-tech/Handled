@@ -284,7 +284,18 @@ export class ConciergeService {
       const result = await this.bus.emit(
         this.task(customer.id, 'MAKE_GRAPHIC', { slides }),
       );
-      return this.reply(this.addressOf(customer), conversation.id, result.summary_for_owner);
+      // "Made your graphic" with nothing attached is a claim, not a review —
+      // the rendered slides ride along so the owner sees what was made.
+      const made = result.data as { slides?: Array<{ media_ref: string }> } | undefined;
+      const mediaUrls = (made?.slides ?? [])
+        .slice(0, 10)
+        .map((s) => (/^https?:\/\//.test(s.media_ref) ? s.media_ref : this.storage.publicUrl(s.media_ref)));
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        result.summary_for_owner,
+        mediaUrls,
+      );
     }
 
     // 5. Steady-state loop (§6): approve / revise / cancel / question.
@@ -1235,7 +1246,7 @@ export class ConciergeService {
     // can't see ("the one about half-finished admin") reads as gibberish.
     if (
       pending &&
-      /what draft|which (draft|post)|show (me|it|the)|resend|send (it|that) again|see (it|the draft|the post)/i.test(
+      /what draft|which (draft|post)|show (me|it|the)|resend|send (it|that) again|see (it|the|my)[\s\S]{0,20}\b(draft|post|carousel|slides?|graphic|image|picture)\b/i.test(
         body,
       )
     ) {
@@ -1312,7 +1323,18 @@ export class ConciergeService {
   }
 
   private isGraphicRequest(body: string): boolean {
-    return /\b(graphic|carousel|slide|quote card|quote graphic|promo|flyer|make (?:me )?a post)\b/i.test(
+    // A MAKE requires a creation verb. "Can I see the full carousel?" names a
+    // graphic without asking for one — treating it as a commission generated
+    // a nonsense graphic from the question's own words and replied "made your
+    // graphic" to someone who just wanted to look at their draft.
+    if (
+      /\b(see|show|view|send|resend|look at|where('?s| is))\b[\s\S]{0,40}\b(graphic|carousel|slides?|post|draft)\b/i.test(
+        body,
+      )
+    ) {
+      return false;
+    }
+    return /\b(make|create|design|build|whip up|put together|need|want|can (?:you|i get))\b[\s\S]{0,40}\b(graphic|carousel|slide|quote card|quote graphic|promo|flyer)\b|\bmake (?:me )?a post\b/i.test(
       body,
     );
   }
