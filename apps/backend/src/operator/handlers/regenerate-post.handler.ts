@@ -101,6 +101,9 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
       needs_image: false,
       needs_carousel: false,
     };
-    return ok(task.task_id, `Reworked it: "${gen.caption.slice(0, 120)}"`, 'pending_approval', data);
+    // No caption excerpt here: the concierge re-presents the full draft
+    // (whole caption + attached media) after this returns. A 120-char slice
+    // cut a caption off mid-sentence in the owner's thread.
+    return ok(task.task_id, 'Reworked it ✳', 'pending_approval', data);
   }
 }

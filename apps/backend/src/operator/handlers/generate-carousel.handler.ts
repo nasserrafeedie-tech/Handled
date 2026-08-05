@@ -118,7 +118,19 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     }
     // A photo the owner sent always wins (§7). Re-checked here as well as by the
     // caller, because a real photo can land between drafting and this running.
-    if (post.mediaRefs.length > 0) {
+    // On a redo (replace_existing) the post necessarily HAS media — the deck
+    // being replaced — so the check moves to what the media actually is: only
+    // the owner's own upload blocks; slides we assembled are fair to rebuild.
+    if (task.payload.replace_existing) {
+      const ownerMedia = await this.prisma.mediaAsset.findFirst({
+        where: { postId: post.id, source: 'owner_upload' },
+        select: { id: true },
+      });
+      if (ownerMedia) {
+        return ok(task.task_id, 'That post already has a picture on it.', 'done',
+          { skipped: 'owner_media_present' });
+      }
+    } else if (post.mediaRefs.length > 0) {
       return ok(task.task_id, 'That post already has a picture on it.', 'done',
         { skipped: 'owner_media_present' });
     }
@@ -135,6 +147,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       archetype: post.archetype as CarouselBrief['archetype'],
       caption: post.caption,
       brandName: customer?.businessName,
+      ownerNote: task.payload.owner_feedback ?? null,
     };
     let slidesCopy: CarouselLlmOutput['slides'];
     try {
@@ -214,14 +227,21 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     // rotation, so a look repeating across two companies takes a real collision,
     // not a guarantee. The count still moves per post (feed variety within a
     // brand) and the offset is deterministic (a re-render is identical).
-    const made = await this.prisma.post.count({ where: { customerId: task.customer_id } });
+    // A redo must also LOOK different, or "redo the carousel" returns the same
+    // surfaces with new words. Slide assets from earlier renders of THIS post
+    // persist, so their count is a deterministic salt: 0 on a first render
+    // (identical behavior to before), and it moves on every rebuild.
+    const [made, priorSlides] = await Promise.all([
+      this.prisma.post.count({ where: { customerId: task.customer_id } }),
+      this.prisma.mediaAsset.count({ where: { postId: post.id, source: 'assembled' } }),
+    ]);
     const brandOffset = stableSeed(task.customer_id);
     const specs: SlideSpec[] = slidesCopy.map((s, i) => ({
       kind: s.kind,
       headline: s.headline,
       body: s.body,
       ctaLabel: s.cta_label,
-      seed: made + brandOffset,
+      seed: made + brandOffset + priorSlides,
       variant: i,
     }));
 

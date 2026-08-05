@@ -93,6 +93,12 @@ export interface CarouselBrief {
   caption: string;
   /** The trading name, for the model to weave a natural closing line — never invented. */
   brandName?: string | null;
+  /**
+   * On a redo: what the owner said about the previous deck ("redo the
+   * carousel", "less text on the slides"). The new copy honors it — without
+   * this, a redo can only reshuffle the same guesses.
+   */
+  ownerNote?: string | null;
 }
 
 /**
@@ -108,6 +114,18 @@ export function carouselInstruction(brief: CarouselBrief): string {
     '"""',
     brief.caption,
     '"""',
+    ...(brief.ownerNote
+      ? [
+          '',
+          'The owner saw an earlier version of this carousel and asked for a redo:',
+          '"""',
+          brief.ownerNote,
+          '"""',
+          'Honor that request. Where it names content ("mention the happy hour"),',
+          'work it into the slides; where it is only "redo it", take a genuinely',
+          'different angle on the same caption — not a paraphrase of the last deck.',
+        ]
+      : []),
     '',
     'Return JSON: {"slides": [{"kind": string, "headline": string, "body"?: string, "cta_label"?: string}]}',
     '',

@@ -657,33 +657,84 @@ export class ConciergeService {
       }
 
       case 'revise': {
-        const result = await this.bus.emit(
-          this.task(customerId, 'REGENERATE_POST', {
-            post_id: pending!.id,
-            owner_feedback: feedback?.slice(0, 1000) || body.slice(0, 1000),
-            regenerate_caption: true,
-            regenerate_media: false,
-          }),
-        );
-        // A revise is an explicit "let me see it again" — so the rewrite always
-        // goes back to the owner before it can publish, even on autopilot. If
-        // REGENERATE_POST cleared it to 'approved' (a high-risk draft that came
-        // back low-risk on an auto-publishing plan), scheduling it here would
-        // send a version the owner never saw — the one post they actively
-        // engaged with. Instead, hold it for their eyes: pull it back to
-        // awaiting the owner and let their next "yes" schedule it, exactly like
-        // an approval plan. The reworked caption is in the reply below.
-        const revised = await this.prisma.post.findUnique({
-          where: { id: pending!.id },
-          select: { status: true },
-        });
-        if (revised?.status === 'approved') {
-          await this.prisma.post.update({
+        const fb = feedback?.slice(0, 1000) || body.slice(0, 1000);
+        // Which thing are they revising? "Redo the carousel" is about the
+        // DECK — fed to the caption rewriter it produced meta-copy about
+        // redesigning slides while never touching a slide. Deck feedback goes
+        // to the deck; the caption is only rewritten for wording feedback.
+        const aboutTheDeck =
+          /\b(carousels?|slides?|decks?|graphics?|designs?|layouts?|visuals?)\b/i.test(fb);
+        // "Has a deck" means media WE assembled. An owner photo is never
+        // touched, and an AI photo is not a carousel and doesn't become one.
+        const hasDeck =
+          pending!.mediaRefs.length > 0 &&
+          (await this.prisma.mediaAsset.findFirst({
+            where: { postId: pending!.id, source: 'assembled', kind: 'image' },
+            select: { id: true },
+          })) !== null &&
+          (await this.prisma.mediaAsset.findFirst({
+            where: { postId: pending!.id, source: 'owner_upload' },
+            select: { id: true },
+          })) === null;
+        const deckOnly = aboutTheDeck && hasDeck;
+
+        if (!deckOnly) {
+          const result = await this.bus.emit(
+            this.task(customerId, 'REGENERATE_POST', {
+              post_id: pending!.id,
+              owner_feedback: fb,
+              regenerate_caption: true,
+              regenerate_media: false,
+            }),
+          );
+          if (result.error) {
+            return this.reply(phone, conversationId, result.summary_for_owner);
+          }
+          // A revise is an explicit "let me see it again" — so the rewrite always
+          // goes back to the owner before it can publish, even on autopilot. If
+          // REGENERATE_POST cleared it to 'approved' (a high-risk draft that came
+          // back low-risk on an auto-publishing plan), scheduling it here would
+          // send a version the owner never saw — the one post they actively
+          // engaged with. Instead, hold it for their eyes: pull it back to
+          // awaiting the owner and let their next "yes" schedule it, exactly like
+          // an approval plan. The reworked caption is in the re-present below.
+          const revised = await this.prisma.post.findUnique({
             where: { id: pending!.id },
-            data: { status: 'pending_approval', approvalState: 'awaiting_owner' },
+            select: { status: true },
           });
+          if (revised?.status === 'approved') {
+            await this.prisma.post.update({
+              where: { id: pending!.id },
+              data: { status: 'pending_approval', approvalState: 'awaiting_owner' },
+            });
+          }
         }
-        return this.reply(phone, conversationId, result.summary_for_owner);
+
+        // Rebuild the deck whenever the post carries one: on a visual redo it
+        // IS the request, and after a caption rewrite the old slides now say
+        // words the caption no longer says.
+        if (hasDeck) {
+          const rebuilt = await this.bus.emit(
+            this.task(customerId, 'GENERATE_CAROUSEL', {
+              post_id: pending!.id,
+              replace_existing: true,
+              owner_feedback: fb,
+            }),
+          );
+          if (rebuilt.error) {
+            return this.reply(phone, conversationId, rebuilt.summary_for_owner);
+          }
+        }
+
+        // Re-present the draft in full — whole caption, whole deck attached —
+        // instead of a 120-char slice with nothing attached. The owner must
+        // see exactly what their "yes" would now publish.
+        await this.presentNextDraft(
+          customerId,
+          deckOnly ? 'Rebuilt the carousel ✳' : 'Reworked it ✳',
+          { promptedByOwner: true },
+        );
+        return;
       }
 
       case 'cancel': {

@@ -203,6 +203,13 @@ export type GenerateImagePayload = z.infer<typeof GenerateImagePayload>;
 export const GenerateCarouselPayload = z
   .object({
     post_id: uuid.describe('the post this carousel is for'),
+    // A redo: the post already carries a deck WE assembled and the owner wants
+    // it rebuilt (or the caption changed underneath it). Owner photos still
+    // win — this only ever permits replacing our own slides.
+    replace_existing: z.boolean().default(false),
+    // What the owner said when asking for the redo, so the new slide copy can
+    // honor it ("less text", "lead with the price") instead of guessing.
+    owner_feedback: z.string().max(1000).optional(),
   })
   .strict();
 export type GenerateCarouselPayload = z.infer<typeof GenerateCarouselPayload>;
