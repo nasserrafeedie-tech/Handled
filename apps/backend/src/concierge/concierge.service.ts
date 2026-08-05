@@ -1155,15 +1155,28 @@ export class ConciergeService {
           : this.onboarding.question('business_type'),
       );
     }
+    // One follow-up per field, ever: the marker survives in pendingIntent
+    // (unused during onboarding) so a twice-vague answer gets best-effort
+    // extraction instead of an interrogation loop.
+    const convo = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { pendingIntent: true },
+    });
+    const clarifyMarker = asked ? `onboard_clarify:${asked}` : '';
+    const alreadyClarified = convo?.pendingIntent === clarifyMarker;
+
     let ack = '';
+    let clarify: string | undefined;
     if (asked) {
-      const patch = await this.onboarding.interpret(
+      const { clarify: followUp, ...patch } = await this.onboarding.interpret(
         asked,
         answer,
         profile,
         businessName,
         postsCap,
+        !alreadyClarified,
       );
+      clarify = followUp;
       // Belt and suspenders against re-emission: a "new" value identical to
       // what we already have is neither stored again nor re-acknowledged.
       if (patch.business_name && patch.business_name === businessName) {
@@ -1185,7 +1198,7 @@ export class ConciergeService {
           }),
         );
         ack = this.onboarding.ack(patch);
-      } else {
+      } else if (!clarify) {
         ack = "Sorry — didn't quite catch that.";
       }
     }
@@ -1195,6 +1208,29 @@ export class ConciergeService {
       where: { customerId },
     });
     const next = this.onboarding.nextField(fresh);
+
+    // The answer was too thin for the asked field and the model has ONE
+    // specific follow-up — ask it instead of moving on with junk. Only when
+    // the field genuinely stayed empty (a filled field never re-asks).
+    if (clarify && asked && next === asked && !alreadyClarified) {
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { pendingIntent: clarifyMarker, pendingIntentAt: new Date() },
+      });
+      return this.reply(
+        phone,
+        conversationId,
+        ack && ack !== 'Got it.' ? `${ack} ${clarify}` : clarify,
+      );
+    }
+    // Advancing past a clarified field → retire the marker.
+    if (convo?.pendingIntent?.startsWith('onboard_clarify:')) {
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { pendingIntent: null, pendingIntentAt: null },
+      });
+    }
+
     if (next) {
       const q = this.onboarding.question(next, next === 'posting_frequency' ? postsCap : undefined);
       return this.reply(phone, conversationId, ack ? `${ack} ${q}` : q);

@@ -72,10 +72,12 @@ export default function UploadPage() {
             <input
               ref={inputRef}
               type="file"
-              accept="video/*,image/*"
-              multiple
+              accept={isLogo ? 'image/*' : 'video/*,image/*'}
+              multiple={!isLogo}
               className="hidden"
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []).slice(0, 6))}
+              onChange={(e) =>
+                setFiles(Array.from(e.target.files ?? []).slice(0, isLogo ? 1 : 6))
+              }
             />
             <button
               type="button"
@@ -84,7 +86,11 @@ export default function UploadPage() {
             >
               <span className="font-display text-2xl text-clay-600">＋</span>
               <span className="mt-2 block text-sm font-medium text-ink">
-                {files.length ? 'Change selection' : 'Tap to choose videos'}
+                {files.length
+                  ? 'Change selection'
+                  : isLogo
+                    ? 'Tap to choose your logo'
+                    : 'Tap to choose videos'}
               </span>
             </button>
 
@@ -113,8 +119,8 @@ export default function UploadPage() {
                 </button>
                 {!customer && (
                   <p className="text-center text-xs text-clay-700">
-                    Open this page from the link we texted you so we know whose
-                    clips these are.
+                    Open this page from the link we texted you so we know{' '}
+                    {isLogo ? 'whose logo this is' : 'whose clips these are'}.
                   </p>
                 )}
               </div>
@@ -125,10 +131,13 @@ export default function UploadPage() {
         {phase === 'done' && (
           <div className="rounded-3xl border border-ink/10 bg-white p-8 text-center shadow-soft">
             <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-clay-500 text-xl text-white">✓</div>
-            <h2 className="mt-4 font-display text-2xl font-semibold">Got them.</h2>
+            <h2 className="mt-4 font-display text-2xl font-semibold">
+              {isLogo ? 'Got it.' : 'Got them.'}
+            </h2>
             <p className="mt-2 text-sm leading-relaxed text-ink/60">
-              You can close this page — I’ll cut your reel and text you when
-              it’s ready to review.
+              {isLogo
+                ? 'You can close this page — your logo will be on your posts from here on, and I’ll match your brand colours to it.'
+                : 'You can close this page — I’ll cut your reel and text you when it’s ready to review.'}
             </p>
           </div>
         )}
@@ -144,7 +153,9 @@ export default function UploadPage() {
         )}
 
         <p className="text-center font-mono text-[10px] uppercase tracking-[0.18em] text-ink/40">
-          Storefront · You at work · A happy customer
+          {isLogo
+            ? 'PNG or JPG · Clear background is best'
+            : 'Storefront · You at work · A happy customer'}
         </p>
       </div>
     </main>

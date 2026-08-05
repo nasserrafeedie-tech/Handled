@@ -50,7 +50,8 @@ const REQUIRED: ProfileField[] = [
   'posting_frequency',
 ];
 
-/** What the LLM may return: any subset of patchable profile fields. */
+/** What the LLM may return: any subset of patchable profile fields, plus an
+ *  optional follow-up question when the answer is too thin to act on. */
 const LlmPatch = z
   .object({
     business_name: z.string().max(120).optional(),
@@ -61,8 +62,12 @@ const LlmPatch = z
     dos_and_donts: z.array(z.string().max(300)).max(20).optional(),
     brand_colors: z.array(z.string().max(24)).max(6).optional(),
     posting_frequency: z.number().int().min(1).max(21).optional(),
+    clarify: z.string().max(200).optional(),
   })
   .strict();
+
+/** interpret() result: a profile patch, possibly with a follow-up question. */
+export type InterpretResult = Patch & { clarify?: string };
 
 /** "hi", "hey there", "start" — a greeting, not information. */
 const GREETING =
@@ -237,7 +242,10 @@ export class OnboardingService {
     profile: BrandProfile | null,
     businessName?: string | null,
     postsCap?: number,
-  ): Promise<Patch> {
+    /** May the model ask ONE follow-up? False once this field was already
+     *  clarified, so a twice-vague owner gets best-effort, never a loop. */
+    allowClarify = true,
+  ): Promise<InterpretResult> {
     const text = answer.trim();
     if (!text) return {};
 
@@ -248,7 +256,7 @@ export class OnboardingService {
       return { dos_and_donts: [NO_DOS_DONTS] };
     }
 
-    const patch = await this.interpretRaw(asked, text, profile, businessName);
+    const patch = await this.interpretRaw(asked, text, profile, businessName, allowClarify);
     // Never store a cadence above what the plan sells. An owner who asks for 4
     // on Starter (cap 3) is capped to 3 here, at the source, so the planner and
     // every read-back downstream see the honest number.
@@ -263,13 +271,14 @@ export class OnboardingService {
     text: string,
     profile: BrandProfile | null,
     businessName?: string | null,
-  ): Promise<Patch> {
+    allowClarify = true,
+  ): Promise<InterpretResult> {
     const answer = text;
     const llmOn =
       Boolean(process.env.ANTHROPIC_API_KEY) && process.env.LLM_FAKE !== '1';
     if (llmOn) {
       try {
-        return await this.interpretWithLlm(asked, text, profile, businessName);
+        return await this.interpretWithLlm(asked, text, profile, businessName, allowClarify);
       } catch (err) {
         this.log.warn(`LLM interpret failed, falling back: ${String(err)}`);
       }
@@ -282,7 +291,8 @@ export class OnboardingService {
     answer: string,
     profile: BrandProfile | null,
     businessName?: string | null,
-  ): Promise<Patch> {
+    allowClarify = true,
+  ): Promise<InterpretResult> {
     const known = JSON.stringify({
       business_name: businessName ?? null,
       business_type: profile?.businessType ?? null,
@@ -326,6 +336,23 @@ export class OnboardingService {
           'about a field, OMIT it — never guess. Only include information',
           'that is NEW in this answer: never re-emit a value already present',
           'in Current profile. No prose.',
+          '',
+          'DISTILL, never transcribe. The owner talks like a person texting;',
+          'you store clean profile data. Strip conversational filler ("well,',
+          '"I guess", "all I have is") and rewrite each value as the crisp,',
+          'concrete thing it names. "Well all I have is this service and',
+          'there are 3 different tiers" → offers: ["The service (3 plan',
+          'tiers)"]. "It should be polished, expert, but also like friendly"',
+          '→ voice_tone: "polished, expert, friendly". Every stored value',
+          'must read well when quoted back in a profile summary. Never store',
+          'a sentence-shaped echo of the message.',
+          '',
+          'clarify: if the answer to the ASKED field is too vague or empty to',
+          'write social posts from, you may ALSO return "clarify" — one',
+          'short, friendly follow-up question (under 160 chars) asking for',
+          'the one specific detail that is missing. Still extract whatever',
+          'the answer did cover. Use it sparingly: a thin-but-usable answer',
+          'should be stored, not interrogated.',
         ].join('\n'),
         prompt:
           `Current profile: ${known}\n` +
@@ -334,13 +361,21 @@ export class OnboardingService {
             ? ' (suggested default: "warm but polished")'
             : '') +
           (asked === 'posting_frequency' ? ' (suggested default: 3)' : '') +
+          (allowClarify
+            ? ''
+            : '\nFollow-ups are NOT allowed for this answer — do not return ' +
+              'clarify; store your best interpretation instead.') +
           `\nOwner's answer: """${answer}"""`,
         maxTokens: 400,
       },
       LlmPatch,
     );
+    // The clarify budget is enforced here, not just requested: a model that
+    // clarifies anyway after being told not to would loop the interview.
+    if (!allowClarify) delete patch.clarify;
     // An empty patch would stall the interview — fall back to offline parsing.
-    return Object.keys(patch).length > 0
+    const { clarify, ...fields } = patch;
+    return Object.keys(fields).length > 0 || clarify
       ? patch
       : this.interpretOffline(asked, answer);
   }

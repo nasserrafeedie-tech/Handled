@@ -123,6 +123,19 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       'batches this afternoon", no "we sold out by noon". Only use facts from',
       'the brand profile. Write offers as evergreen truth ("baked fresh daily")',
       'or an invitation ("come try it"), never as dated news you made up.',
+      // Opus fills thin profiles with plausible fiction — a profile that says
+      // "three tiers" got a caption describing what each tier includes, all
+      // invented. The details gap is an invitation to ask, never to imagine.
+      'Never describe what a product, service, plan, or tier INCLUDES beyond',
+      'what the brand profile states. If the profile names a thing without',
+      'details, the caption may name it and invite people to ask — it may not',
+      'invent the details.',
+      // Opus writes long by default; every draft is also delivered over SMS
+      // for approval, where a 6-segment text gets carrier-filtered. One idea
+      // per post, said tight, beats an essay — on every platform.
+      'Keep the caption under 350 characters unless the archetype genuinely',
+      'needs more (never above 600). One idea per post. Cut preamble and',
+      'wind-down — start at the point.',
       // Every post naming the city + trade ("our Glendale coffee shop") reads
       // like SEO filler across a week. Mention the location at most rarely.
       'Do not put the city and business type in every post — mention the',
