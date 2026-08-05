@@ -82,6 +82,8 @@ function makeWorld(opts?: { usedToday?: number; llmFails?: boolean }) {
       welcome: () => 'welcome',
       question: () => 'q',
     } as never,
+    // business lookup — never reached in the free-taste lane.
+    { pending: () => undefined, lookUp: async () => null } as never,
     { classify: async () => ({ intent: 'other', confidence: 1 }) } as never, // intent
     {
       completeJson: async () => {

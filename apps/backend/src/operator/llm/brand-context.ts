@@ -39,5 +39,11 @@ export function buildBrandContext(p: BrandProfile): string {
   if (dosAndDonts.length) lines.push(`Dos and don'ts: ${dosAndDonts.join('; ')}`);
   if (p.blackoutTopics.length) lines.push(`Never mention: ${p.blackoutTopics.join('; ')}`);
   if (p.brandColors.length) lines.push(`Brand colors: ${p.brandColors.join(', ')}`);
+  // What we learned researching THEIR business on the live web ("look you
+  // up") — real menu items, specials, review themes. Ground captions in these
+  // specifics; they are the difference between generic and theirs.
+  if (p.businessResearch) {
+    lines.push('', 'RESEARCHED FACTS about this business (from their site/reviews):', p.businessResearch);
+  }
   return lines.join('\n');
 }

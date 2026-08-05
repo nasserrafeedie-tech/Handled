@@ -368,6 +368,17 @@ model BrandProfile {
   // THIS business's own words (mix, ideas, photo asks, reel recipe, hook).
   // Null = fall back to the static vertical playbook. One call per customer.
   contentStrategy    Json?
+  // "Look you up" (§ onboarding): the link the owner gave ('none' when they
+  // said no site), and the distilled findings from researching THEIR business
+  // on the live web — services, specials, how they talk about themselves.
+  // businessResearch feeds the drafting context so captions rest on facts the
+  // owner never had to type.
+  websiteUrl         String?
+  businessResearch   String?
+  // Bespoke follow-up questions Opus generated for THIS business at the end
+  // of the core interview: { pending: string[] }. Null = not yet generated;
+  // empty pending = interview truly done.
+  followUps          Json?
   logoRef            String?
   referencePhotoRefs String[]
   // Onboarding progress is tracked as which fields are filled, not a step

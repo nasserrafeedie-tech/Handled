@@ -25,11 +25,15 @@ import { NO_DOS_DONTS } from '../operator/llm/brand-context';
 
 export type ProfileField =
   | 'business_type'
+  | 'website'
   | 'voice_tone'
   | 'target_customer'
   | 'offers'
   | 'dos_and_donts'
   | 'posting_frequency';
+
+/** Stored in websiteUrl when the owner says they have no web presence. */
+export const NO_WEBSITE = 'none';
 
 type Patch = UpdateBrandProfilePayload['patch'];
 
@@ -43,6 +47,10 @@ type Patch = UpdateBrandProfilePayload['patch'];
  */
 const REQUIRED: ProfileField[] = [
   'business_type',
+  // Right after "what are you": a link lets the research pass run in the
+  // background WHILE the rest of the interview proceeds, so the findings are
+  // ready by the time week one is planned.
+  'website',
   'voice_tone',
   'target_customer',
   'offers',
@@ -62,12 +70,20 @@ const LlmPatch = z
     dos_and_donts: z.array(z.string().max(300)).max(20).optional(),
     brand_colors: z.array(z.string().max(24)).max(6).optional(),
     posting_frequency: z.number().int().min(1).max(21).optional(),
+    website: z.string().max(300).optional(),
     clarify: z.string().max(200).optional(),
+    note: z.string().max(500).optional(),
   })
   .strict();
 
-/** interpret() result: a profile patch, possibly with a follow-up question. */
-export type InterpretResult = Patch & { clarify?: string };
+/** Bespoke follow-ups Opus writes for THIS business at interview's end. */
+const FollowUpsOut = z.object({
+  questions: z.array(z.string().min(1).max(200)).max(3).default([]),
+});
+
+/** interpret() result: a profile patch, possibly with a follow-up question
+ *  and/or a website answer (handled by the concierge, not the task bus). */
+export type InterpretResult = Patch & { clarify?: string; website?: string };
 
 /** "hi", "hey there", "start" — a greeting, not information. */
 const GREETING =
@@ -105,7 +121,13 @@ export class OnboardingService {
   }
 
   isComplete(profile: BrandProfile | null): boolean {
-    return this.nextField(profile) === null;
+    if (this.nextField(profile) !== null) return false;
+    // Core checklist done. New signups then owe the bespoke follow-up round:
+    // complete only once it ran and its queue drained. onboardingComplete
+    // grandfathers customers who finished before follow-ups existed.
+    if (!profile || profile.onboardingComplete) return true;
+    const fu = profile.followUps as { pending?: string[] } | null;
+    return fu != null && (fu.pending ?? []).length === 0;
   }
 
   /** Is this first message just a hello, or does it actually say something? */
@@ -119,11 +141,13 @@ export class OnboardingService {
   }
 
   /** Would applying `patch` to `profile` finish the checklist? */
-  wouldComplete(profile: BrandProfile | null, patch: Patch): boolean {
+  wouldComplete(profile: BrandProfile | null, patch: InterpretResult): boolean {
     const filled = (field: ProfileField): boolean => {
       switch (field) {
         case 'business_type':
           return Boolean(patch.business_type ?? profile?.businessType);
+        case 'website':
+          return Boolean(patch.website ?? profile?.websiteUrl);
         case 'voice_tone':
           return Boolean(patch.voice_tone ?? profile?.voiceTone);
         case 'target_customer':
@@ -164,6 +188,12 @@ export class OnboardingService {
         return (
           "Tell me about your business — what do you do, what's it called, " +
           'and where are you?'
+        );
+      case 'website':
+        return (
+          'Got a website, Instagram, or Google listing? Drop me a link and ' +
+          "I'll go look you up so you don't have to type it all — or say " +
+          '"no site".'
         );
       case 'voice_tone':
         return (
@@ -332,6 +362,9 @@ export class OnboardingService {
           '- brand_colors: string[] of color words/hexes the owner mentions',
           '  ("teal"). Colors are NEVER voice_tone.',
           '- posting_frequency: integer posts/week (1-21).',
+          '- website: a URL the owner shares (their site, Instagram, or',
+          '  Google listing — normalize to include https://). If they say',
+          '  they have no site/page, the literal string "none".',
           'Fill every field the answer genuinely covers, not just the one',
           'asked. If the owner accepts a suggestion ("yes", "sure", "you',
           'pick") for the asked field, use the suggested value. When unsure',
@@ -384,13 +417,131 @@ export class OnboardingService {
       : this.interpretOffline(asked, answer);
   }
 
+  /**
+   * The bespoke round (§ adaptive onboarding): given everything we now know —
+   * interview answers plus any web research — what are the 1-3 questions whose
+   * answers would most change this business's posts? Generated fresh per
+   * business, so a dentist is asked about insurance and a taco truck about its
+   * schedule. Empty when the profile is already rich enough (or offline).
+   */
+  async generateFollowUps(
+    profile: BrandProfile,
+    businessName?: string | null,
+  ): Promise<string[]> {
+    const llmOn =
+      Boolean(process.env.ANTHROPIC_API_KEY) && process.env.LLM_FAKE !== '1';
+    if (!llmOn) return [];
+    try {
+      const { questions } = await this.llm.completeJson(
+        {
+          tier: 'voice',
+          cachedContext: [
+            'You just finished a short SMS onboarding interview with a small-',
+            'business owner for a social-media service. Decide whether any',
+            'follow-up questions are worth one more text each — questions',
+            'SPECIFIC to this business whose answers would materially change',
+            'what gets posted (a dentist: insurance accepted, new-patient',
+            'offers; a taco truck: where and when to find it; a tiered',
+            'service: what each tier includes).',
+            'Rules:',
+            '- 0 to 3 questions. Zero is a good answer when the profile and',
+            '  research already cover it.',
+            '- Never ask what the profile or research already answers.',
+            '- Each question is one SMS: short, friendly, concrete.',
+            '- No generic questions ("tell me more about your business").',
+            'Return JSON: {"questions": string[]}',
+          ].join('\n'),
+          prompt:
+            `Business: ${businessName ?? 'unnamed'}\n` +
+            `Profile: ${JSON.stringify({
+              businessType: profile.businessType,
+              voiceTone: profile.voiceTone,
+              targetCustomer: profile.targetCustomer,
+              offers: profile.offers,
+              dosAndDonts: profile.dosAndDonts,
+            })}\n` +
+            `Web research: ${profile.businessResearch ?? '(none)'}\n\n` +
+            'Return the JSON.',
+          maxTokens: 400,
+        },
+        FollowUpsOut,
+      );
+      return questions;
+    } catch (err) {
+      this.log.warn(`follow-up generation failed: ${String(err)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Distill a follow-up answer into profile fields and/or a research note.
+   * Anything that fits a structured field goes there; the rest lands as a
+   * note appended to businessResearch so the drafter still sees it.
+   */
+  async enrichFromFollowUp(
+    question: string,
+    answer: string,
+    profile: BrandProfile | null,
+    businessName?: string | null,
+  ): Promise<{ patch: Patch; note?: string }> {
+    const llmOn =
+      Boolean(process.env.ANTHROPIC_API_KEY) && process.env.LLM_FAKE !== '1';
+    if (!llmOn) return { patch: {}, note: `${question} — ${answer.slice(0, 300)}` };
+    try {
+      const { clarify: _c, website: _w, note, ...patch } = await this.llm.completeJson(
+        {
+          tier: 'voice',
+          cachedContext: [
+            "You distill a small-business owner's answer to a follow-up",
+            'question into clean profile data. Use the same field definitions',
+            'and DISTILL rules as onboarding extraction: offers are concrete',
+            'noun phrases, dos_and_donts are standing rules, never store',
+            'conversational filler. Anything factual that fits NO structured',
+            'field goes into "note" — one tight sentence a caption writer can',
+            'use. Only NEW information. Return ONLY JSON with any of:',
+            'business_name, business_type, voice_tone, target_customer,',
+            'offers[], dos_and_donts[], brand_colors[], posting_frequency,',
+            'note.',
+          ].join('\n'),
+          prompt:
+            `Current profile: ${JSON.stringify({
+              businessType: profile?.businessType,
+              offers: profile?.offers,
+              dosAndDonts: profile?.dosAndDonts,
+            })}\n` +
+            `Question we asked: "${question}"\n` +
+            `Owner's answer: """${answer}"""`,
+          maxTokens: 400,
+        },
+        LlmPatch,
+      );
+      return { patch, note };
+    } catch (err) {
+      this.log.warn(`follow-up enrich failed: ${String(err)}`);
+      return { patch: {}, note: `${question} — ${answer.slice(0, 300)}` };
+    }
+  }
+
   /** Free-mode parsing: fill exactly the field we asked about. */
-  private interpretOffline(asked: ProfileField, answer: string): Patch {
+  private interpretOffline(asked: ProfileField, answer: string): InterpretResult {
     const agreed =
       /^\s*(y(es|ep|eah|up)?|sure|sounds good|that works|perfect|ok(ay)?|you pick|do (?:it|that))\b/i;
     switch (asked) {
       case 'business_type':
         return { business_type: answer.slice(0, 200) };
+      case 'website': {
+        // A bare domain counts ("texthandled.com", "@handled" does not) —
+        // normalize to https. Negative answers store the sentinel so the
+        // checklist moves on and never re-asks.
+        const url = /((?:https?:\/\/)?[\w-]+(?:\.[\w-]+)+(?:\/\S*)?)/i.exec(answer);
+        if (url) {
+          const raw = url[1];
+          return { website: raw.startsWith('http') ? raw : `https://${raw}` };
+        }
+        return isNoRules(answer) || /\bno\b|\bdon'?t\b|\bnope\b/i.test(answer)
+          ? { website: NO_WEBSITE }
+          : {};
+      }
       case 'voice_tone':
         // A bare "yes"/"you pick" takes the suggestion; a longer agreement
         // ("yeah, but playful too") carries flavor — keep the owner's words.
@@ -439,6 +590,8 @@ export class OnboardingService {
     switch (field) {
       case 'business_type':
         return !profile.businessType;
+      case 'website':
+        return !profile.websiteUrl;
       case 'voice_tone':
         return !profile.voiceTone;
       case 'target_customer':

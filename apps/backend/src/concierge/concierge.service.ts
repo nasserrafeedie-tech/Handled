@@ -7,7 +7,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
 import { EmailService } from './email.service';
-import { OnboardingService } from './onboarding.service';
+import { OnboardingService, NO_WEBSITE } from './onboarding.service';
+import { BusinessResearchService } from './business-research.service';
 import {
   IntentService,
   CONFIRM_BELOW,
@@ -175,6 +176,7 @@ export class ConciergeService {
     private readonly twilio: TwilioService,
     private readonly email: EmailService,
     private readonly onboarding: OnboardingService,
+    private readonly lookup: BusinessResearchService,
     private readonly intent: IntentService,
     private readonly llm: LlmService,
     private readonly playbook: PlaybookService,
@@ -808,6 +810,97 @@ export class ConciergeService {
   }
 
   /**
+   * The bespoke follow-up round. Returns true when it asked a question and
+   * the caller should stop; false when the round is over (none generated,
+   * owner skipped, or the queue just drained) and completion may proceed.
+   *
+   * State lives on brandProfile.followUps: null = not yet generated,
+   * {pending: [...]} = questions still owed. While pending is non-empty,
+   * isComplete() stays false, so every inbound routes back here.
+   */
+  private async runFollowUps(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    profile: NonNullable<
+      Awaited<ReturnType<PrismaService['brandProfile']['findUnique']>>
+    >,
+    answer: string,
+    businessName: string | null | undefined,
+    ack: string,
+  ): Promise<boolean> {
+    const fu = profile.followUps as { pending?: string[] } | null;
+
+    // First arrival with the core done → generate the round.
+    if (fu == null) {
+      const questions = await this.onboarding.generateFollowUps(profile, businessName);
+      await this.prisma.brandProfile.update({
+        where: { customerId },
+        data: { followUps: { pending: questions } },
+      });
+      if (questions.length === 0) return false;
+      const lead =
+        questions.length === 1
+          ? 'Almost done — one more, specific to you.'
+          : `Almost done — ${questions.length} quick ones, specific to you (say "skip" any time).`;
+      await this.reply(
+        phone,
+        conversationId,
+        `${ack && ack !== 'Got it.' ? `${ack} ` : ''}${lead} ${questions[0]}`,
+      );
+      return true;
+    }
+
+    const pending = fu.pending ?? [];
+    if (pending.length === 0) return false;
+
+    // This inbound answers pending[0] — or waves the rest off. Deliberately
+    // narrow: a plain "no" is a real ANSWER ("do you take insurance?" — "no")
+    // and gets enriched, not skipped.
+    if (/^\s*(skip|pass|skip (them|these|the rest))\b/i.test(answer)) {
+      await this.prisma.brandProfile.update({
+        where: { customerId },
+        data: { followUps: { pending: [] } },
+      });
+      return false;
+    }
+    const { patch, note } = await this.onboarding.enrichFromFollowUp(
+      pending[0],
+      answer,
+      profile,
+      businessName,
+    );
+    if (Object.keys(patch).length > 0) {
+      await this.bus.emit(
+        this.task(customerId, 'UPDATE_BRAND_PROFILE', {
+          patch,
+          synthesize_voice: false,
+        }),
+      );
+    }
+    if (note) {
+      await this.prisma.brandProfile.update({
+        where: { customerId },
+        data: {
+          businessResearch: `${
+            profile.businessResearch ? `${profile.businessResearch}\n` : ''
+          }Owner: ${note}`,
+        },
+      });
+    }
+    const rest = pending.slice(1);
+    await this.prisma.brandProfile.update({
+      where: { customerId },
+      data: { followUps: { pending: rest } },
+    });
+    if (rest.length > 0) {
+      await this.reply(phone, conversationId, `Got it. ${rest[0]}`);
+      return true;
+    }
+    return false; // queue drained → completion continues this turn
+  }
+
+  /**
    * Show the owner the next draft waiting on them, oldest first. Drafts are a
    * queue worked one at a time — seven separate texts on a Monday morning is
    * how you get someone to reply STOP.
@@ -1178,7 +1271,11 @@ export class ConciergeService {
     let ack = '';
     let clarify: string | undefined;
     if (asked) {
-      const { clarify: followUp, ...patch } = await this.onboarding.interpret(
+      const {
+        clarify: followUp,
+        website,
+        ...patch
+      } = await this.onboarding.interpret(
         asked,
         answer,
         profile,
@@ -1187,6 +1284,37 @@ export class ConciergeService {
         !alreadyClarified,
       );
       clarify = followUp;
+
+      // The website answer never rides the task bus — it's interview state,
+      // stored directly. A real link kicks the "look you up" research in the
+      // background; the interview keeps moving while it reads.
+      if (website && !profile?.websiteUrl) {
+        await this.prisma.brandProfile.update({
+          where: { customerId },
+          data: { websiteUrl: website },
+        });
+        if (website !== NO_WEBSITE) {
+          ack = "On it — I'll go look you up while we keep going ✳";
+          void this.lookup
+            .lookUp(customerId, website, {
+              businessType: profile?.businessType,
+              businessName,
+            })
+            .then((findings) => {
+              if (!findings || findings.highlights.length === 0) return;
+              return this.notify(
+                customerId,
+                `Went and looked you up ✳\n` +
+                  findings.highlights.map((h) => `— ${h}`).join('\n') +
+                  `\n\nAll of that feeds into your posts now.`,
+                { promptedByOwner: true },
+              );
+            })
+            .catch((e) =>
+              this.log.warn(`lookup notify failed for ${customerId}: ${String(e)}`),
+            );
+        }
+      }
       // Belt and suspenders against re-emission: a "new" value identical to
       // what we already have is neither stored again nor re-acknowledged.
       if (patch.business_name && patch.business_name === businessName) {
@@ -1204,11 +1332,20 @@ export class ConciergeService {
           this.task(customerId, 'UPDATE_BRAND_PROFILE', {
             patch,
             // Final answer → synthesize a durable voice from everything (§6).
-            synthesize_voice: this.onboarding.wouldComplete(profile, patch),
+            // The website answer counts via the merged object — it's stored
+            // above, outside the bus, but completes the checklist all the same.
+            synthesize_voice: this.onboarding.wouldComplete(profile, {
+              ...patch,
+              ...(website ? { website } : {}),
+            }),
           }),
         );
-        ack = this.onboarding.ack(patch);
-      } else if (!clarify) {
+        // A lookup kickoff beats a generic ack; keep specific ones ("Got it —
+        // Rise, teal ✓") alongside it.
+        const detail = this.onboarding.ack(patch);
+        if (!ack) ack = detail;
+        else if (detail !== 'Got it.') ack = `${detail} ${ack}`;
+      } else if (!clarify && !ack) {
         ack = "Sorry — didn't quite catch that.";
       }
     }
@@ -1248,6 +1385,22 @@ export class ConciergeService {
     if (next) {
       const q = this.onboarding.question(next, next === 'posting_frequency' ? postsCap : undefined);
       return this.reply(phone, conversationId, ack ? `${ack} ${q}` : q);
+    }
+
+    // Core checklist done — the bespoke round (§ adaptive onboarding): up to
+    // three questions Opus writes for THIS business. Pauses the interview
+    // while questions remain; falls through once the queue drains.
+    if (fresh && !fresh.onboardingComplete) {
+      const paused = await this.runFollowUps(
+        customerId,
+        phone,
+        conversationId,
+        fresh,
+        answer,
+        businessName,
+        ack,
+      );
+      if (paused) return;
     }
 
     // Checklist complete → the customer is now live. Without this they stay
@@ -1307,6 +1460,18 @@ export class ConciergeService {
         `${site}/upload?c=${customerId}&kind=logo\n\n` +
         `Meanwhile I'm writing your first week — give me a moment.`,
     );
+
+    // If the look-you-up research is still reading, give it a moment — the
+    // first week drafts far better on top of real findings. Bounded so a slow
+    // search never stalls the magic moment; a late result still lands in the
+    // profile for every later week.
+    const pendingLookup = this.lookup.pending(customerId);
+    if (pendingLookup) {
+      await Promise.race([
+        pendingLookup,
+        new Promise((r) => setTimeout(r, 90_000)),
+      ]);
+    }
 
     const drafted = await this.draftFirstWeek(customerId);
     const shown = drafted

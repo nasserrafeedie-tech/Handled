@@ -9,6 +9,7 @@ import { RecapService } from './recap.service';
 import { TwilioService } from './twilio.service';
 import { EmailService } from './email.service';
 import { OnboardingService } from './onboarding.service';
+import { BusinessResearchService } from './business-research.service';
 import { IntentService } from './intent.service';
 import { LlmService } from '../operator/llm/llm.service';
 
@@ -28,6 +29,7 @@ import { LlmService } from '../operator/llm/llm.service';
     TwilioService,
     EmailService,
     OnboardingService,
+    BusinessResearchService,
     IntentService,
     LlmService,
   ],

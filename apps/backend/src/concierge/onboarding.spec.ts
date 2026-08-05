@@ -49,6 +49,7 @@ describe('onboarding — standing rules', () => {
     // Everything filled except the rules → nextField must still ask for them.
     const profile = {
       businessType: 'cafe',
+      websiteUrl: 'https://example.com',
       voiceTone: 'warm',
       targetCustomer: 'locals',
       offers: ['coffee'],
