@@ -1175,6 +1175,12 @@ export class ConciergeService {
         visualStyle: null,
         contentStrategy: Prisma.DbNull,
         onboardingComplete: false,
+        // A fresh start is a fresh BUSINESS as far as we know — stale research
+        // from the old one would quietly poison every new caption, and a
+        // drained follow-up queue would skip the bespoke round entirely.
+        websiteUrl: null,
+        businessResearch: null,
+        followUps: Prisma.DbNull,
       },
     });
     await this.prisma.customer.update({
