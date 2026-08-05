@@ -1141,6 +1141,20 @@ export class ConciergeService {
     pending: { caption: string | null } | null,
   ): Promise<void> {
     const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
+    // Asking about the draft itself ("what draft?", "show me", "resend it")
+    // deserves the draft, not a description of it. A reference the owner
+    // can't see ("the one about half-finished admin") reads as gibberish.
+    if (
+      pending &&
+      /what draft|which (draft|post)|show (me|it|the)|resend|send (it|that) again|see (it|the draft|the post)/i.test(
+        body,
+      )
+    ) {
+      const shown = await this.presentNextDraft(customerId, 'Here it is ✳', {
+        promptedByOwner: true,
+      });
+      if (shown) return;
+    }
     try {
       const [profile, customer, openAsks] = await Promise.all([
         this.prisma.brandProfile.findUnique({ where: { customerId } }),
@@ -1159,7 +1173,10 @@ export class ConciergeService {
         // engine will silently refuse.
         entitlementLine(customer?.planTier ?? 'starter'),
         pending
-          ? `A draft is waiting for their approval (they reply "yes" to schedule it): "${(pending.caption ?? '').slice(0, 120)}"`
+          ? 'One draft is waiting on their approval (they reply "yes" to ' +
+            'schedule it). NEVER describe, summarize, or reference the ' +
+            "draft's contents — if they want to see it, tell them to say " +
+            '"show me the draft" and it will be re-sent in full.'
           : 'No drafts are waiting on them right now.',
         openAsks.length
           ? `Open photo/video asks they still owe: ${openAsks.map((a) => a.prompt).join(' | ')}. They upload at ${site}/upload?c=${customerId}`
@@ -1183,7 +1200,10 @@ export class ConciergeService {
             '(1-3 short sentences, this is a text message). Answer the ' +
             "owner's question using ONLY the facts provided. Never invent " +
             'features, prices, or dates. If the facts do not cover it, say ' +
-            "you'll check and get back to them.",
+            "you'll check and get back to them. Answer directly: never open " +
+            'with thanks or praise, never mirror their words back, no ' +
+            '"Amazing!" enthusiasm — just the answer, like a competent ' +
+            'assistant mid-conversation.',
           prompt: `FACTS:\n${facts}\n\nOwner's question: <<<${body.slice(0, 500)}>>>\n\nReturn JSON: {"reply": string}`,
           maxTokens: 300,
         },
