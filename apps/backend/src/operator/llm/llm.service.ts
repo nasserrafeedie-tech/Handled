@@ -14,7 +14,9 @@ export type LlmTier = 'bulk' | 'voice';
 class TransientLlmError extends Error {}
 
 export interface LlmJsonRequest {
-  /** Which model tier (§2 routing): bulk = Haiku 4.5, voice = Sonnet 5. */
+  /** Which model tier (§2 routing): bulk = Haiku 4.5 (invisible plumbing —
+   *  classification, extraction, media routing), voice = Opus 5 (anything a
+   *  customer reads — captions, plans, replies, the free taste). */
   tier: LlmTier;
   /** Stable per-customer context (the brand_profile) — sent as a cacheable
    *  system block so repeated calls hit the prompt cache (§2, §12). */
@@ -46,8 +48,11 @@ export class LlmService {
   constructor(private readonly prisma: PrismaService) {}
 
   private model(tier: LlmTier): string {
+    // Voice = Opus 5: measured on real usage, all customer-facing copy on Opus
+    // costs ~$3-4/mo per active customer (~1% of Growth revenue) and writes
+    // visibly better captions — the model cost is noise next to the quality.
     return tier === 'voice'
-      ? process.env.LLM_MODEL_VOICE ?? 'claude-sonnet-5'
+      ? process.env.LLM_MODEL_VOICE ?? 'claude-opus-5'
       : process.env.LLM_MODEL_BULK ?? 'claude-haiku-4-5';
   }
 
@@ -127,7 +132,7 @@ export class LlmService {
       },
       body: JSON.stringify({
         model: this.model(req.tier),
-        // Voice (Sonnet 5) does extended THINKING by default, and on a complex
+        // Voice (Opus 5) does extended THINKING by default, and on a complex
         // prompt it will spend the whole budget reasoning and hit max_tokens
         // before emitting any answer — the response then has only a `thinking`
         // block and no text, which read as "no text content" and dropped the

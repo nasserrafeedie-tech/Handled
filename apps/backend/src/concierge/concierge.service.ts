@@ -120,8 +120,8 @@ const FREE_TASTE_CONTEXT = [
 /**
  * The free-taste paywall (§ pricing). Handled is a paid service, but a brand-new
  * number texting in (from a business card, the /start page) deserves proof
- * before a checkout page: exactly ONE drafted caption, generated on the cheap
- * tier with no image. Everything past that — publishing, images, the weekly
+ * before a checkout page: exactly ONE drafted caption, with no image.
+ * Everything past that — publishing, images, the weekly
  * loop — waits for payment (stripeCustomerId, set by the Stripe webhook).
  *
  * Abuse posture: after the taste, every unpaid inbound gets a STATIC reply —
@@ -1084,7 +1084,7 @@ export class ConciergeService {
       ].join('\n');
       const { reply } = await this.llm.completeJson(
         {
-          tier: 'bulk',
+          tier: 'voice',
           cachedContext:
             "You are Handled's SMS concierge — warm, plain-English, brief " +
             '(1-3 short sentences, this is a text message). Answer the ' +

@@ -139,7 +139,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     try {
       const gen = await this.llm.completeJson(
         {
-          tier: 'bulk',
+          tier: 'voice',
           cachedContext: '',
           prompt: carouselInstruction(brief),
           maxTokens: 700,

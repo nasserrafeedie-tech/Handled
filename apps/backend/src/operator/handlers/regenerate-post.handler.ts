@@ -57,7 +57,7 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
     ].join(' ');
 
     const gen = await this.llm.completeJson(
-      { tier: 'bulk', cachedContext: context, prompt, maxTokens: 600, customerId: task.customer_id },
+      { tier: 'voice', cachedContext: context, prompt, maxTokens: 600, customerId: task.customer_id },
       CaptionLlmOutput,
     );
 
