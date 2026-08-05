@@ -101,6 +101,13 @@ export interface SlideSpec {
    * carousel has rhythm without looking like five unrelated cards.
    */
   variant?: number;
+  /**
+   * The words on the CTA slide's button. Must be the business's REAL action
+   * ("Text us", "Book now", "Come by") — a generic "Visit us" under a
+   * headline that says "text us the line" reads as nonsense. Only used when
+   * kind === 'cta'.
+   */
+  ctaLabel?: string;
 }
 
 /* ── fonts ─────────────────────────────────────────────────────────────── */
@@ -940,7 +947,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
       blocks.push({
         h: 66,
         gap: g(0),
-        render: (y) => ctaButton(cx, y + 33, 'Visit us', p, t),
+        render: (y) => ctaButton(cx, y + 33, spec.ctaLabel ?? 'Visit us', p, t),
       });
     } else {
       // title / body — editorial, with an eyebrow and a rule under the headline.

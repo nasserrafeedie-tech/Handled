@@ -43,7 +43,7 @@ describe('isCarouselArchetype — carousels are the default for text-forward pos
 });
 
 describe('carouselInstruction', () => {
-  it('feeds the caption in as the only source of facts', () => {
+  it('grounds the slides in the caption and brand facts, and bans invention', () => {
     const instr = carouselInstruction({
       businessType: 'dental practice',
       archetype: 'product_spotlight',
@@ -51,7 +51,9 @@ describe('carouselInstruction', () => {
       brandName: 'Bright Smile Dental',
     });
     assert.match(instr, /Whitening takes about an hour/);
-    assert.match(instr, /ONLY information already in the caption/);
+    assert.match(instr, /Do not[\s\S]*invent statistics/); // honesty rule survives
+    assert.match(instr, /NEVER pad/); // no filler slides
+    assert.match(instr, /cta_label/); // CTA button is authored, not hardcoded
     assert.match(instr, /product spotlight/); // archetype humanised
     assert.match(instr, /Bright Smile Dental/); // brand name offered for the CTA
   });

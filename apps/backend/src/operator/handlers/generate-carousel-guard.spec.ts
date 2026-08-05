@@ -15,7 +15,7 @@ function makeHandler(opts: {
 }) {
   const prisma = {
     customer: { findUnique: async () => ({ businessName: 'X', planTier: 'growth', aiImagesOptIn: false, trustLevel: 'approve_all' }) },
-    brandProfile: { findUnique: async () => ({ businessType: 'cafe', brandColors: [], blackoutTopics: opts.blackoutTopics ?? [] }) },
+    brandProfile: { findUnique: async () => ({ businessType: 'cafe', brandColors: [], blackoutTopics: opts.blackoutTopics ?? [], offers: [], dosAndDonts: [], voiceTone: null, targetCustomer: null, businessResearch: null }) },
     post: { findUnique: async () => ({ id: 'p1', caption: 'A clean caption about coffee.', mediaRefs: [], archetype: 'educational_tip' }) },
   };
   const llm = { completeJson: async () => ({ slides: opts.slides }) };

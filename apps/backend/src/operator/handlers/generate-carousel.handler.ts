@@ -4,6 +4,7 @@ import { type Task, type Result } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../common/storage.service';
 import { LlmService } from '../llm/llm.service';
+import { buildBrandContext } from '../llm/brand-context';
 import { GraphicsService } from '../graphics/graphics.service';
 import { CANVAS, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
 import { resolveBrandColors } from '../graphics/brand-palette';
@@ -140,7 +141,11 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       const gen = await this.llm.completeJson(
         {
           tier: 'voice',
-          cachedContext: '',
+          // The slides deserve the same brand grounding as the caption —
+          // offers, voice, and the researched facts about THIS business.
+          // Without it the deck can only stretch the caption thin, and the
+          // CTA has no idea how customers actually engage.
+          cachedContext: profile ? buildBrandContext(profile) : '',
           prompt: carouselInstruction(brief),
           maxTokens: 700,
           customerId: task.customer_id,
@@ -215,6 +220,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       kind: s.kind,
       headline: s.headline,
       body: s.body,
+      ctaLabel: s.cta_label,
       seed: made + brandOffset,
       variant: i,
     }));
