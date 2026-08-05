@@ -130,9 +130,9 @@ const FREE_TASTE_CONTEXT = [
  * that legitimate traffic never notices.
  */
 const FREE_TASTE_INTRO =
-  "I can show you right now — text me back two things: what your business is, " +
-  "and one thing you'd want customers to know this week. I'll write you a " +
-  'post on the spot, free.';
+  "Hey — it's Handled ✳ Tell me what your business is and one thing you'd " +
+  "want customers to know this week, and I'll write you a post on the spot. " +
+  'Free, takes ten seconds.';
 
 const PAYWALL_REPLY =
   "Handled: You've used your free draft ✳ To get posts written, designed and " +
