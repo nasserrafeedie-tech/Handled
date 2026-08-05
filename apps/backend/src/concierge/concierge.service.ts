@@ -406,11 +406,15 @@ export class ConciergeService {
         data: { freeDraftUsedAt: new Date() },
       });
 
-      return this.reply(
+      await this.reply(
         addr,
         conversationId,
         `Here's what I'd post for you:\n\n“${caption.trim()}”\n\n${FREE_TASTE_PITCH}`,
       );
+      // After the lead has their draft, never before: the alert is for
+      // Nasser's follow-up, and it must not delay or endanger the sale text.
+      await this.alertOwnerOfLead(customer, blurb, caption);
+      return;
     } catch (err) {
       // LLM hiccup: apologize without stamping — their taste is still owed.
       this.log.warn(`free taste generation failed: ${String(err)}`);
@@ -419,6 +423,34 @@ export class ConciergeService {
         conversationId,
         'Give me a few minutes — I hit a snag writing your post. Text me again shortly and I\'ll have it.',
       );
+    }
+  }
+
+  /**
+   * Text Nasser when a lead spends their free taste (§ launch plan: "text
+   * every lead in the admin view personally" — an alert he sees in minutes
+   * beats a list he checks at night). LEAD_ALERT_PHONE unset = no alert,
+   * which is also what keeps every existing test and dev environment silent.
+   * A failed alert is logged and swallowed: the lead already has their draft,
+   * and losing the sale text over a notification would invert the priorities.
+   */
+  private async alertOwnerOfLead(
+    customer: { phone: string | null; email: string | null },
+    blurb: string,
+    caption: string,
+  ): Promise<void> {
+    const to = process.env.LEAD_ALERT_PHONE;
+    if (!to) return;
+    const contact = customer.phone ?? customer.email ?? 'unknown';
+    try {
+      await this.twilio.send(
+        to,
+        `✳ New lead: ${contact}\n` +
+          `They said: “${blurb.slice(0, 160)}”\n` +
+          `Draft sent: “${caption.trim().slice(0, 160)}”`,
+      );
+    } catch (err) {
+      this.log.warn(`lead alert to ${to} failed: ${String(err)}`);
     }
   }
 

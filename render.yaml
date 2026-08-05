@@ -67,6 +67,11 @@ services:
         sync: false
       - key: POST_FOR_ME_API_KEY
         sync: false
+      # Nasser's own cell. When set, every delivered free-taste draft texts
+      # him the lead's number + blurb + caption so he can follow up personally
+      # (launch plan: text every lead). Unset = no alerts, no other change.
+      - key: LEAD_ALERT_PHONE
+        sync: false
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_PRICE_STARTER

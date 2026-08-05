@@ -17,8 +17,9 @@ import { ConciergeService, type InboundSms } from './concierge.service';
 
 type Row = Record<string, unknown>;
 
-function makeWorld(opts?: { usedToday?: number; llmFails?: boolean }) {
+function makeWorld(opts?: { usedToday?: number; llmFails?: boolean; alertFails?: boolean }) {
   const sent: string[] = [];
+  const outbound: Array<{ to: string; body: string }> = [];
   const updates: Row[] = [];
   const emitted: string[] = [];
   let llmCalls = 0;
@@ -71,7 +72,17 @@ function makeWorld(opts?: { usedToday?: number; llmFails?: boolean }) {
         return { summary_for_owner: 'ok' };
       },
     } as never,
-    { send: async (_to: string, body: string) => void sent.push(body) } as never, // twilio
+    {
+      send: async (to: string, body: string) => {
+        outbound.push({ to, body });
+        // The lead-alert number is distinct from any customer address, so a
+        // configured failure hits only the alert — never the sale text.
+        if (opts?.alertFails && to === process.env.LEAD_ALERT_PHONE) {
+          throw new Error('twilio down for alerts');
+        }
+        sent.push(body);
+      },
+    } as never, // twilio
     { send: async (_to: string, body: string) => void sent.push(body) } as never, // email
     // onboarding — reaching the interview unpaid is the leak.
     {
@@ -99,7 +110,7 @@ function makeWorld(opts?: { usedToday?: number; llmFails?: boolean }) {
   );
 
   const seed = (row: Row) => customers.set(row.phone as string, row);
-  return { svc, sent, updates, emitted, seed, llmCalls: () => llmCalls };
+  return { svc, sent, outbound, updates, emitted, seed, llmCalls: () => llmCalls };
 }
 
 const sms = (body: string, from = '+15550001111'): InboundSms => ({
@@ -206,6 +217,64 @@ describe('free-taste paywall', () => {
     assert.match(world.sent[0], /text me back|free/i);
     assert.equal(world.llmCalls(), 0);
     assert.deepEqual(world.emitted, [], 'unpaid media must not reach INGEST_MEDIA');
+  });
+
+  describe('lead alert (LEAD_ALERT_PHONE)', () => {
+    const OWNER = '+15559998888';
+
+    it('set → Nasser gets one alert AFTER the taste is delivered, with contact + blurb + caption', async () => {
+      process.env.LEAD_ALERT_PHONE = OWNER;
+      try {
+        world.seed({ ...UNPAID });
+        await world.svc.handleInbound(sms('I run a bakery, promote our sourdough'));
+        const alerts = world.outbound.filter((o) => o.to === OWNER);
+        assert.equal(alerts.length, 1, 'exactly one alert per taste');
+        assert.match(alerts[0].body, /\+15550001111/, 'the lead\'s number, so he can text back');
+        assert.match(alerts[0].body, /bakery/i, 'what they said');
+        assert.match(alerts[0].body, /sourdough/i, 'what we sent them');
+        // Ordering: the sale text must leave before the notification.
+        const lastIdx = world.outbound.length - 1;
+        assert.equal(world.outbound[lastIdx].to, OWNER, 'alert goes out last');
+      } finally {
+        delete process.env.LEAD_ALERT_PHONE;
+      }
+    });
+
+    it('unset (the default) → no alert, outbound is only the customer text', async () => {
+      world.seed({ ...UNPAID });
+      await world.svc.handleInbound(sms('I run a bakery'));
+      assert.equal(world.outbound.length, 1);
+      assert.equal(world.outbound[0].to, '+15550001111');
+    });
+
+    it('a failed alert never breaks the lead\'s flow — draft delivered, taste stamped', async () => {
+      process.env.LEAD_ALERT_PHONE = OWNER;
+      try {
+        world = makeWorld({ alertFails: true });
+        world.seed({ ...UNPAID });
+        await world.svc.handleInbound(sms('I run a bakery'));
+        assert.equal(world.sent.length, 1, 'the customer draft still went out');
+        assert.match(world.sent[0], /billing/i);
+        assert.equal(world.updates.length, 1, 'freeDraftUsedAt still stamped');
+      } finally {
+        delete process.env.LEAD_ALERT_PHONE;
+      }
+    });
+
+    it('no alert on intro, keywords, paywall, or cap — only a delivered taste', async () => {
+      process.env.LEAD_ALERT_PHONE = OWNER;
+      try {
+        // Brand-new number (intro) + keyword re-ask.
+        await world.svc.handleInbound(sms('HANDLED'));
+        await world.svc.handleInbound(sms('hi'));
+        // Stamped customer hitting the paywall.
+        world.seed({ ...UNPAID, phone: '+15550002222', freeDraftUsedAt: new Date() });
+        await world.svc.handleInbound(sms('another?', '+15550002222'));
+        assert.equal(world.outbound.filter((o) => o.to === OWNER).length, 0);
+      } finally {
+        delete process.env.LEAD_ALERT_PHONE;
+      }
+    });
   });
 
   it('a PAID customer sails past the gate into the real product', async () => {
