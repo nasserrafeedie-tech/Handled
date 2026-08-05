@@ -133,9 +133,9 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       // Opus writes long by default; every draft is also delivered over SMS
       // for approval, where a 6-segment text gets carrier-filtered. One idea
       // per post, said tight, beats an essay — on every platform.
-      'Keep the caption under 350 characters unless the archetype genuinely',
-      'needs more (never above 600). One idea per post. Cut preamble and',
-      'wind-down — start at the point.',
+      'Keep the caption under 280 characters. One idea per post, said tight —',
+      'a strong short caption beats a thorough long one every single time.',
+      'Cut preamble and wind-down; start at the point.',
       // Every post naming the city + trade ("our Glendale coffee shop") reads
       // like SEO filler across a week. Mention the location at most rarely.
       'Do not put the city and business type in every post — mention the',
@@ -243,6 +243,40 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       }
     }
     const fabricated = faked.length > 0;
+
+    // Length is enforced, not requested: Opus pads toward whatever ceiling the
+    // prompt names, and a 550-char caption is both weaker copy and (presented
+    // over SMS) a multi-segment approval text. One corrective rewrite; keep
+    // whichever is shorter so a failed tighten can't make things worse.
+    if (gen.caption.length > 380) {
+      this.log.warn(
+        `caption ran ${gen.caption.length} chars for ${task.customer_id} — tightening`,
+      );
+      try {
+        const tight = await this.llm.completeJson(
+          {
+            tier: 'voice',
+            cachedContext: context,
+            prompt:
+              `${prompt}\n\nYour draft was ${gen.caption.length} characters — too long. ` +
+              'Rewrite THIS caption under 280 characters: keep the single strongest ' +
+              'idea and the call to action, cut everything else. No new claims.\n\n' +
+              `Draft to tighten: """${gen.caption}"""`,
+            maxTokens: 600,
+            customerId: task.customer_id,
+          },
+          CaptionLlmOutput,
+        );
+        tight.caption = polishCaption(tight.caption);
+        if (tight.caption.length < gen.caption.length) {
+          gen.caption = tight.caption;
+          if (tight.hashtags.length) gen.hashtags = tight.hashtags;
+          gen.alt_text = tight.alt_text ?? gen.alt_text;
+        }
+      } catch (e) {
+        this.log.warn(`caption tighten failed for ${task.customer_id}: ${String(e)}`);
+      }
+    }
 
     // §8 moderation before anything is persisted as publishable.
     const verdict = await this.moderation.screen({

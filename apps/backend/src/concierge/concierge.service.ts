@@ -9,6 +9,7 @@ import { TwilioService } from './twilio.service';
 import { EmailService } from './email.service';
 import { OnboardingService, NO_WEBSITE } from './onboarding.service';
 import { BusinessResearchService } from './business-research.service';
+import { StorageService } from '../common/storage.service';
 import {
   IntentService,
   CONFIRM_BELOW,
@@ -182,6 +183,7 @@ export class ConciergeService {
     private readonly playbook: PlaybookService,
     private readonly classifier: ArchetypeClassifier,
     private readonly research: ArchetypeResearchService,
+    private readonly storage: StorageService,
   ) {}
 
   async handleInbound(msg: InboundSms): Promise<void> {
@@ -686,7 +688,7 @@ export class ConciergeService {
   async notify(
     customerId: string,
     body: string,
-    opts?: { promptedByOwner?: boolean },
+    opts?: { promptedByOwner?: boolean; mediaUrls?: string[] },
   ): Promise<void> {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
@@ -717,8 +719,13 @@ export class ConciergeService {
       !inTextingWindow(now, customer.timezone)
     ) {
       const sendAfter = nextTextingWindowOpen(now, customer.timezone);
+      // QueuedText has no media column — carry the image as a link so a
+      // quiet-hours draft still shows its visual when it flushes.
+      const queuedBody = opts?.mediaUrls?.length
+        ? `${body}\n\n${opts.mediaUrls.map((u) => `Preview: ${u}`).join('\n')}`
+        : body;
       await this.prisma.queuedText.create({
-        data: { customerId, body, sendAfter },
+        data: { customerId, body: queuedBody, sendAfter },
       });
       this.log.log(
         `quiet hours for ${customerId} (${customer.timezone}) — queued until ${sendAfter.toISOString()}`,
@@ -728,7 +735,7 @@ export class ConciergeService {
     const conversation =
       customer.conversation ??
       (await this.prisma.conversation.create({ data: { customerId } }));
-    await this.reply(this.addressOf(customer), conversation.id, body);
+    await this.reply(this.addressOf(customer), conversation.id, body, opts?.mediaUrls);
   }
 
   /**
@@ -936,7 +943,9 @@ export class ConciergeService {
     const needsPhoto = next.mediaRefs.length === 0;
     const closer = needsPhoto
       ? '📸 Text me a photo and I’ll put it on this post — or reply “yes” to post as text-only. Or tell me what to change.'
-      : 'Reply “yes” to schedule it, or tell me what to change.';
+      : next.mediaRefs.length > 1
+        ? `(That’s slide 1 of ${next.mediaRefs.length} — the full carousel goes out when it posts.) Reply “yes” to schedule it, or tell me what to change.`
+        : 'Reply “yes” to schedule it, or tell me what to change.';
     // The owner is approving exactly what will publish, so show the WHOLE
     // caption — a truncated preview asks them to sign off on words they can't
     // see. Captions are already platform-limited upstream, so this stays a
@@ -945,7 +954,13 @@ export class ConciergeService {
       (lead ? `${lead}\n\n` : '') +
       `Draft${when}:\n\n“${(next.caption ?? '').trim()}”\n\n` +
       closer;
-    await this.notify(customerId, body, opts);
+    // The visual rides with the caption — approving a post without seeing the
+    // picture isn't approving the post. First slide/image only; MMS is not a
+    // gallery.
+    const mediaUrls = next.mediaRefs
+      .slice(0, 1)
+      .map((k) => (/^https?:\/\//.test(k) ? k : this.storage.publicUrl(k)));
+    await this.notify(customerId, body, { ...opts, mediaUrls });
     // Stamp AFTER the send: a failed send leaves presentedAt null, so the
     // reconcile sweep knows this draft was never actually shown.
     await this.prisma.post.update({
@@ -1742,15 +1757,25 @@ export class ConciergeService {
    * else over Twilio SMS. Everything upstream is channel-agnostic; this is the
    * one place the two wires diverge.
    */
-  private async reply(to: string, conversationId: string, body: string): Promise<void> {
+  private async reply(
+    to: string,
+    conversationId: string,
+    body: string,
+    mediaUrls?: string[],
+  ): Promise<void> {
     const channel = to.includes('@') ? 'email' : 'sms';
     if (channel === 'email') {
-      await this.email.send(to, body);
+      // Email has no MMS: the image rides as a link the branded HTML renders
+      // clickable. Same information, channel-appropriate shape.
+      const withMedia = mediaUrls?.length
+        ? `${body}\n\n${mediaUrls.map((u) => `Preview: ${u}`).join('\n')}`
+        : body;
+      await this.email.send(to, withMedia);
     } else {
-      await this.twilio.send(to, body);
+      await this.twilio.send(to, body, mediaUrls);
     }
     await this.prisma.message.create({
-      data: { conversationId, direction: 'outbound', channel, body },
+      data: { conversationId, direction: 'outbound', channel, body, mediaUrls: mediaUrls ?? [] },
     });
   }
 

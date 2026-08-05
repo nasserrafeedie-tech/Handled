@@ -12,6 +12,7 @@ import { OnboardingService } from './onboarding.service';
 import { BusinessResearchService } from './business-research.service';
 import { IntentService } from './intent.service';
 import { LlmService } from '../operator/llm/llm.service';
+import { StorageService } from '../common/storage.service';
 
 @Module({
   imports: [PlaybookModule],
@@ -32,6 +33,7 @@ import { LlmService } from '../operator/llm/llm.service';
     BusinessResearchService,
     IntentService,
     LlmService,
+    StorageService,
   ],
   exports: [ConciergeService, TwilioService, EmailService, RecapService],
 })

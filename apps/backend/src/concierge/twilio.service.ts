@@ -28,18 +28,26 @@ export class TwilioService {
     return process.env.SMS_MANUAL_RELAY === '1';
   }
 
-  async send(to: string, body: string): Promise<void> {
+  async send(to: string, body: string, mediaUrls?: string[]): Promise<void> {
     if (this.manualRelay) {
-      this.log.log(`[manual relay → ${to}] ${body}`);
+      this.log.log(
+        `[manual relay → ${to}] ${body}${mediaUrls?.length ? ` [media: ${mediaUrls.join(', ')}]` : ''}`,
+      );
       return;
     }
     if (!process.env.TWILIO_ACCOUNT_SID) {
-      this.log.warn(`[dry-run SMS → ${to}] ${body}`);
+      this.log.warn(
+        `[dry-run SMS → ${to}] ${body}${mediaUrls?.length ? ` [media: ${mediaUrls.length}]` : ''}`,
+      );
       return;
     }
     await this.client.messages.create({
       to,
       body,
+      // MMS: a draft's visual rides with its caption — approving a post
+      // without seeing the picture isn't approving the post. Carriers cap
+      // attachments, so callers send one representative image, not the deck.
+      ...(mediaUrls?.length ? { mediaUrl: mediaUrls.slice(0, 2) } : {}),
       messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID,
       from: process.env.TWILIO_FROM_NUMBER,
     });

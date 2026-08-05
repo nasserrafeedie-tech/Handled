@@ -95,6 +95,7 @@ function makeWorld(opts?: { usedToday?: number; llmFails?: boolean }) {
     {} as never, // playbook
     {} as never, // classifier
     {} as never, // research
+    { publicUrl: (k: string) => `https://cdn.test/${k}` } as never, // storage
   );
 
   const seed = (row: Row) => customers.set(row.phone as string, row);
