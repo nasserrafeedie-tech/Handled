@@ -13,7 +13,14 @@ import { stableSeed, type SlideSpec } from '../graphics/slide-templates';
  *    surfaces with new words;
  *  - the owner's redo words never reached the slide writer.
  */
-function makeWorld(opts?: { ownerUpload?: boolean; replace?: boolean; feedback?: string }) {
+function makeWorld(opts?: {
+  ownerUpload?: boolean;
+  replace?: boolean;
+  feedback?: string;
+  planTier?: string;
+  aiImagesOptIn?: boolean;
+  imagesConfigured?: boolean;
+}) {
   const prompts: string[] = [];
   const updates: Array<Record<string, unknown>> = [];
   const rendered: SlideSpec[][] = [];
@@ -23,8 +30,8 @@ function makeWorld(opts?: { ownerUpload?: boolean; replace?: boolean; feedback?:
     customer: {
       findUnique: async () => ({
         businessName: 'Casa Verde',
-        planTier: 'growth',
-        aiImagesOptIn: false,
+        planTier: opts?.planTier ?? 'growth',
+        aiImagesOptIn: opts?.aiImagesOptIn ?? false,
         trustLevel: 'approve_all',
       }),
     },
@@ -64,6 +71,8 @@ function makeWorld(opts?: { ownerUpload?: boolean; replace?: boolean; feedback?:
   const llm = {
     completeJson: async (req: { prompt: string }) => {
       prompts.push(req.prompt);
+      // The hero path asks for a photo subject before the slides are written.
+      if (!req.prompt.includes('"slides"')) return { subject: 'a latte on a wooden counter' };
       return {
         slides: [
           { kind: 'title', headline: 'Morning pan dulce' },
@@ -83,13 +92,17 @@ function makeWorld(opts?: { ownerUpload?: boolean; replace?: boolean; feedback?:
     put: async (key: string) => void stored.push(key),
     get: async () => null,
   };
+  const images = {
+    configured: opts?.imagesConfigured ?? false,
+    generate: async () => ({ bytes: Buffer.from('jpeg-bytes'), contentType: 'image/jpeg' }),
+  };
   const handler = new GenerateCarouselHandler(
     prisma as never,
     llm as never,
     graphics as never,
     storage as never,
-    { configured: false } as never,
-    {} as never,
+    images as never,
+    { isPlace: async () => ({ isPlace: false }) } as never,
     { screen: async () => ({ passed: true, reasons: [] }) } as never,
   );
   const task = {
@@ -139,6 +152,23 @@ describe('GENERATE_CAROUSEL redo', () => {
     assert.match(r.summary_for_owner, /already has a picture/i);
     assert.equal(w.rendered.length, 0, 'nothing rendered');
     assert.equal(w.updates.length, 0, 'nothing replaced');
+  });
+
+  it('PRO gets a generated hero cover with no opt-in — disclosed and held for review', async () => {
+    const w = makeWorld({ replace: true, planTier: 'pro', imagesConfigured: true });
+    const r = await w.handler.handle(w.task);
+    assert.equal(r.status, 'done');
+    assert.ok(w.rendered[0][0].photo, 'cover slide carries the hero image');
+    assert.equal(w.rendered[0][0].photoLayout, 'full');
+    assert.equal(w.updates[0].aiGeneratedMedia, true, 'AI imagery is disclosed');
+    assert.equal(w.updates[0].approvalState, 'awaiting_owner', 'forced back to owner review');
+  });
+
+  it('growth without opt-in still gets a text cover — the pro door is pro only', async () => {
+    const w = makeWorld({ replace: true, planTier: 'growth', imagesConfigured: true });
+    await w.handler.handle(w.task);
+    assert.equal(w.rendered[0][0].photo, undefined, 'no hero without consent');
+    assert.equal(w.updates[0].aiGeneratedMedia, undefined, 'nothing to disclose');
   });
 
   it('without replace_existing, existing media still skips (unchanged default)', async () => {

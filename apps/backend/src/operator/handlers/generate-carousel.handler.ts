@@ -245,13 +245,18 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       variant: i,
     }));
 
-    // If the owner opted into generated photography, give the COVER slide a
-    // generated hero image with its headline over it — a mix of a real photo
-    // treatment and text slides, not five text cards. Opt-in only, and additive:
-    // without consent (the default) the carousel is unchanged. A place-image or
-    // any failure falls back to the plain-text cover, never a failed carousel.
+    // Give the COVER slide a generated hero image with its headline over it —
+    // a mix of a real photo treatment and text slides, not five text cards.
+    // Two doors in: the owner opted into generated photography, or the
+    // business is on PRO — where the hero cover is part of the tier, standard
+    // on every deck (owner's call, Aug 2026). Consent still governs standalone
+    // generated photos; and the hero keeps every safety rail regardless of
+    // door — subject refusal, the place-check on real pixels, the
+    // aiGeneratedMedia disclosure, and forced owner review below full_auto.
+    // A place-image or any failure falls back to the plain-text cover, never
+    // a failed carousel.
     let usedAiImage = false;
-    if (customer.aiImagesOptIn && specs.length > 0) {
+    if ((customer.aiImagesOptIn || customer.planTier === 'pro') && specs.length > 0) {
       const hero = await this.generateHeroImage(
         task.customer_id,
         profile?.businessType ?? 'local business',
