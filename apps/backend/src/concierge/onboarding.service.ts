@@ -165,13 +165,19 @@ export class OnboardingService {
 
   /** The welcome + question one, for a first contact that told us nothing yet. */
   welcome(): string {
+    // Tester feedback (Nasser's mom, Aug 2026): say how long the tunnel is
+    // BEFORE the first question. An interview with no stated bound reads as
+    // "how many of these are coming?" — the count up front plus a running
+    // "n of 7" on each question turns it into a short checklist being
+    // ticked off.
     return (
       'Hey — this is Handled ✳ From here on out I plan, write, design, and ' +
       'post your social media, and you mostly just reply to my texts. ' +
       'Save me as a contact so you always know it\'s me: ' +
       'texthandled.com/contact\n\n' +
-      "First things first: tell me about your business — what do you do, " +
-      "what's it called, and where are you?"
+      'Setup is seven quick questions — plus one or two tailored to your ' +
+      'answers at the end. A few minutes by text, then I get to work.\n\n' +
+      this.question('business_type')
     );
   }
 
@@ -183,35 +189,40 @@ export class OnboardingService {
    * (cap 3) must not be invited to pick 4 and then be under-served or over-served.
    */
   question(field: ProfileField, postsCap?: number): string {
+    // "n of 7:" on every prompt (tester feedback — Nasser's mom): the reader
+    // always knows where they are in the tunnel. The number is the field's
+    // checklist position, so a question skipped because the owner already
+    // answered it early just advances the count — which reads as progress.
+    const tag = `${REQUIRED.indexOf(field) + 1} of ${REQUIRED.length}: `;
     switch (field) {
       case 'business_type':
         return (
-          "Tell me about your business — what do you do, what's it called, " +
-          'and where are you?'
+          `${tag}Tell me about your business — what do you do, what's it ` +
+          'called, and where are you?'
         );
       case 'website':
         return (
-          'Got a website, Instagram, or Google listing? Drop me a link and ' +
-          "I'll go look you up so you don't have to type it all — or say " +
-          '"no site".'
+          `${tag}Got a website, Instagram, or Google listing? Drop me a link ` +
+          "and I'll go look you up so you don't have to type it all — or " +
+          'say "no site".'
         );
       case 'voice_tone':
         return (
-          'How should your posts sound? Describe it like a person — warm, ' +
-          'playful, expert, luxe… If you\'re not sure, say "you pick" and ' +
-          "I'll go warm-but-polished."
+          `${tag}How should your posts sound? Describe it like a person — ` +
+          'warm, playful, expert, luxe… If you\'re not sure, say "you pick" ' +
+          "and I'll go warm-but-polished."
         );
       case 'target_customer':
-        return 'Who are we trying to reach? Picture your favorite customer — who are they?';
+        return `${tag}Who are we trying to reach? Picture your favorite customer — who are they?`;
       case 'offers':
-        return 'What should I show off? Best sellers, services, specials — whatever you want more people seeing.';
+        return `${tag}What should I show off? Best sellers, services, specials — whatever you want more people seeing.`;
       case 'dos_and_donts':
-        return 'Anything I should always mention — or never mention?';
+        return `${tag}Anything I should always mention — or never mention?`;
       case 'posting_frequency':
         return postsCap
-          ? `Last one: how often should I post? Your plan includes ${postsCap} a week — ` +
-              `want all ${postsCap}, or fewer? Say a number, or "you pick".`
-          : 'Last one: how often should I post? Most owners do 3–4 a week. Say a number, or "you pick".';
+          ? `${tag}Last one — how often should I post? Your plan includes ${postsCap} a week. ` +
+              `Want all ${postsCap}, or fewer? Say a number, or "you pick".`
+          : `${tag}Last one — how often should I post? Most owners do 3–4 a week. Say a number, or "you pick".`;
     }
   }
 

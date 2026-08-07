@@ -134,7 +134,7 @@ const FREE_TASTE_CONTEXT = [
 const FREE_TASTE_INTRO =
   "Hey — it's Handled ✳ Tell me what your business is and one thing you'd " +
   "want customers to know this week, and I'll write you a post on the spot. " +
-  'Free, takes ten seconds.';
+  "Free, takes ten seconds — and that's the only question.";
 
 const PAYWALL_REPLY =
   "Handled: You've used your free draft ✳ To get posts written, designed and " +
