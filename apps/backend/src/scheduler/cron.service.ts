@@ -11,6 +11,7 @@ import { ReauthService } from '../connect/reauth.service';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
 import { ReconcileService } from './reconcile.service';
 import { RecapService } from '../concierge/recap.service';
+import { photoWalkReminder } from '../concierge/photo-walk';
 import { ArchetypePerformanceService } from '../playbook/archetype-performance.service';
 import { zonedToUtc } from '../common/time';
 import { resolveStrategy, reelClipsFor } from '../operator/llm/vertical-playbook';
@@ -244,6 +245,22 @@ export class CronService {
         customerId,
         `Morning! Your week is planned — ${drafted} post${drafted > 1 ? 's' : ''} ready for a look.`,
       );
+    }
+
+    // An empty photo bank means every post this week is designed, not real —
+    // and real photos are the single biggest engagement lever we know of. One
+    // nudge with the weekly plan, only while the bank stays empty; the moment
+    // a single owner photo lands, this goes quiet forever.
+    const bankedPhotos = await this.prisma.mediaAsset.count({
+      where: { customerId, kind: 'image', source: 'owner_upload' },
+    });
+    if (bankedPhotos === 0) {
+      const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
+      await this.concierge
+        .notify(customerId, photoWalkReminder(site, customerId), {
+          promptedByOwner: false,
+        })
+        .catch((e) => this.log.warn(`photo-walk nudge failed for ${customerId}: ${String(e)}`));
     }
 
     // Growth+ gets one reel a week. The ask goes out with the plan, but only

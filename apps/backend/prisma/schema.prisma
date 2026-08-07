@@ -471,6 +471,10 @@ model MediaAsset {
   contentType String
   width       Int?
   height      Int?
+  /// What the picture is OF, from the photo-walk shot key ("owner_face",
+  /// "before", "todays_best"…) or free text. Lets the drafter pick the right
+  /// banked photo for a post instead of the most recent one.
+  subject     String?
   createdAt   DateTime    @default(now())
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)

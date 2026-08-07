@@ -51,6 +51,8 @@ function makeCron(postStatus: string) {
       // 'pending_approval' on an approval plan.
       findUnique: async () => ({ status: postStatus }),
     },
+    // A stocked photo bank, so the photo-walk nudge stays quiet here.
+    mediaAsset: { count: async () => 3 },
   };
   const concierge = { presentNextDraft: async () => true, notify: async () => {} };
 

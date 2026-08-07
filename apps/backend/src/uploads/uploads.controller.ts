@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   NotFoundException,
   BadRequestException,
   Post,
@@ -17,6 +18,7 @@ import type { Task } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import { TaskBus } from '../tasks/task-bus.service';
+import { shotListFor, type Shot } from '../concierge/photo-walk';
 import { detectMedia } from '../common/media-type';
 import { StorageService } from '../common/storage.service';
 import { ReelQueueService } from '../scheduler/reel-queue.service';
@@ -87,6 +89,9 @@ export class UploadsController {
     @Query('customer') customerId: string | undefined,
     @UploadedFiles() files: UploadedFileShape[],
     @Query('kind') kind?: string,
+    // What the picture is OF — the photo-walk shot key ("owner_face",
+    // "before"…). Stored on the asset so the drafter can pick by subject.
+    @Query('subject') subject?: string,
   ): Promise<{ stored: number; kinds: string[] }> {
     if (!customerId) throw new BadRequestException('missing customer');
     const customer = await this.prisma.customer.findUnique({ where: { id: customerId } });
@@ -122,6 +127,7 @@ export class UploadsController {
             source: 'owner_upload',
             r2Key,
             contentType: detected.contentType,
+            ...(subject ? { subject: subject.slice(0, 60) } : {}),
           },
         });
         kinds.push(detected.kind);
@@ -139,6 +145,10 @@ export class UploadsController {
           'Got your videos! Quick note — reels are part of the Pro plan. Reply UPGRADE and I\'ll send the details, or I\'ll keep them on file.',
           { promptedByOwner: true },
         );
+      } else if (subject) {
+        // Photo-walk shots arrive one at a time — a text per shot would be
+        // ten texts in ten minutes. The page confirms each upload itself and
+        // calls /uploads/walk-done once at the end for the single thank-you.
       } else {
         void this.concierge.notify(
           customerId,
@@ -161,6 +171,54 @@ export class UploadsController {
         }
       }
     }
+  }
+
+  /**
+   * The photo walk's checklist for this business — the guided shot list the
+   * /photo-walk page renders. Same trust model as uploads: the unguessable
+   * customer id is the credential.
+   */
+  @Get('shot-list')
+  async shotList(
+    @Query('customer') customerId: string | undefined,
+  ): Promise<{ business: string | null; shots: Shot[] }> {
+    if (!customerId) throw new BadRequestException('missing customer');
+    const [customer, profile] = await Promise.all([
+      this.prisma.customer.findUnique({
+        where: { id: customerId },
+        select: { businessName: true },
+      }),
+      this.prisma.brandProfile.findUnique({
+        where: { customerId },
+        select: { businessType: true },
+      }),
+    ]);
+    if (!customer) throw new NotFoundException('unknown customer');
+    return {
+      business: customer.businessName,
+      shots: shotListFor(profile?.businessType),
+    };
+  }
+
+  /**
+   * The page calls this once when the walk's checklist is finished — ONE
+   * thank-you text instead of one per shot.
+   */
+  @Post('walk-done')
+  async walkDone(
+    @Query('customer') customerId: string | undefined,
+  ): Promise<{ ok: true }> {
+    if (!customerId) throw new BadRequestException('missing customer');
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId } });
+    if (!customer) throw new NotFoundException('unknown customer');
+    void this.concierge.notify(
+      customerId,
+      'That photo walk just upgraded your whole month — real photos of you ' +
+        'and your work beat anything designed. They\'ll start showing up in ' +
+        'your drafts ✳',
+      { promptedByOwner: true },
+    );
+    return { ok: true };
   }
 
   /**

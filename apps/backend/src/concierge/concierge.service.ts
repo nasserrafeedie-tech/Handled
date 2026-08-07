@@ -8,6 +8,7 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
 import { EmailService } from './email.service';
 import { OnboardingService, NO_WEBSITE } from './onboarding.service';
+import { photoWalkInvite, photoWalkReminder } from './photo-walk';
 import { BusinessResearchService } from './business-research.service';
 import { StorageService } from '../common/storage.service';
 import {
@@ -1703,6 +1704,14 @@ export class ConciergeService {
         { promptedByOwner: true },
       );
     }
+
+    // The photo walk (§ engagement research): real photos are the single
+    // biggest post upgrade, and the walk is how the bank gets filled without
+    // weeks of one-at-a-time nagging. Sent AFTER the first draft so the magic
+    // moment stays first; the weekly cron re-nudges while the bank is empty.
+    await this.notify(customerId, photoWalkInvite(site, customerId), {
+      promptedByOwner: true,
+    }).catch((e) => this.log.warn(`photo-walk invite failed: ${String(e)}`));
   }
 
   /**
