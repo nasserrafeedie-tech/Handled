@@ -20,6 +20,7 @@ function makeWorld(opts?: {
   planTier?: string;
   aiImagesOptIn?: boolean;
   imagesConfigured?: boolean;
+  walkPhotos?: Array<{ r2Key: string; subject: string }>;
 }) {
   const prompts: string[] = [];
   const updates: Array<Record<string, unknown>> = [];
@@ -63,6 +64,9 @@ function makeWorld(opts?: {
     mediaAsset: {
       findFirst: async ({ where }: { where: { source?: string } }) =>
         where.source === 'owner_upload' && opts?.ownerUpload ? { id: 'm-owner' } : null,
+      // The walk bank — empty unless a test stocks it.
+      findMany: async () =>
+        (opts?.walkPhotos ?? []).map((w, i) => ({ id: `walk-${i}`, r2Key: w.r2Key, subject: w.subject })),
       // Four slides persisted from the earlier render → the redo's seed salt.
       count: async () => 4,
       create: async () => ({}),
@@ -87,14 +91,20 @@ function makeWorld(opts?: {
       rendered.push(specs);
       return specs.map(() => Buffer.from('png'));
     },
+    fetchPhoto: async (url: string) => `data:image/jpeg;base64,REAL:${url}`,
   };
   const storage = {
     put: async (key: string) => void stored.push(key),
     get: async () => null,
+    publicUrl: (k: string) => `https://cdn.test/${k}`,
   };
+  const generateCalls: string[] = [];
   const images = {
     configured: opts?.imagesConfigured ?? false,
-    generate: async () => ({ bytes: Buffer.from('jpeg-bytes'), contentType: 'image/jpeg' }),
+    generate: async (prompt: string) => {
+      generateCalls.push(prompt);
+      return { bytes: Buffer.from('jpeg-bytes'), contentType: 'image/jpeg' };
+    },
   };
   const handler = new GenerateCarouselHandler(
     prisma as never,
@@ -115,7 +125,7 @@ function makeWorld(opts?: {
       ...(opts?.feedback ? { owner_feedback: opts.feedback } : {}),
     },
   } as never;
-  return { handler, task, prompts, updates, rendered, stored };
+  return { handler, task, prompts, updates, rendered, stored, generateCalls };
 }
 
 describe('GENERATE_CAROUSEL redo', () => {
@@ -172,6 +182,37 @@ describe('GENERATE_CAROUSEL redo', () => {
     await w.handler.handle(w.task);
     assert.equal(w.rendered[0][0].photo, undefined, 'no hero without consent');
     assert.equal(w.updates[0].aiGeneratedMedia, undefined, 'nothing to disclose');
+  });
+
+  it('REAL walk photos displace generation entirely — no AI disclosure, best subject on the cover', async () => {
+    const w = makeWorld({
+      replace: true,
+      planTier: 'pro',
+      imagesConfigured: true,
+      walkPhotos: [
+        { r2Key: 'c1/walk/hands.jpg', subject: 'hands_at_work' },
+        { r2Key: 'c1/walk/tool.jpg', subject: 'tool' },
+      ],
+    });
+    await w.handler.handle(w.task);
+    // educational_tip cover prefers the tool; the body slide takes the hands.
+    assert.match(String(w.rendered[0][0].photo), /tool\.jpg/, 'cover uses the best-fit real photo');
+    assert.equal(w.rendered[0][0].photoLayout, 'full');
+    assert.match(String(w.rendered[0][1].photo), /hands\.jpg/, 'body slide uses another real photo');
+    assert.equal(w.generateCalls.length, 0, 'nothing generated when real photos cover the deck');
+    assert.equal(w.updates[0].aiGeneratedMedia, undefined, 'real photos need no AI disclosure');
+  });
+
+  it('walk photos on a GROWTH deck too — owner photos need no tier door', async () => {
+    const w = makeWorld({
+      replace: true,
+      planTier: 'growth',
+      imagesConfigured: true,
+      walkPhotos: [{ r2Key: 'c1/walk/best.jpg', subject: 'todays_best' }],
+    });
+    await w.handler.handle(w.task);
+    assert.match(String(w.rendered[0][0].photo), /best\.jpg/, 'real photo on the cover');
+    assert.equal(w.generateCalls.length, 0, 'growth still never generates without opt-in');
   });
 
   it('without replace_existing, existing media still skips (unchanged default)', async () => {

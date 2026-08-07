@@ -120,6 +120,37 @@ export function shotListFor(businessType: string | null | undefined): Shot[] {
   return shots;
 }
 
+/**
+ * Which walk subjects fit which post archetype, best first. This is what
+ * turns the bank from "a pile of photos" into "the RIGHT photo for this
+ * post": a behind-the-scenes post gets hands at work, a team post gets
+ * faces, an educational tip gets the tool — never the storefront on
+ * everything because it happened to be uploaded first.
+ */
+export function subjectPreferences(archetype: string): string[] {
+  switch (archetype) {
+    case 'behind_the_scenes':
+      return ['hands_at_work', 'process', 'workspace', 'tool', 'station', 'owner_face'];
+    case 'team_spotlight':
+    case 'staff':
+      return ['team', 'owner_face', 'hands_at_work', 'community'];
+    case 'testimonial':
+      return ['owner_face', 'team', 'todays_best', 'community'];
+    case 'product_spotlight':
+    case 'promo':
+      return ['todays_best', 'detail', 'process', 'hands_at_work'];
+    case 'educational_tip':
+      return ['tool', 'hands_at_work', 'detail', 'process', 'todays_best'];
+    case 'transformation':
+      return ['before', 'todays_best'];
+    case 'seasonal':
+    case 'community':
+      return ['owner_face', 'community', 'workspace', 'detail'];
+    default:
+      return ['todays_best', 'owner_face', 'hands_at_work', 'detail', 'workspace'];
+  }
+}
+
 /** The kickoff text, sent once onboarding wraps. */
 export function photoWalkInvite(siteUrl: string, customerId: string): string {
   return (

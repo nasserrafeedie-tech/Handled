@@ -27,6 +27,7 @@ import {
   tierHasCarousel,
   type CarouselBrief,
 } from '../graphics/carousel-content';
+import { subjectPreferences } from '../../concierge/photo-walk';
 import { ModerationService } from '../guardrails/moderation.service';
 import { detectFabrication } from '../guardrails/fabrication';
 import { TaskHandler, ok, fail } from './handler.interface';
@@ -260,31 +261,85 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     // aiGeneratedMedia disclosure + forced review below full_auto apply as
     // soon as any image lands.
     let usedAiImage = false;
-    if ((customer.aiImagesOptIn || customer.planTier === 'pro') && specs.length > 0) {
+    if (specs.length > 0) {
       const targets = specs
         .map((_, i) => i)
         .filter((i) => i === 0 || specs[i].kind === 'body')
         .slice(0, 4);
-      const generated = await Promise.all(
-        targets.map((i) => {
-          const copy = slidesCopy[i];
-          const text =
-            i === 0
-              ? post.caption!
-              : [copy.headline, copy.body].filter(Boolean).join(' — ');
-          return this.generateSlideImage(
-            task.customer_id,
-            profile?.businessType ?? 'local business',
-            text,
-          );
+
+      // REAL photos first — the walk bank (subject-tagged, reusable) beats
+      // any generation on every measure we researched, and needs no tier
+      // door: an owner's own photos are always allowed on their posts. Each
+      // photo is used once per deck; the cover prefers the money subjects.
+      const walk = await this.prisma.mediaAsset.findMany({
+        where: {
+          customerId: task.customer_id,
+          kind: 'image',
+          source: 'owner_upload',
+          subject: { not: null },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 40,
+      });
+      const taken = new Set<string>();
+      const pickReal = (prefs: string[]): string | null => {
+        for (const p of prefs) {
+          const found = walk.find((w) => !taken.has(w.id) && w.subject === p);
+          if (found) {
+            taken.add(found.id);
+            return found.r2Key;
+          }
+        }
+        return null;
+      };
+      const realKeys = targets.map((i) =>
+        i === 0
+          ? pickReal(subjectPreferences(post.archetype))
+          : pickReal(['hands_at_work', 'process', 'detail', 'tool', 'workspace', 'station', 'team', 'community', 'todays_best', 'owner_face']),
+      );
+      await Promise.all(
+        targets.map(async (i, k) => {
+          const key = realKeys[k];
+          if (!key) return;
+          try {
+            const photo = await this.graphics.fetchPhoto(this.storage.publicUrl(key));
+            specs[i] = { ...specs[i], photo, photoLayout: i === 0 ? 'full' : 'band' };
+          } catch (e) {
+            this.log.warn(`walk photo ${key} fetch failed: ${String(e)}`);
+          }
         }),
       );
-      targets.forEach((i, k) => {
-        const img = generated[k];
-        if (!img) return;
-        specs[i] = { ...specs[i], photo: img, photoLayout: i === 0 ? 'full' : 'band' };
-        usedAiImage = true;
-      });
+
+      // Generation fills only the slides no real photo covered, and only
+      // behind the doors: AI-images opt-in, or the Pro tier where generated
+      // imagery is part of the plan (owner's call, Aug 2026). Editorial
+      // still-life style; every image runs refusal + place-check; a failure
+      // degrades that ONE slide to the designed surface. aiGeneratedMedia
+      // disclosure + forced review below full_auto apply only when a
+      // GENERATED image actually lands — real photos need no disclosure.
+      const missing = targets.filter((i, k) => !realKeys[k] && !specs[i].photo);
+      if ((customer.aiImagesOptIn || customer.planTier === 'pro') && missing.length) {
+        const generated = await Promise.all(
+          missing.map((i) => {
+            const copy = slidesCopy[i];
+            const text =
+              i === 0
+                ? post.caption!
+                : [copy.headline, copy.body].filter(Boolean).join(' — ');
+            return this.generateSlideImage(
+              task.customer_id,
+              profile?.businessType ?? 'local business',
+              text,
+            );
+          }),
+        );
+        missing.forEach((i, k) => {
+          const img = generated[k];
+          if (!img) return;
+          specs[i] = { ...specs[i], photo: img, photoLayout: i === 0 ? 'full' : 'band' };
+          usedAiImage = true;
+        });
+      }
     }
 
     let pngs: Buffer[];

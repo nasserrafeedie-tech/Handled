@@ -15,6 +15,7 @@ import { detectSlop, shouldRegenerate, slopFeedback } from '../llm/slop';
 import { detectFabrication, fabricationFeedback } from '../guardrails/fabrication';
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { isCarouselArchetype, tierHasCarousel } from '../graphics/carousel-content';
+import { subjectPreferences } from '../../concierge/photo-walk';
 import { ModerationService } from '../guardrails/moderation.service';
 import { PublishGateService } from '../guardrails/publish-gate.service';
 import {
@@ -335,18 +336,60 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       }
     }
 
-    // Owner photos beat anything we can generate (§7: owner photo > AI). Pull
-    // the oldest banked photo — one they texted in that no post has claimed —
-    // so real photography flows into the week automatically.
-    const bankedPhoto = await this.prisma.mediaAsset.findFirst({
-      where: {
-        customerId: task.customer_id,
-        postId: null,
-        kind: 'image',
-        source: 'owner_upload',
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    // Owner photos beat anything we can generate (§7: owner photo > AI).
+    // Two kinds live in the bank: DRIP photos (texted in for a post, no
+    // subject tag, claimed once) and WALK photos (the guided photo-walk,
+    // subject-tagged, reusable — an owner's face is good on many posts). A
+    // fresh drip photo wins (it's topical); otherwise the walk photo whose
+    // subject best fits this archetype, skipping anything shown on a recent
+    // post so the feed doesn't repeat itself. Carousel-bound posts skip all
+    // of this — the deck builder pulls real photos into the slides itself.
+    const wouldCarousel =
+      !task.payload.needs_asset &&
+      tierHasCarousel(customer.planTier) &&
+      isCarouselArchetype(archetype);
+    let bankedPhoto: { id: string; r2Key: string; subject: string | null } | null = null;
+    if (!wouldCarousel) {
+      bankedPhoto = await this.prisma.mediaAsset.findFirst({
+        where: {
+          customerId: task.customer_id,
+          postId: null,
+          kind: 'image',
+          source: 'owner_upload',
+          subject: null,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (!bankedPhoto) {
+        const [walk, recent] = await Promise.all([
+          this.prisma.mediaAsset.findMany({
+            where: {
+              customerId: task.customer_id,
+              kind: 'image',
+              source: 'owner_upload',
+              subject: { not: null },
+            },
+            orderBy: { createdAt: 'asc' },
+            take: 40,
+          }),
+          this.prisma.post.findMany({
+            where: { customerId: task.customer_id },
+            orderBy: { createdAt: 'desc' },
+            take: 6,
+            select: { mediaRefs: true },
+          }),
+        ]);
+        const recentRefs = new Set(recent.flatMap((r) => r.mediaRefs));
+        const fresh = walk.filter((w) => !recentRefs.has(w.r2Key));
+        for (const preferred of subjectPreferences(archetype)) {
+          const found = fresh.find((w) => w.subject === preferred);
+          if (found) {
+            bankedPhoto = found;
+            break;
+          }
+        }
+      }
+    }
 
     // Stamp which playbook archetype this post was planned from, so
     // per-archetype performance can be aggregated later (engine Flow 4).
@@ -383,7 +426,11 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       },
     });
 
-    if (bankedPhoto) {
+    // Claim ONLY drip photos — a claimed asset never appears on another post,
+    // which is right for "today's batch" and wrong for the owner's face. Walk
+    // photos stay in the bank; the recent-posts check above keeps them from
+    // repeating back-to-back.
+    if (bankedPhoto && bankedPhoto.subject === null) {
       await this.prisma.mediaAsset.update({
         where: { id: bankedPhoto.id },
         data: { postId: post.id },
