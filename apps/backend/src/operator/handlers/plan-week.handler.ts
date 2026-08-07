@@ -66,6 +66,25 @@ export function clampAssetAsks<T extends { archetype: string; needs_asset: boole
 }
 
 /**
+ * Hold promo to at most one slot in five — the trust ratio, guaranteed.
+ *
+ * The prompt asks for this, but a prompt is a request and this is a
+ * guarantee. Over-promotion is the top measured unfollow trigger, and a
+ * lazy plan collapses into offers because offers are the easiest slot to
+ * fill. Excess promo slots become educational tips — the archetype with
+ * the strongest save behavior and an automatic carousel behind it.
+ */
+export function clampPromoQuota<T extends { archetype: string }>(slots: T[]): T[] {
+  const quota = Math.max(1, Math.ceil(slots.length / 5));
+  let promos = 0;
+  return slots.map((s) => {
+    if (s.archetype !== 'promo') return s;
+    promos++;
+    return promos <= quota ? s : { ...s, archetype: 'educational_tip' };
+  });
+}
+
+/**
  * Force every slot onto a platform the customer has actually connected.
  *
  * The planner is told which platforms to use, but a prompt is a request and
@@ -164,6 +183,14 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
       `Plan ${frequency} posts for the week starting ${task.payload.week_start.slice(0, 10)}.`,
       'Mix archetypes across the week (promo, behind_the_scenes, testimonial,',
       'educational_tip, product_spotlight, seasonal, ugc_repost, were_open).',
+      // The trust ratio (§ engagement research): over-promotion is the top
+      // unfollow trigger, and offers only convert because the other posts
+      // earned the audience. The quota below is also enforced in code.
+      'PILLAR MIX: lean process and people — behind_the_scenes, testimonial,',
+      'were_open — plus SAVEABLE educational tips (checklists, "signs you',
+      'need…", what-to-ask guides: things a reader keeps). At MOST one slot',
+      'in five is promo. Frame even that one as useful scarcity ("3 slots',
+      'left Friday"), never as a discount announcement.',
       // Asking for a photo on every slot reads as homework and gets ignored,
       // and it starves the slots that would otherwise produce a carousel. Ask
       // only where a real photo is genuinely the point — people and places.
@@ -207,6 +234,9 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     // The guarantee behind the platform instruction above: no slot survives on
     // a platform the customer cannot publish to.
     planned.slots = clampPlatforms(planned.slots, connectedPlatforms);
+    // And the guarantee behind the pillar-mix instruction: at most one promo
+    // slot in five survives the plan.
+    planned.slots = clampPromoQuota(planned.slots);
     const kept = planned.slots.filter((s) => s.needs_asset).length;
     if (kept < asked) {
       this.log.warn(

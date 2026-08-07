@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { clampAssetAsks, clampPlatforms, MAX_ASSET_ASKS } from './plan-week.handler';
+import { clampAssetAsks, clampPlatforms, clampPromoQuota, MAX_ASSET_ASKS } from './plan-week.handler';
 
 /**
  * The bug this guards against, measured on a real account: the planner marked
@@ -88,5 +88,35 @@ describe('clampPlatforms', () => {
   it('handles google_business like any other connected platform', () => {
     const out = clampPlatforms([p('instagram'), p('tiktok')], ['google_business']);
     assert.ok(out.every((s) => s.platform === 'google_business'));
+  });
+});
+
+describe('clampPromoQuota — the trust ratio, guaranteed', () => {
+  const slot = (archetype: string) => ({ archetype });
+
+  it('a five-slot week keeps at most one promo; extras become saveable tips', () => {
+    const out = clampPromoQuota([
+      slot('promo'), slot('promo'), slot('promo'),
+      slot('behind_the_scenes'), slot('testimonial'),
+    ]);
+    assert.equal(out.filter((s) => s.archetype === 'promo').length, 1);
+    assert.equal(out.filter((s) => s.archetype === 'educational_tip').length, 2);
+    assert.equal(out[3].archetype, 'behind_the_scenes', 'non-promo slots untouched');
+  });
+
+  it('the FIRST promo survives — position is the planner\'s choice, count is ours', () => {
+    const out = clampPromoQuota([slot('educational_tip'), slot('promo'), slot('promo')]);
+    assert.equal(out[1].archetype, 'promo');
+    assert.equal(out[2].archetype, 'educational_tip');
+  });
+
+  it('a week inside the ratio passes through unchanged', () => {
+    const week = [slot('promo'), slot('behind_the_scenes'), slot('educational_tip'), slot('testimonial'), slot('were_open')];
+    assert.deepEqual(clampPromoQuota(week), week);
+  });
+
+  it('a short 3-post week still allows its one promo', () => {
+    const out = clampPromoQuota([slot('promo'), slot('educational_tip'), slot('testimonial')]);
+    assert.equal(out.filter((s) => s.archetype === 'promo').length, 1);
   });
 });
