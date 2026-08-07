@@ -13,8 +13,10 @@ import { diskStorage } from 'multer';
 import { closeSync, openSync, readFileSync, readSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import type { Task } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConciergeService } from '../concierge/concierge.service';
+import { TaskBus } from '../tasks/task-bus.service';
 import { detectMedia } from '../common/media-type';
 import { StorageService } from '../common/storage.service';
 import { ReelQueueService } from '../scheduler/reel-queue.service';
@@ -63,6 +65,7 @@ export class UploadsController {
     private readonly concierge: ConciergeService,
     private readonly storage: StorageService,
     private readonly reelQueue: ReelQueueService,
+    private readonly bus: TaskBus,
   ) {}
 
   @Post()
@@ -231,12 +234,71 @@ export class UploadsController {
         `I'll add it. Otherwise your colours are set. 👍`;
     void this.concierge.notify(customerId, msg, { promptedByOwner: true });
 
+    // Anything already drafted was rendered BEFORE this logo existed — wearing
+    // palette-guess colours and no mark (real feedback: "the colors were
+    // different than the brand's"). Rebuild the pending decks with the real
+    // identity and re-present, in the background — the upload response never
+    // waits on a render.
+    if (r2Key || takeColors) void this.refreshPendingDecks(customerId);
+
     this.log.log(
       `logo for ${customerId}: ${longSide}px longSide, ` +
         `${sharpEnough ? 'composited' : 'too low-res, colours only'}, ` +
         `colours ${takeColors ? extracted.join('+') : 'not taken'}`,
     );
     return { stored: 1, kinds: ['logo'] };
+  }
+
+  /**
+   * Re-render every pending assembled deck in the customer's new brand
+   * clothes, then re-present the queue head so the owner sees the refresh.
+   * Only decks WE assembled are touched — owner photos and published posts
+   * stay exactly as they are. Failures are logged and swallowed: a deck in
+   * yesterday's colours is annoying, a broken upload flow is worse.
+   */
+  private async refreshPendingDecks(customerId: string): Promise<void> {
+    try {
+      const pending = await this.prisma.post.findMany({
+        where: { customerId, status: 'pending_approval' },
+        select: { id: true, mediaRefs: true },
+      });
+      let refreshed = 0;
+      for (const post of pending) {
+        if (post.mediaRefs.length === 0) continue;
+        const [assembled, ownerMedia] = await Promise.all([
+          this.prisma.mediaAsset.findFirst({
+            where: { postId: post.id, source: 'assembled', kind: 'image' },
+            select: { id: true },
+          }),
+          this.prisma.mediaAsset.findFirst({
+            where: { postId: post.id, source: 'owner_upload' },
+            select: { id: true },
+          }),
+        ]);
+        if (!assembled || ownerMedia) continue;
+        const task = {
+          task_id: randomUUID(),
+          customer_id: customerId,
+          type: 'GENERATE_CAROUSEL',
+          payload: { post_id: post.id, replace_existing: true },
+          requires_approval: false,
+          created_by: 'concierge',
+          created_at: new Date().toISOString(),
+        } as Task;
+        const result = await this.bus.emit(task);
+        if (!result.error) refreshed++;
+      }
+      if (refreshed > 0) {
+        this.log.log(`re-rendered ${refreshed} pending deck(s) for ${customerId} after logo/colors`);
+        await this.concierge.presentNextDraft(
+          customerId,
+          'Put your brand on your drafts ✳',
+          { promptedByOwner: true },
+        );
+      }
+    } catch (err) {
+      this.log.warn(`pending-deck refresh failed for ${customerId}: ${String(err)}`);
+    }
   }
 
   private async assembleAndNotify(customerId: string): Promise<void> {

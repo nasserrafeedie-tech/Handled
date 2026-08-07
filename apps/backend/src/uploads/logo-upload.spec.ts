@@ -15,9 +15,11 @@ function logoBytes(fill = '#8C2F39', size = 240): Buffer {
   );
 }
 
-function makeController(existingColors: string[]) {
+function makeController(existingColors: string[], opts?: { pendingDeck?: boolean; ownerMedia?: boolean }) {
   const updates: any[] = [];
   const notes: string[] = [];
+  const emitted: any[] = [];
+  const presents: string[] = [];
   const prisma = {
     brandProfile: {
       findUnique: async () => ({ brandColors: existingColors }),
@@ -26,16 +28,40 @@ function makeController(existingColors: string[]) {
         return data;
       },
     },
+    post: {
+      findMany: async () =>
+        opts?.pendingDeck ? [{ id: 'p1', mediaRefs: ['c/old/slide-1.png'] }] : [],
+    },
+    mediaAsset: {
+      findFirst: async ({ where }: any) => {
+        if (where.source === 'owner_upload') return opts?.ownerMedia ? { id: 'm-owner' } : null;
+        if (where.source === 'assembled') return opts?.ownerMedia ? null : { id: 'm-slides' };
+        return null;
+      },
+    },
   };
   const storage = { put: async () => {} };
-  const concierge = { notify: async (_id: string, m: string) => notes.push(m) };
+  const concierge = {
+    notify: async (_id: string, m: string) => notes.push(m),
+    presentNextDraft: async (_id: string, lead?: string) => {
+      presents.push(lead ?? '');
+      return true;
+    },
+  };
+  const bus = {
+    emit: async (t: any) => {
+      emitted.push(t);
+      return { error: null };
+    },
+  };
   const ctrl = new UploadsController(
     prisma as any,
     concierge as any,
     storage as any,
     { enqueue: async () => {} } as any,
+    bus as any,
   );
-  return { ctrl, updates, notes };
+  return { ctrl, updates, notes, emitted, presents };
 }
 
 const file = (buffer: Buffer) => ({
@@ -89,5 +115,23 @@ describe('logo upload', () => {
     await (ctrl as any).handleLogo('cus_1', file(logoBytes('#111111')));
     assert.ok(updates[0].logoRef, 'logo stored');
     assert.equal(updates[0].brandColors, undefined, 'no color from a mono logo');
+  });
+
+  it('a fresh logo re-renders pending assembled decks and re-presents', async () => {
+    // The sequencing bug (real feedback): a deck drafted before the logo
+    // arrived wears palette-guess colours forever. The refresh rebuilds it.
+    const { ctrl, emitted, presents } = makeController([], { pendingDeck: true });
+    await (ctrl as any).refreshPendingDecks('cus_1');
+    assert.equal(emitted.length, 1);
+    assert.equal(emitted[0].type, 'GENERATE_CAROUSEL');
+    assert.deepEqual(emitted[0].payload, { post_id: 'p1', replace_existing: true });
+    assert.deepEqual(presents, ['Put your brand on your drafts ✳']);
+  });
+
+  it('the refresh never touches a post carrying owner media', async () => {
+    const { ctrl, emitted, presents } = makeController([], { pendingDeck: true, ownerMedia: true });
+    await (ctrl as any).refreshPendingDecks('cus_1');
+    assert.equal(emitted.length, 0, 'owner photos are never replaced');
+    assert.equal(presents.length, 0, 'nothing to re-present');
   });
 });
