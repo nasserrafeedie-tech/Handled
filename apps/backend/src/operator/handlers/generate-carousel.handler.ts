@@ -58,14 +58,14 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
   ) {}
 
   /**
-   * A generated hero photo for the carousel's cover slide — the same guarded
-   * pipeline the standalone image handler uses: pick a subject, refuse a place
-   * or a specific business, build the constrained prompt, generate, then look at
-   * the actual pixels and reject a fabricated place. Returns a data URI to
-   * composite behind the cover headline, or null when any step declines — a
-   * missing hero is a plain-text cover, never a failed carousel.
+   * A generated photo for one slide — the same guarded pipeline the standalone
+   * image handler uses: pick a subject from the slide's own copy, refuse a
+   * place or a specific business, build the constrained prompt, generate, then
+   * look at the actual pixels and reject a fabricated place. Returns a data
+   * URI to composite behind the slide's text, or null when any step declines —
+   * a missing image is a designed text slide, never a failed carousel.
    */
-  private async generateHeroImage(
+  private async generateSlideImage(
     customerId: string,
     businessType: string,
     caption: string,
@@ -245,27 +245,44 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       variant: i,
     }));
 
-    // Give the COVER slide a generated hero image with its headline over it —
-    // a mix of a real photo treatment and text slides, not five text cards.
-    // Two doors in: the owner opted into generated photography, or the
-    // business is on PRO — where the hero cover is part of the tier, standard
-    // on every deck (owner's call, Aug 2026). Consent still governs standalone
-    // generated photos; and the hero keeps every safety rail regardless of
-    // door — subject refusal, the place-check on real pixels, the
-    // aiGeneratedMedia disclosure, and forced owner review below full_auto.
-    // A place-image or any failure falls back to the plain-text cover, never
-    // a failed carousel.
+    // Generated photography through the deck. Two doors in: the owner opted
+    // into generated imagery, or the business is on PRO, where it's part of
+    // the tier (owner's call, Aug 2026) — consent still governs standalone
+    // generated photos and the Growth tier. Behind either door, one image PER
+    // text-bearing slide: cover full-bleed, body slides as photo bands,
+    // capped at 4 per deck. Owner feedback drove this: the photo slide was
+    // "the best one", all-text middles read boring, and the margins carry a
+    // few generations per deck. Each image is subject-picked from its own
+    // slide's copy and takes the full refusal + place-check path; a failure
+    // degrades that ONE slide to the designed surface, never the deck. The
+    // aiGeneratedMedia disclosure + forced review below full_auto apply as
+    // soon as any image lands.
     let usedAiImage = false;
     if ((customer.aiImagesOptIn || customer.planTier === 'pro') && specs.length > 0) {
-      const hero = await this.generateHeroImage(
-        task.customer_id,
-        profile?.businessType ?? 'local business',
-        post.caption,
+      const targets = specs
+        .map((_, i) => i)
+        .filter((i) => i === 0 || specs[i].kind === 'body')
+        .slice(0, 4);
+      const generated = await Promise.all(
+        targets.map((i) => {
+          const copy = slidesCopy[i];
+          const text =
+            i === 0
+              ? post.caption!
+              : [copy.headline, copy.body].filter(Boolean).join(' — ');
+          return this.generateSlideImage(
+            task.customer_id,
+            profile?.businessType ?? 'local business',
+            text,
+          );
+        }),
       );
-      if (hero) {
-        specs[0] = { ...specs[0], photo: hero, photoLayout: 'full' };
+      targets.forEach((i, k) => {
+        const img = generated[k];
+        if (!img) return;
+        specs[i] = { ...specs[i], photo: img, photoLayout: i === 0 ? 'full' : 'band' };
         usedAiImage = true;
-      }
+      });
     }
 
     let pngs: Buffer[];
@@ -327,7 +344,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
 
     this.log.log(
       `built a ${refs.length}-slide carousel for post ${post.id}` +
-        (usedAiImage ? ' (with a generated hero image)' : ''),
+        (usedAiImage ? ' (with generated slide imagery)' : ''),
     );
     return ok(task.task_id,
       `I turned this one into a ${refs.length}-slide carousel — have a look.`,

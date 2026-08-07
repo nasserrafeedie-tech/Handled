@@ -154,12 +154,15 @@ describe('GENERATE_CAROUSEL redo', () => {
     assert.equal(w.updates.length, 0, 'nothing replaced');
   });
 
-  it('PRO gets a generated hero cover with no opt-in — disclosed and held for review', async () => {
+  it('PRO gets generated imagery through the deck, no opt-in — disclosed and held for review', async () => {
     const w = makeWorld({ replace: true, planTier: 'pro', imagesConfigured: true });
     const r = await w.handler.handle(w.task);
     assert.equal(r.status, 'done');
-    assert.ok(w.rendered[0][0].photo, 'cover slide carries the hero image');
+    assert.ok(w.rendered[0][0].photo, 'cover slide carries an image');
     assert.equal(w.rendered[0][0].photoLayout, 'full');
+    assert.ok(w.rendered[0][1].photo, 'body slide carries its own image');
+    assert.equal(w.rendered[0][1].photoLayout, 'band');
+    assert.equal(w.rendered[0][2].photo, undefined, 'the CTA slide stays the designed accent flood');
     assert.equal(w.updates[0].aiGeneratedMedia, true, 'AI imagery is disclosed');
     assert.equal(w.updates[0].approvalState, 'awaiting_owner', 'forced back to owner review');
   });

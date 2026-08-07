@@ -43,30 +43,30 @@ function makeHandler(opts: {
 describe('carousel hero image — guardrails', () => {
   it('returns a data URI when everything passes', async () => {
     const h = makeHandler({ subject: 'a warm cup of coffee' });
-    const uri = await h.generateHeroImage('cus_1', 'cafe', 'Fresh roast this week');
+    const uri = await h.generateSlideImage('cus_1', 'cafe', 'Fresh roast this week');
     assert.ok(uri?.startsWith('data:image/png;base64,'));
   });
 
   it('returns null (plain-text cover) when the provider is not configured', async () => {
     const h = makeHandler({ configured: false });
-    assert.equal(await h.generateHeroImage('cus_1', 'cafe', 'x'), null);
+    assert.equal(await h.generateSlideImage('cus_1', 'cafe', 'x'), null);
   });
 
   it('refuses a subject the place-check flags — no fabricated premises', async () => {
     // The prompt-level refusal is the first of two gates (the vision pixel-check
     // below is the second). A subject it flags must yield no image.
     const h = makeHandler({ subject: 'our office building' });
-    assert.equal(await h.generateHeroImage('cus_1', 'dentist', 'x'), null);
+    assert.equal(await h.generateSlideImage('cus_1', 'dentist', 'x'), null);
   });
 
   it('discards an image the vision check says depicts a place', async () => {
     const h = makeHandler({ subject: 'a clean modern interior', isPlace: true });
-    assert.equal(await h.generateHeroImage('cus_1', 'salon', 'x'), null);
+    assert.equal(await h.generateSlideImage('cus_1', 'salon', 'x'), null);
   });
 
   it('falls back to null when generation throws — never breaks the carousel', async () => {
     const h = makeHandler({ subject: 'a coffee cup', generateThrows: true });
-    assert.equal(await h.generateHeroImage('cus_1', 'cafe', 'x'), null);
+    assert.equal(await h.generateSlideImage('cus_1', 'cafe', 'x'), null);
   });
 });
 
