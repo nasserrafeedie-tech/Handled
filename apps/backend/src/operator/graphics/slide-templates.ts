@@ -134,8 +134,12 @@ interface TypeSet {
 function typeSet(style: BrandStyle | undefined): TypeSet {
   switch (style) {
     case 'editorial':
+      // 800 resolves to the STATIC PlayfairDisplay-ExtraBold.ttf in fonts/.
+      // The variable font's weight axis is ignored by resvg — every weight
+      // rendered as Regular, which is why editorial headlines shipped thin.
+      // The static instance was cut from the VF (fontTools varLib.instancer).
       return {
-        head: SERIF, headWeight: 700, headTracking: 0,
+        head: SERIF, headWeight: 800, headTracking: 0,
         body: SANS, quote: SERIF, quoteItalic: true, headUpper: false,
       };
     case 'bold':
@@ -744,15 +748,17 @@ function footerLeft(text: string, x: number, p: Palette, t: TypeSet): string {
  * refinement.)
  */
 function logoBadge(dataUri: string, centered: boolean, pad: number): string {
-  const chipW = 190;
-  const chipH = 66;
-  const y = CANVAS - 92 - chipH / 2;
-  const x = centered ? CANVAS / 2 - chipW / 2 : pad;
-  const inset = 12;
+  // A compact SQUARE chip, not a banner. The wide 190px pill read as a UI
+  // artifact stamped on the art — the worst thing on an otherwise designed
+  // slide. A small square is a sticker: present, branded, ignorable.
+  const chip = 68;
+  const y = CANVAS - 92 - chip / 2;
+  const x = centered ? CANVAS / 2 - chip / 2 : pad;
+  const inset = 10;
   return `
     <g>
-      <rect x="${x}" y="${y}" width="${chipW}" height="${chipH}" rx="14" fill="#FFFFFF" stroke="#1A140D" stroke-opacity="0.08" stroke-width="1"/>
-      <image x="${x + inset}" y="${y + inset}" width="${chipW - inset * 2}" height="${chipH - inset * 2}" href="${dataUri}" preserveAspectRatio="xMidYMid meet"/>
+      <rect x="${x}" y="${y}" width="${chip}" height="${chip}" rx="18" fill="#FFFFFF" stroke="#1A140D" stroke-opacity="0.08" stroke-width="1"/>
+      <image x="${x + inset}" y="${y + inset}" width="${chip - inset * 2}" height="${chip - inset * 2}" href="${dataUri}" preserveAspectRatio="xMidYMid meet"/>
     </g>`;
 }
 
@@ -976,7 +982,9 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
         render: (y) =>
           `<text x="${centered ? cx : pad}"${anchor} y="${y + 26}" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(eyebrow)}</text>`,
       });
-      const hFs = Math.round((spec.kind === 'title' ? 104 : 82) * scale);
+      // The title slide is the hook — its headline should dominate the canvas
+      // the way the reference decks' hooks do, not match the body slides.
+      const hFs = Math.round((spec.kind === 'title' ? 118 : 82) * scale);
       const hLines = clampLines(wrap(head(spec.headline), hFs, maxW, 0.58), headMax);
       const hLH = hFs * 1.06;
       blocks.push({
