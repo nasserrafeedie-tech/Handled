@@ -79,7 +79,11 @@ export type CarouselSlide = z.infer<typeof CarouselSlide>;
 /** Between a title and a close, a carousel needs enough middle to be worth a swipe. */
 export const CarouselLlmOutput = z
   .object({
-    slides: z.array(CarouselSlide).min(3).max(6),
+    // Max matches the prompt's 6-10 target (and Instagram's classic 10-slide
+    // deck; MMS approval also attaches at most 10). A cap BELOW the prompt's
+    // ask is a silent kill switch: the model obeys the prompt, the schema
+    // rejects the result, and every deck "couldn't be laid out as slides".
+    slides: z.array(CarouselSlide).min(3).max(10),
   })
   .strict();
 export type CarouselLlmOutput = z.infer<typeof CarouselLlmOutput>;

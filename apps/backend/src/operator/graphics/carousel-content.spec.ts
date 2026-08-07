@@ -71,6 +71,28 @@ describe('CarouselLlmOutput schema — what the model is allowed to hand back', 
     assert.equal(parsed.success, true);
   });
 
+  it('accepts the full 8-10 slide deck the prompt asks for', () => {
+    // The live failure this guards: the prompt asked for 6-10 slides while
+    // the schema still capped at 6 — the model obeyed the prompt, validation
+    // rejected the result, and every deck failed with "couldn't lay that one
+    // out as slides". The schema must never cap below the prompt's target.
+    const slides = [
+      { kind: 'title', headline: 'Ten slides of real material' },
+      ...Array.from({ length: 8 }, (_, i) => ({
+        kind: 'body',
+        headline: `Point ${i + 1}`,
+        body: 'One concrete idea, under twenty words.',
+      })),
+      { kind: 'cta', headline: 'Come see us', cta_label: 'Book now' },
+    ];
+    assert.equal(CarouselLlmOutput.safeParse({ slides }).success, true);
+    assert.equal(
+      CarouselLlmOutput.safeParse({ slides: [...slides, slides[1]] }).success,
+      false,
+      'eleven slides is past the deck cap',
+    );
+  });
+
   it('rejects a carousel too short to be worth a swipe', () => {
     const parsed = CarouselLlmOutput.safeParse({
       slides: [{ kind: 'title', headline: 'Hi' }, { kind: 'cta', headline: 'Bye' }],
