@@ -19,10 +19,13 @@
  * feed's variety comes from.
  *
  * Output is an SVG string that GraphicsService rasterizes to PNG on an
- * Instagram square canvas.
+ * Instagram 4:5 portrait canvas.
  */
 
 export const CANVAS = 1080;
+// 4:5 portrait (1080×1350) — the maximum feed real estate. Every 2025-26
+// benchmark and design guide converged on portrait over square for carousels.
+export const CANVAS_H = 1350;
 
 /**
  * A stable non-negative integer derived from a string (a customer id). Used as a
@@ -108,6 +111,12 @@ export interface SlideSpec {
    * kind === 'cta'.
    */
   ctaLabel?: string;
+  /**
+   * How many slides are in this set. When ≥2 (and `variant` is set) the slide
+   * carries a small "n / N" progress tag — numbered progress sets completion
+   * expectations and measurably lifts swipe-through. Omit for one-off graphics.
+   */
+  total?: number;
 }
 
 /* ── fonts ─────────────────────────────────────────────────────────────── */
@@ -355,7 +364,7 @@ function flatSurface(bgColor: string, b: Base, grad?: [string, string]): Surface
     onAccent: contrastText(pop),
     deco: isLight ? pop : '#FFFFFF',
   };
-  const bg = `${surfaceDefs(fill, pop, isLight ? 0.09 : 0.28)}<rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>`;
+  const bg = `${surfaceDefs(fill, pop, isLight ? 0.09 : 0.28)}<rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#bg)"/>`;
   return { p, bg, allowDeco: true };
 }
 
@@ -372,7 +381,7 @@ function accentSurface(b: Base): Surface {
     onAccent: bg,
     deco: fg,
   };
-  return { p, bg: `${surfaceDefs(fill, fg, 0.10)}<rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>`, allowDeco: true };
+  return { p, bg: `${surfaceDefs(fill, fg, 0.10)}<rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#bg)"/>`, allowDeco: true };
 }
 
 /** Cream paper with a bold accent triangle in one corner — editorial, distinctive. */
@@ -387,9 +396,9 @@ function splitSurface(b: Base): Surface {
   };
   // Two corner triangles, clear of the centre column where the type sits.
   const bg = `${surfaceDefs(`<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${lighten(paper, 0.3)}"/><stop offset="1" stop-color="${paper}"/></linearGradient>`, pop, 0.08)}
-    <rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>
+    <rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#bg)"/>
     <path d="M ${CANVAS} 0 L ${CANVAS} 420 L ${CANVAS - 420} 0 Z" fill="${block}"/>
-    <path d="M 0 ${CANVAS} L 0 ${CANVAS - 300} L 300 ${CANVAS} Z" fill="${pop}" opacity="0.14"/>`;
+    <path d="M 0 ${CANVAS_H} L 0 ${CANVAS_H - 300} L 300 ${CANVAS_H} Z" fill="${pop}" opacity="0.14"/>`;
   return { p, bg, allowDeco: false };
 }
 
@@ -404,8 +413,8 @@ function borderedPaper(b: Base): Surface {
   };
   const m = 46;
   const bg = `${surfaceDefs(`<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${lighten(paper, 0.4)}"/><stop offset="1" stop-color="${paper}"/></linearGradient>`, pop, 0.07)}
-    <rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>
-    <rect x="${m}" y="${m}" width="${CANVAS - m * 2}" height="${CANVAS - m * 2}" rx="26" fill="none" stroke="${pop}" stroke-opacity="0.35" stroke-width="3"/>`;
+    <rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#bg)"/>
+    <rect x="${m}" y="${m}" width="${CANVAS - m * 2}" height="${CANVAS_H - m * 2}" rx="26" fill="none" stroke="${pop}" stroke-opacity="0.35" stroke-width="3"/>`;
   return { p, bg, allowDeco: false };
 }
 
@@ -442,22 +451,22 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
   (p) => `
     <circle cx="${CANVAS - 120}" cy="140" r="420" fill="url(#glow)"/>
     <circle cx="${CANVAS - 60}" cy="60" r="230" fill="${p.deco}" opacity="0.06"/>
-    <circle cx="120" cy="${CANVAS - 90}" r="170" fill="none" stroke="${p.deco}" stroke-opacity="0.08" stroke-width="2"/>`,
+    <circle cx="120" cy="${CANVAS_H - 90}" r="170" fill="none" stroke="${p.deco}" stroke-opacity="0.08" stroke-width="2"/>`,
   // 1 — glow bottom-left, soft disc top-left
   (p) => `
-    <circle cx="90" cy="${CANVAS - 120}" r="430" fill="url(#glow)"/>
+    <circle cx="90" cy="${CANVAS_H - 120}" r="430" fill="url(#glow)"/>
     <circle cx="140" cy="120" r="190" fill="${p.deco}" opacity="0.05"/>
-    <circle cx="${CANVAS - 130}" cy="${CANVAS - 150}" r="150" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2"/>`,
+    <circle cx="${CANVAS - 130}" cy="${CANVAS_H - 150}" r="150" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2"/>`,
   // 2 — wide glow across the top, horizon rule
   (p) => `
     <ellipse cx="${CANVAS / 2}" cy="-40" rx="620" ry="360" fill="url(#glow)"/>
-    <rect x="0" y="${CANVAS - 150}" width="${CANVAS}" height="2" fill="${p.deco}" opacity="0.10"/>
-    <circle cx="${CANVAS - 110}" cy="${CANVAS - 300}" r="120" fill="${p.deco}" opacity="0.05"/>`,
+    <rect x="0" y="${CANVAS_H - 150}" width="${CANVAS}" height="2" fill="${p.deco}" opacity="0.10"/>
+    <circle cx="${CANVAS - 110}" cy="${CANVAS_H - 300}" r="120" fill="${p.deco}" opacity="0.05"/>`,
   // 3 — two offset rings, glow low-right
   (p) => `
-    <circle cx="${CANVAS - 80}" cy="${CANVAS - 60}" r="400" fill="url(#glow)"/>
+    <circle cx="${CANVAS - 80}" cy="${CANVAS_H - 60}" r="400" fill="url(#glow)"/>
     <circle cx="${CANVAS - 200}" cy="200" r="260" fill="none" stroke="${p.deco}" stroke-opacity="0.07" stroke-width="2"/>
-    <circle cx="60" cy="${CANVAS / 2}" r="150" fill="${p.deco}" opacity="0.04"/>`,
+    <circle cx="60" cy="${CANVAS_H / 2}" r="150" fill="${p.deco}" opacity="0.04"/>`,
   // 4 — a grid of dots in the top-right, soft glow low-left
   (p) => {
     const gap = 54, cols = 5, rows = 4, ox = CANVAS - 96 - (cols - 1) * gap, oy = 120;
@@ -465,13 +474,13 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
     for (let i = 0; i < cols; i++)
       for (let j = 0; j < rows; j++)
         dots += `<circle cx="${ox + i * gap}" cy="${oy + j * gap}" r="7" fill="${p.deco}" opacity="0.13"/>`;
-    return `<circle cx="110" cy="${CANVAS - 110}" r="360" fill="url(#glow)"/>${dots}`;
+    return `<circle cx="110" cy="${CANVAS_H - 110}" r="360" fill="url(#glow)"/>${dots}`;
   },
   // 5 — concentric arcs sweeping out of the bottom-left corner
   (p) => {
     let arcs = '';
     for (const r of [140, 260, 380, 500])
-      arcs += `<circle cx="0" cy="${CANVAS}" r="${r}" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2.5"/>`;
+      arcs += `<circle cx="0" cy="${CANVAS_H}" r="${r}" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2.5"/>`;
     return `<circle cx="${CANVAS - 120}" cy="150" r="240" fill="url(#glow)"/>${arcs}`;
   },
   // 6 — diagonal stripes bleeding off the top-right
@@ -481,13 +490,13 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
       const o = i * 48;
       s += `<line x1="${CANVAS - 380 + o}" y1="-20" x2="${CANVAS + 60 + o}" y2="420" stroke="${p.deco}" stroke-opacity="0.08" stroke-width="12" stroke-linecap="round"/>`;
     }
-    return `<circle cx="140" cy="${CANVAS - 120}" r="300" fill="url(#glow)"/>${s}`;
+    return `<circle cx="140" cy="${CANVAS_H - 120}" r="300" fill="url(#glow)"/>${s}`;
   },
   // 7 — scattered plus-marks, a light confetti in the accent colour
   (p) => {
     const pts: [number, number, number][] = [
-      [150, 200, 16], [CANVAS - 170, 250, 12], [CANVAS - 120, CANVAS - 210, 18],
-      [230, CANVAS - 150, 13], [CANVAS / 2 + 210, 130, 11], [95, CANVAS / 2 + 40, 15],
+      [150, 200, 16], [CANVAS - 170, 250, 12], [CANVAS - 120, CANVAS_H - 210, 18],
+      [230, CANVAS_H - 150, 13], [CANVAS / 2 + 210, 130, 11], [95, CANVAS_H / 2 + 40, 15],
     ];
     return pts
       .map(([x, y, s]) =>
@@ -497,9 +506,9 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
   // 8 — a single large soft blob off the top-right, glow low-left
   (p) => `
     <path d="M 900 -60 C 1160 120 1060 400 820 440 C 620 474 540 300 630 150 C 700 30 800 -100 900 -60 Z" fill="${p.deco}" opacity="0.06"/>
-    <circle cx="120" cy="${CANVAS - 100}" r="240" fill="url(#glow)"/>`,
+    <circle cx="120" cy="${CANVAS_H - 100}" r="240" fill="url(#glow)"/>`,
   // 9 — minimal: just breathing room and the faintest wash
-  (p) => `<circle cx="${CANVAS - 140}" cy="${CANVAS - 140}" r="300" fill="url(#glow)"/>`,
+  (p) => `<circle cx="${CANVAS - 140}" cy="${CANVAS_H - 140}" r="300" fill="url(#glow)"/>`,
   // ── Below: a second vocabulary. Everything above leans on circles/glows —
   // the tell an owner spotted, since every Handled carousel read the same. These
   // are lines, angles, and edges: no two feeds should share a signature look.
@@ -515,7 +524,7 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
     const m = 72, L = 132;
     return `
     <path d="M ${m} ${m + L} V ${m} H ${m + L}" fill="none" stroke="${p.accent}" stroke-opacity="0.16" stroke-width="3"/>
-    <path d="M ${CANVAS - m - L} ${CANVAS - m} H ${CANVAS - m} V ${CANVAS - m - L}" fill="none" stroke="${p.accent}" stroke-opacity="0.16" stroke-width="3"/>`;
+    <path d="M ${CANVAS - m - L} ${CANVAS_H - m} H ${CANVAS - m} V ${CANVAS_H - m - L}" fill="none" stroke="${p.accent}" stroke-opacity="0.16" stroke-width="3"/>`;
   },
   // 12 — a column of chevrons down the right edge
   (p) => {
@@ -529,8 +538,8 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
   // 13 — outlined triangles, scattered
   (p) => {
     const t: [number, number, number][] = [
-      [170, 230, 42], [CANVAS - 190, 190, 30], [CANVAS - 150, CANVAS - 230, 48],
-      [250, CANVAS - 180, 34], [CANVAS / 2 + 190, 150, 26],
+      [170, 230, 42], [CANVAS - 190, 190, 30], [CANVAS - 150, CANVAS_H - 230, 48],
+      [250, CANVAS_H - 180, 34], [CANVAS / 2 + 190, 150, 26],
     ];
     return t
       .map(([x, y, s]) => `<path d="M ${x} ${y - s} L ${x + s} ${y + s} L ${x - s} ${y + s} Z" fill="none" stroke="${p.deco}" stroke-opacity="0.11" stroke-width="2.5"/>`)
@@ -540,14 +549,14 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
   (p) => {
     let s = '';
     for (const d of [120, 250, 380, 510])
-      s += `<rect x="${CANVAS - 60 - d}" y="${CANVAS - 60 - d}" width="${d}" height="${d}" fill="none" stroke="${p.deco}" stroke-opacity="0.075" stroke-width="2"/>`;
+      s += `<rect x="${CANVAS - 60 - d}" y="${CANVAS_H - 60 - d}" width="${d}" height="${d}" fill="none" stroke="${p.deco}" stroke-opacity="0.075" stroke-width="2"/>`;
     return s;
   },
   // 15 — topographic waves rolling across the lower half
   (p) => {
     let w = '';
     for (let i = 0; i < 5; i++) {
-      const y = CANVAS - 70 - i * 74;
+      const y = CANVAS_H - 70 - i * 74;
       w += `<path d="M -20 ${y} q 180 -60 360 0 t 360 0 t 360 0 t 360 0" fill="none" stroke="${p.deco}" stroke-opacity="0.09" stroke-width="2.5"/>`;
     }
     return w;
@@ -576,7 +585,7 @@ const COMPOSITIONS: ((p: Palette) => string)[] = [
     let d = '';
     for (let i = -2; i < 14; i++) {
       const x = i * 100;
-      d += `<line x1="${x}" y1="0" x2="${x + CANVAS}" y2="${CANVAS}" stroke="${p.deco}" stroke-opacity="0.05" stroke-width="1.5"/>`;
+      d += `<line x1="${x}" y1="0" x2="${x + CANVAS}" y2="${CANVAS_H}" stroke="${p.deco}" stroke-opacity="0.05" stroke-width="1.5"/>`;
     }
     return d;
   },
@@ -642,7 +651,7 @@ function pickLook(
  * image while still looking designed rather than slapped together.
  */
 function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
-  const bandH = Math.round(CANVAS * 0.56);
+  const bandH = Math.round(CANVAS_H * 0.5);
   const defs = `
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -666,7 +675,7 @@ function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
 
   if (layout === 'band') {
     return `${defs}
-      <rect width="${CANVAS}" height="${CANVAS}" fill="url(#bg)"/>
+      <rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#bg)"/>
       ${img(0, bandH)}
       <rect width="${CANVAS}" height="${bandH}" fill="url(#bandFade)"/>
       <circle cx="${CANVAS - 90}" cy="${bandH + 150}" r="200" fill="${p.deco}" opacity="0.05"/>`;
@@ -675,14 +684,14 @@ function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
   if (layout === 'card') {
     // Photo stays mostly clear; the type lives in its own panel.
     return `${defs}
-      ${img(0, CANVAS)}
-      <rect width="${CANVAS}" height="${CANVAS}" fill="${p.bgBottom}" opacity="0.34"/>`;
+      ${img(0, CANVAS_H)}
+      <rect width="${CANVAS}" height="${CANVAS_H}" fill="${p.bgBottom}" opacity="0.34"/>`;
   }
 
   // full — photo edge to edge with a graduated scrim for legibility.
   return `${defs}
-    ${img(0, CANVAS)}
-    <rect width="${CANVAS}" height="${CANVAS}" fill="url(#scrim)"/>
+    ${img(0, CANVAS_H)}
+    <rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#scrim)"/>
     <circle cx="${CANVAS - 60}" cy="60" r="230" fill="${p.deco}" opacity="0.05"/>`;
 }
 
@@ -714,7 +723,7 @@ function pill(cx: number, cy: number, text: string, p: Palette, t: TypeSet): str
 function footerCentered(text: string, p: Palette, t: TypeSet): string {
   if (!text) return '';
   const fs = 32;
-  const y = CANVAS - 92;
+  const y = CANVAS_H - 92;
   return `
     <g>
       <circle cx="${CANVAS / 2 - text.length * fs * 0.31 - 20}" cy="${y - fs * 0.32}" r="8" fill="${p.accent}"/>
@@ -727,7 +736,7 @@ function footerCentered(text: string, p: Palette, t: TypeSet): string {
 function footerLeft(text: string, x: number, p: Palette, t: TypeSet): string {
   if (!text) return '';
   const fs = 32;
-  const y = CANVAS - 92;
+  const y = CANVAS_H - 92;
   return `
     <rect x="${x}" y="${y - fs * 0.66}" width="16" height="16" rx="4" fill="${p.accent}"/>
     <text x="${x + 36}" y="${y}" font-family="${t.body}" font-size="${fs}" font-weight="600" letter-spacing="1" fill="${p.fg}">${esc(text)}</text>
@@ -752,7 +761,7 @@ function logoBadge(dataUri: string, centered: boolean, pad: number): string {
   // artifact stamped on the art — the worst thing on an otherwise designed
   // slide. A small square is a sticker: present, branded, ignorable.
   const chip = 68;
-  const y = CANVAS - 92 - chip / 2;
+  const y = CANVAS_H - 92 - chip / 2;
   const x = centered ? CANVAS / 2 - chip / 2 : pad;
   const inset = 10;
   return `
@@ -829,7 +838,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   const t = typeSet(theme.style);
   const footer = spec.footer ?? theme.brandName ?? '';
 
-  const BAND_H = Math.round(CANVAS * 0.56);
+  const BAND_H = Math.round(CANVAS_H * 0.5);
   const CARD_M = 96;
   const CARD_PAD = 70;
 
@@ -837,10 +846,10 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   // edge of a card. 'card' gets its final zone after we measure the content.
   const pad = layout === 'card' ? CARD_M + 56 : 110;
   let zoneTop = 190;
-  let zoneBottom = CANVAS - 190;
+  let zoneBottom = CANVAS_H - 190;
   if (layout === 'band') {
     zoneTop = BAND_H + 62;
-    zoneBottom = CANVAS - 78;
+    zoneBottom = CANVAS_H - 78;
   }
 
   const centered =
@@ -1035,9 +1044,9 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
     // fixed box, so short posts don't get a half-empty panel.
     const cardH = Math.min(
       Math.max(measure(blocks) + CARD_PAD * 2, 360),
-      CANVAS - 160,
+      CANVAS_H - 160,
     );
-    const cardY = (CANVAS - cardH) / 2;
+    const cardY = (CANVAS_H - cardH) / 2;
     zoneTop = cardY + CARD_PAD;
     zoneBottom = cardY + cardH - CARD_PAD;
     cardBox = { y: cardY, h: cardH };
@@ -1052,11 +1061,20 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   }
 
   const parts: string[] = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS}" viewBox="0 0 ${CANVAS} ${CANVAS}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS_H}" viewBox="0 0 ${CANVAS} ${CANVAS_H}">`,
     spec.photo ? photoFrame(p, spec.photo, layout!) : surface!.bg,
   ];
   if (cardBox) parts.push(cardPanel(p, cardBox.y, cardBox.h));
   parts.push(stack(blocks, zoneTop, zoneBottom));
+
+  // "n / N" progress tag, top-right. Numbered progress tells the reader how
+  // long the tunnel is and measurably lifts swipe-through — same principle
+  // as the numbered onboarding questions.
+  if (spec.total && spec.total > 1 && spec.variant !== undefined) {
+    parts.push(
+      `<text x="${CANVAS - 96}" y="112" text-anchor="end" font-family="${t.body}" font-size="27" font-weight="600" letter-spacing="2" fill="${p.fgSoft}" opacity="0.9">${spec.variant + 1} / ${spec.total}</text>`,
+    );
+  }
 
   // Footer. A real logo, when we have one, is composited as a badge on word
   // slides (the surface layouts) — the actual brand mark instead of the text

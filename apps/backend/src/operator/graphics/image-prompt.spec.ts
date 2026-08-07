@@ -106,7 +106,7 @@ describe('buildImagePrompt', () => {
     assert.match(buildImagePrompt(BRIEF, 'a cortado'), /warm and unfussy styling/);
     assert.match(
       buildImagePrompt({ ...BRIEF, visualStyle: null }, 'a cortado'),
-      /natural, unstyled/,
+      /clean, considered styling/,
     );
   });
 });

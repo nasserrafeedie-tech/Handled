@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { type Task, type Result, type MakeGraphicResult } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GraphicsService } from '../graphics/graphics.service';
-import { CANVAS, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
+import { CANVAS, CANVAS_H, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
 import { resolveBrandColors } from '../graphics/brand-palette';
 import { logoDataUri } from '../graphics/logo-colors';
 import { TaskHandler, ok, fail } from './handler.interface';
@@ -110,7 +110,7 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
           r2Key,
           contentType: 'image/png',
           width: CANVAS,
-          height: CANVAS,
+          height: CANVAS_H,
         },
       });
       refs.push(r2Key);
@@ -118,7 +118,7 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
         index: i,
         media_ref: r2Key,
         width: CANVAS,
-        height: CANVAS,
+        height: CANVAS_H,
         bytes: pngs[i].length,
       });
     }

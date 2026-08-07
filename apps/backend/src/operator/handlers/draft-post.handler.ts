@@ -136,6 +136,22 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       'Keep the caption under 280 characters. One idea per post, said tight —',
       'a strong short caption beats a thorough long one every single time.',
       'Cut preamble and wind-down; start at the point.',
+      // Feed truncation is a hard platform fact: ~125 chars show, the rest
+      // hides behind "…more". The only RCT-grade evidence on hooks says
+      // problem-framing beats positive framing; and Instagram's own stated
+      // top signal for reaching strangers is the DM-send.
+      'THE FIRST LINE IS THE POST: only ~125 characters show in the feed.',
+      'Line 1 must be a standalone hook under 110 characters that creates',
+      'tension — the problem, the mistake, the cost — not the cheerful tip.',
+      '"Most gums bleed for a reason you can fix" beats "Healthy smile tips!".',
+      'Never open with a greeting, the weather, an emoji, the business name,',
+      'or a summary. If line 1 could sit on any business\'s post, rewrite it.',
+      'Write as the OWNER speaking — I/we, a person typing to neighbors, not',
+      'a brand making an announcement.',
+      'End with exactly ONE ask and vary it post to post: a save ("save this',
+      'for your next …"), a send ("send this to the friend who …"), or the',
+      'business\'s real action ("text us", "book", "come in"). Never stack',
+      'asks, and never beg for likes or follows.',
       // Every post naming the city + trade ("our Glendale coffee shop") reads
       // like SEO filler across a week. Mention the location at most rarely.
       'Do not put the city and business type in every post — mention the',

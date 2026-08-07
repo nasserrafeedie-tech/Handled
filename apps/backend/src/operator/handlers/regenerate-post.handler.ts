@@ -53,6 +53,10 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
       `Rewrite this ${post.archetype} post for ${post.platform}.`,
       `Previous caption: "${post.caption ?? ''}".`,
       `Owner feedback: "${feedback}".`,
+      'Keep it under 280 characters. Line 1 must be a standalone hook under',
+      '110 characters that creates tension (only ~125 chars show in feed) —',
+      'never a greeting, the business name, or a summary. Write as the owner',
+      'speaking (I/we). End with exactly ONE ask.',
       'Return JSON: {"caption": string, "hashtags": string[]}.',
     ].join(' ');
 

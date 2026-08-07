@@ -6,7 +6,7 @@ import { StorageService } from '../../common/storage.service';
 import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
 import { GraphicsService } from '../graphics/graphics.service';
-import { CANVAS, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
+import { CANVAS, CANVAS_H, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
 import { resolveBrandColors } from '../graphics/brand-palette';
 import { logoDataUri } from '../graphics/logo-colors';
 import { ImageGenService } from '../graphics/image-gen.service';
@@ -160,7 +160,8 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
           // CTA has no idea how customers actually engage.
           cachedContext: profile ? buildBrandContext(profile) : '',
           prompt: carouselInstruction(brief),
-          maxTokens: 700,
+          // 8-10 slide decks need the headroom — 700 was sized for 4-5.
+          maxTokens: 1600,
           customerId: task.customer_id,
         },
         CarouselLlmOutput,
@@ -243,6 +244,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       ctaLabel: s.cta_label,
       seed: made + brandOffset + priorSlides,
       variant: i,
+      total: slidesCopy.length,
     }));
 
     // Generated photography through the deck. Two doors in: the owner opted
@@ -308,7 +310,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
           r2Key,
           contentType: 'image/png',
           width: CANVAS,
-          height: CANVAS,
+          height: CANVAS_H,
         },
       });
       refs.push(r2Key);

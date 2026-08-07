@@ -53,7 +53,7 @@ export class GraphicsService {
     return `data:${type};base64,${b64}`;
   }
 
-  /** Render one slide spec to a PNG buffer (1080×1080). */
+  /** Render one slide spec to a PNG buffer (1080×1350 portrait). */
   renderSlide(spec: SlideSpec, theme: BrandTheme): Buffer {
     const svg = renderSlideSvg(spec, theme);
     const resvg = new Resvg(svg, {

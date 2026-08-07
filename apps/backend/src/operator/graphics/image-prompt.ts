@@ -140,15 +140,22 @@ export function buildImagePrompt(brief: ImageBrief, subject: string): string {
     // treatment room, a café interior. The business type is a category hint
     // for the props, not a scene to build.
     `the kind of thing an independent ${brief.businessType} sells or uses`,
-    'a tight close-up product photograph, the subject filling most of the frame',
-    brief.visualStyle ? `${brief.visualStyle} styling` : 'natural, unstyled',
-    'natural light, shallow depth of field, 50mm lens',
+    // Editorial still-life, NOT fake candid photography. A photoreal "candid"
+    // pretends to be the business's own snapshot — exactly what consumers now
+    // spot and distrust, and what platforms auto-label as AI. Deliberate art
+    // direction reads as design, sits honestly beside real owner photos, and
+    // still beats a flat text card.
+    'a styled editorial still-life, the subject filling most of the frame',
+    brief.visualStyle ? `${brief.visualStyle} styling` : 'clean, considered styling',
+    'deliberate studio art direction: a simple color-blocked or softly ' +
+      'graduated backdrop, controlled soft light, unhurried composition',
+    'it should read as a designed magazine image, never as a candid phone ' +
+      'photo of a real business',
     // The background must not become a place. A soft wash of light and colour,
     // never a readable room. This is what keeps the pixel-level place check
-    // from rejecting an otherwise-fine product shot.
-    'the background a soft indistinct blur of light and colour, with no ' +
+    // from rejecting an otherwise-fine still-life.
+    'the background a soft indistinct wash of light and colour, with no ' +
       'recognizable room, window, furniture, fixtures, shelving, or architecture',
-    'candid, not a stock photo',
     'not a room, not an interior, not a building, not an establishing shot',
     ...HARD_CONSTRAINTS,
   ];
