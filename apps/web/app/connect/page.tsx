@@ -139,6 +139,14 @@ export default function ConnectPage() {
           })}
         </ul>
 
+        <p className="text-sm leading-relaxed text-ink/50">
+          Instagram note: connecting needs a free{' '}
+          <span className="font-medium text-ink/70">Professional account</span>{' '}
+          (Instagram app → Settings → Account type and tools → Switch to
+          professional — takes a minute). Personal accounts can&rsquo;t be
+          connected by any tool; Instagram doesn&rsquo;t allow it.
+        </p>
+
         {note && (
           <div className="rounded-2xl border border-clay-300/60 bg-clay-50 px-6 py-4 text-sm leading-relaxed text-clay-700">
             {note}
