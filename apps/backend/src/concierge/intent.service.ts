@@ -29,6 +29,7 @@ import { LlmService } from '../operator/llm/llm.service';
 export type OwnerIntent =
   | 'approve'
   | 'revise'
+  | 'reschedule'
   | 'cancel'
   | 'see_plan'
   | 'autopilot_on'
@@ -72,6 +73,7 @@ const LlmIntent = z
     intent: z.enum([
       'approve',
       'revise',
+      'reschedule',
       'cancel',
       'see_plan',
       'autopilot_on',
@@ -100,6 +102,11 @@ const CANCEL_RE =
    must NOT have one, since \b never matches after a non-word character. */
 const APPROVE_RE =
   /^\s*(?:(?:yes|yep|yeah|yup|ya|sure|ok|okay|kk?|perfect|great|awesome|beautiful|lovely|nice|love it|looks (?:good|great|perfect|awesome|amazing)|lgtm|sounds (?:good|great)|send it|post it|ship it|publish it|go ahead|go for it|do it|approved?)\b|👍|👌|🔥|✅|💯|🙌|❤️|😍)/i;
+/* Timing, not content. Tested before REVISE because "change the schedule"
+   contains revise-words, and before APPROVE because "post it right now" is
+   an approval WITH a time — the reschedule handler honors both halves. */
+const RESCHEDULE_RE =
+  /\b(?:shift|move|push|bump|reschedule)\b[\s\S]{0,40}\b(?:schedule|post|posts|it|time|earlier|later|up|back|forward)\b|\b(?:change|move)\s+the\s+(?:schedule|time|timing)\b|\bstart\s+(?:posting\s+)?(?:today|now|tomorrow|this week)\b|\bpost\s+(?:it|this|everything)\s+(?:right\s+|asap\s+)?(?:now|today|tonight|tomorrow|earlier|later|sooner)\b/i;
 const REVISE_RE =
   /\b(change|edit|revise|reword|rewrite|redo|tweak|fix|swap|replace|shorter|longer|warmer|funnier|softer|punchier|different|instead|less |more |add |remove|drop the|take out|make it|can you make)\b/i;
 const QUESTION_RE =
@@ -164,6 +171,9 @@ export class IntentService {
           '- approve: happy for it to go out ("yes", "love it", "send it")',
           '- revise: wants it changed — put what they want in "feedback"',
           '- cancel: does not want this particular post published',
+          '- reschedule: wants to change WHEN something posts, not what it',
+          '  says — "post it now", "move it to Friday", "shift the schedule',
+          '  to start today". Put the timing words in "feedback".',
           '',
           'Intents about their account:',
           '- see_plan: wants to know their strategy, what we do for them, or',
@@ -213,6 +223,7 @@ export class IntentService {
     if (REFER_RE.test(text)) return { intent: 'refer', confidence: 0.9 };
 
     if (CANCEL_RE.test(text)) return { intent: 'cancel', confidence: 0.85 };
+    if (RESCHEDULE_RE.test(text)) return { intent: 'reschedule', confidence: 0.85, feedback: text };
     if (REVISE_RE.test(text)) return { intent: 'revise', confidence: 0.85, feedback: text };
     if (APPROVE_RE.test(text)) return { intent: 'approve', confidence: 0.85 };
     if (QUESTION_RE.test(text)) return { intent: 'question', confidence: 0.8 };

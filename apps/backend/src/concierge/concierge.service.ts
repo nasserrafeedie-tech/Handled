@@ -75,6 +75,10 @@ const CONFIRMATIONS: Record<string, string> = {
     'when a post needs one.',
 };
 
+/** Does an approval carry its own timing? Cheap gate before the LLM parse. */
+const TIMING_RE =
+  /\b(now|right away|asap|immediately|today|tonight|tomorrow|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|at \d)\b/i;
+
 /** Shape of a grounded question-answer from the LLM. */
 const AnswerOutput = z.object({ reply: z.string().min(1).max(600) });
 
@@ -456,6 +460,54 @@ export class ConciergeService {
   }
 
   /**
+   * Timing words → a concrete Date (+ whether they mean one post or the
+   * whole schedule), via a cheap model call. Null when the message names no
+   * usable time — callers fall back to planned behavior, never guess.
+   */
+  private async parseRequestedTime(
+    body: string,
+    tz: string,
+    plannedTime?: Date | null,
+  ): Promise<{ when: Date; scope: 'post' | 'week' } | null> {
+    try {
+      const parsed = await this.llm.completeJson(
+        {
+          tier: 'bulk',
+          cachedContext: '',
+          prompt: [
+            `The owner's local time right now is ${formatInZone(new Date(), tz)} (${tz}).`,
+            plannedTime
+              ? `The post under discussion is planned for ${formatInZone(plannedTime, tz)}.`
+              : '',
+            `Their message: """${body}"""`,
+            'When do they want it to go out? Return JSON:',
+            '{"when": "now" | "YYYY-MM-DD HH:mm" (their local time) | "none",',
+            ' "scope": "post" | "week"}.',
+            'scope is "week" when they mean the whole schedule or several posts',
+            '("shift the schedule", "start the week today"); "post" for one.',
+            '"none" when the message names no timing at all.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          maxTokens: 150,
+        },
+        z.object({
+          when: z.string(),
+          scope: z.enum(['post', 'week']).default('post'),
+        }),
+      );
+      if (parsed.when === 'none') return null;
+      if (parsed.when === 'now') return { when: new Date(), scope: parsed.scope };
+      const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/.exec(parsed.when);
+      if (!m) return null;
+      return { when: zonedToUtc(m[1], m[2], tz), scope: parsed.scope };
+    } catch (e) {
+      this.log.warn(`time parse failed: ${String(e)}`);
+      return null;
+    }
+  }
+
+  /**
    * The everyday conversation. Almost always the owner is reacting to a draft
    * we texted them, so we resolve "the post they mean" first — the one still
    * waiting on their OK — then act on what they said.
@@ -625,15 +677,22 @@ export class ConciergeService {
 
     switch (intent) {
       case 'approve': {
-        // Keep the planned time if it has one; otherwise tomorrow 9am in the
-        // business's own timezone.
         const cust = await this.prisma.customer.findUnique({
           where: { id: customerId },
           select: { timezone: true },
         });
+        const tz = cust?.timezone ?? 'America/Los_Angeles';
+        // "Post it right now" is an approval WITH a time — scheduling the
+        // planned slot over the owner's explicit words happened live and
+        // reads as being ignored. Timing words trigger a parse; otherwise
+        // keep the planned time, else tomorrow 9am in their zone.
+        const timed = TIMING_RE.test(body)
+          ? await this.parseRequestedTime(body, tz, pending!.scheduledTime)
+          : null;
         const when =
+          (timed ? new Date(Math.max(timed.when.getTime(), Date.now() + 60_000)) : null) ??
           pending!.scheduledTime ??
-          tomorrowMorningInZone(cust?.timezone ?? 'America/Los_Angeles');
+          tomorrowMorningInZone(tz);
         const result = await this.bus.emit(
           this.task(customerId, 'SCHEDULE_POST', {
             post_id: pending!.id,
@@ -736,6 +795,103 @@ export class ConciergeService {
           { promptedByOwner: true },
         );
         return;
+      }
+
+      case 'reschedule': {
+        const cust = await this.prisma.customer.findUnique({
+          where: { id: customerId },
+          select: { timezone: true },
+        });
+        const tz = cust?.timezone ?? 'America/Los_Angeles';
+        const req = await this.parseRequestedTime(feedback || body, tz, pending?.scheduledTime);
+        if (!req) {
+          return this.reply(
+            phone,
+            conversationId,
+            'Tell me when — "post it now", "move it to Friday 9am", or "start the week today".',
+          );
+        }
+        const upcoming = await this.prisma.post.findMany({
+          where: {
+            customerId,
+            status: { in: ['pending_approval', 'approved', 'scheduled'] },
+            scheduledTime: { not: null },
+          },
+          orderBy: { scheduledTime: 'asc' },
+        });
+        if (upcoming.length === 0) {
+          return this.reply(
+            phone,
+            conversationId,
+            "Nothing's on the calendar to move yet — I'll text you when the next drafts are ready.",
+          );
+        }
+        // Never schedule into the past: "start today" on a morning slot that
+        // already went by means "as soon as you can", which is minutes away.
+        const floor = new Date(Date.now() + 2 * 60_000);
+        const clamp = (d: Date) => (d < floor ? floor : d);
+
+        if (req.scope === 'week') {
+          // Shift DATES, keep each post's clock time: "start today" moves a
+          // Mon/Tue/Wed week to Thu/Fri/Sat. Pending drafts just carry the
+          // new time (their "yes" still launches them); approved/scheduled
+          // ones re-enter the queue, which replaces the old job per post.
+          const dayMs = 86_400_000;
+          const delta =
+            Math.round((req.when.getTime() - upcoming[0].scheduledTime!.getTime()) / dayMs) * dayMs;
+          const moved: string[] = [];
+          for (const post of upcoming) {
+            const when = clamp(new Date(post.scheduledTime!.getTime() + delta));
+            if (post.status === 'pending_approval') {
+              await this.prisma.post.update({
+                where: { id: post.id },
+                data: { scheduledTime: when },
+              });
+            } else {
+              await this.bus.emit(
+                this.task(customerId, 'SCHEDULE_POST', {
+                  post_id: post.id,
+                  scheduled_time: when.toISOString(),
+                  owner_approved: false,
+                }),
+              );
+            }
+            moved.push(formatInZone(when, tz));
+          }
+          return this.reply(
+            phone,
+            conversationId,
+            `Shifted ${moved.length} post${moved.length > 1 ? 's' : ''} — now going out ` +
+              `${moved.slice(0, 3).join(', ')}${moved.length > 3 ? '…' : ''}. Anything still ` +
+              'waiting on your OK keeps waiting — "yes" sends it at its new time.',
+          );
+        }
+
+        const target = pending ?? upcoming[0];
+        const when = clamp(req.when);
+        const label = formatInZone(when, tz);
+        // "Post it now" carries an approval; "move it to Friday" on a draft
+        // still awaiting one does not — retime it and let their "yes" launch.
+        const wantsPublish = /\b(post|send|publish|ship)\b/i.test(body);
+        if (target.status === 'pending_approval' && !wantsPublish) {
+          await this.prisma.post.update({
+            where: { id: target.id },
+            data: { scheduledTime: when },
+          });
+          return this.reply(
+            phone,
+            conversationId,
+            `Moved it to ${label} — reply "yes" when you're happy and it's locked in.`,
+          );
+        }
+        const rescheduled = await this.bus.emit(
+          this.task(customerId, 'SCHEDULE_POST', {
+            post_id: target.id,
+            scheduled_time: when.toISOString(),
+            owner_approved: target.status === 'pending_approval',
+          }),
+        );
+        return this.reply(phone, conversationId, rescheduled.summary_for_owner);
       }
 
       case 'cancel': {
