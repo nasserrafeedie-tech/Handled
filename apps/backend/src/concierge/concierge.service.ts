@@ -75,6 +75,14 @@ const CONFIRMATIONS: Record<string, string> = {
     'when a post needs one.',
 };
 
+/**
+ * Conversation marker: we asked "what are your colors?" and the NEXT text is
+ * the answer, whatever it looks like. Stored in conversation.pendingIntent
+ * but intercepted BEFORE the yes/no confirmation machinery, which would
+ * misread "oxblood and cream" as a decline.
+ */
+const AWAIT_COLORS = 'await:brand_colors';
+
 /** Does an approval carry its own timing? Cheap gate before the LLM parse. */
 const TIMING_RE =
   /\b(now|right away|asap|immediately|today|tonight|tomorrow|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|at \d)\b/i;
@@ -508,6 +516,99 @@ export class ConciergeService {
   }
 
   /**
+   * "The colors don't match my brand." If the message names colors, apply
+   * them; otherwise ask once and mark the conversation so the next text is
+   * read as the answer. Applying = update the profile AND rebuild every
+   * pending deck we assembled, so the fix is visible, not theoretical.
+   */
+  private async fixBrandColors(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    text: string,
+    opts?: { reasked?: boolean },
+  ): Promise<void> {
+    let colors: string[] = [];
+    try {
+      const parsed = await this.llm.completeJson(
+        {
+          tier: 'bulk',
+          cachedContext: '',
+          prompt:
+            `From this message, the brand colors the owner wants, as hex codes ` +
+            `(e.g. "oxblood and cream" → ["#8C2F39","#F5EFE6"]).\n` +
+            `Message: """${text.slice(0, 400)}"""\n` +
+            'Return JSON: {"colors": ["#RRGGBB", ...]} — at most 3, in the order ' +
+            'named, [] when the message names no colors.',
+          maxTokens: 150,
+        },
+        z.object({ colors: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).max(3) }),
+      );
+      colors = parsed.colors;
+    } catch (e) {
+      this.log.warn(`color extraction failed: ${String(e)}`);
+    }
+
+    if (colors.length === 0) {
+      const site = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
+      // Arm (or re-arm) the marker so the next text is read as the answer.
+      await this.setPendingConfirmation(conversationId, AWAIT_COLORS as OwnerIntent);
+      return this.reply(
+        phone,
+        conversationId,
+        (opts?.reasked
+          ? "I couldn't read colors from that — try it like \"we're teal and gold\", or hex codes. "
+          : "Let's fix that — what are your colors? Say it like \"oxblood and cream\", or drop hex codes. ") +
+          `Or send your logo and I'll pull them from it: ${site}/upload?c=${customerId}&kind=logo`,
+      );
+    }
+
+    await this.prisma.brandProfile.update({
+      where: { customerId },
+      data: { brandColors: colors },
+    });
+
+    // Rebuild every pending assembled deck in the new clothes (owner photos
+    // and published posts untouched — same rule as the logo-arrival refresh).
+    const pendingPosts = await this.prisma.post.findMany({
+      where: { customerId, status: 'pending_approval' },
+      select: { id: true, mediaRefs: true },
+    });
+    let rebuilt = 0;
+    for (const post of pendingPosts) {
+      if (post.mediaRefs.length === 0) continue;
+      const [assembled, ownerMedia] = await Promise.all([
+        this.prisma.mediaAsset.findFirst({
+          where: { postId: post.id, source: 'assembled', kind: 'image' },
+          select: { id: true },
+        }),
+        this.prisma.mediaAsset.findFirst({
+          where: { postId: post.id, source: 'owner_upload' },
+          select: { id: true },
+        }),
+      ]);
+      if (!assembled || ownerMedia) continue;
+      const result = await this.bus.emit(
+        this.task(customerId, 'GENERATE_CAROUSEL', { post_id: post.id, replace_existing: true }),
+      );
+      if (!result.error) rebuilt++;
+    }
+
+    const list = colors.join(' + ');
+    if (rebuilt > 0) {
+      await this.presentNextDraft(customerId, `Switched your colors to ${list} and rebuilt your drafts ✳`, {
+        promptedByOwner: true,
+      });
+      return;
+    }
+    return this.reply(
+      phone,
+      conversationId,
+      `Switched your colors to ${list} — everything I make from here wears them.`,
+    );
+  }
+
+  /**
    * The everyday conversation. Almost always the owner is reacting to a draft
    * we texted them, so we resolve "the post they mean" first — the one still
    * waiting on their OK — then act on what they said.
@@ -524,6 +625,22 @@ export class ConciergeService {
       where: { customerId, status: 'pending_approval' },
       orderBy: { createdAt: 'asc' },
     });
+
+    // A color question we asked is answered by whatever comes next —
+    // intercept before intent classification sends "oxblood and cream" to
+    // the Q&A lane or the confirmation gate reads it as a decline.
+    const convo = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { pendingIntent: true, pendingIntentAt: true },
+    });
+    if (
+      convo?.pendingIntent === AWAIT_COLORS &&
+      convo.pendingIntentAt &&
+      Date.now() - convo.pendingIntentAt.getTime() < 30 * 60_000
+    ) {
+      await this.clearPendingConfirmation(conversationId);
+      return this.fixBrandColors(customerId, phone, conversationId, body, { reasked: true });
+    }
 
     let { intent, feedback, confidence } = await this.intent.classify(
       body,
@@ -718,6 +835,12 @@ export class ConciergeService {
 
       case 'revise': {
         const fb = feedback?.slice(0, 1000) || body.slice(0, 1000);
+        // "The colors don't match my brand" is PROFILE feedback — rewriting
+        // the caption can't fix a palette, and the deck would rebuild in the
+        // same wrong colors forever. Fix the identity, then rebuild.
+        if (/\bcolou?rs?\b|\bpalette\b/i.test(fb)) {
+          return this.fixBrandColors(customerId, phone, conversationId, fb);
+        }
         // Which thing are they revising? "Redo the carousel" is about the
         // DECK — fed to the caption rewriter it produced meta-copy about
         // redesigning slides while never touching a slide. Deck feedback goes
