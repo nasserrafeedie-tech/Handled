@@ -156,7 +156,21 @@ export class ConnectService {
       // posts, so defaulting this way has no downside.
       ...(req.platform === 'instagram' ? { connectionType: 'facebook' } : {}),
     });
-    return { url, offline: false };
+
+    // iOS hands www.instagram.com links to the Instagram app (universal
+    // links), and the app's OAuth picker is broken — verified live, while
+    // the web picker works. api.instagram.com serves the SAME authorize
+    // endpoint as a 302 back to www with every param intact, and it is not
+    // app-claimed (no valid AASA — Apple's association fetch doesn't follow
+    // its 302). iOS evaluates universal links against the URL being
+    // navigated to, not mid-flight redirects, so routing through api.* keeps
+    // the whole flow in the browser deterministically. If Instagram ever
+    // drops that redirect, the flow degrades to exactly today's behavior.
+    const finalUrl =
+      req.platform === 'instagram'
+        ? url.replace(/^https:\/\/www\.instagram\.com\//, 'https://api.instagram.com/')
+        : url;
+    return { url: finalUrl, offline: false };
   }
 
   /**

@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
  */
 const ALLOWED_HOSTS = [
   'www.instagram.com',
+  'api.instagram.com',
   'instagram.com',
   'www.facebook.com',
   'facebook.com',
