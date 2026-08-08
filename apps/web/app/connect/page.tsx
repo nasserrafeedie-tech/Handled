@@ -88,7 +88,12 @@ export default function ConnectPage() {
       } catch {
         /* private mode — the callback falls back to the server-side finish */
       }
-      window.location.href = url;
+      // Through the interstitial, never straight to the platform: a direct
+      // navigation from this tap lets iOS hand instagram.com to the IG app,
+      // whose OAuth picker is broken. The interstitial forwards outside the
+      // tap's activation window, so the flow stays in the browser where the
+      // web picker works (verified on desktop, broken in-app, Aug 2026).
+      window.location.href = `/connect/go?u=${encodeURIComponent(url)}`;
     } catch {
       setNote('Something went wrong. Please try again in a moment.');
       setBusy(null);
