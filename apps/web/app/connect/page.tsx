@@ -80,8 +80,13 @@ export default function ConnectPage() {
       // it here; the callback picks it up on the way back in.
       try {
         sessionStorage.setItem('handled:connect:customer', customer);
+        // localStorage too: iOS discards sessionStorage far more readily
+        // across the OAuth bounce. Neither survives landing in a DIFFERENT
+        // browser (the Instagram app's) — the server-side pending-connect
+        // record covers that case.
+        localStorage.setItem('handled:connect:customer', customer);
       } catch {
-        /* private mode — the callback falls back to asking for the link again */
+        /* private mode — the callback falls back to the server-side finish */
       }
       window.location.href = url;
     } catch {

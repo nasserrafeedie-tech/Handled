@@ -135,6 +135,17 @@ export class ConnectService {
     // gets used. The customer id therefore cannot ride back on the query
     // string, so the connect page stashes it before handing the browser over
     // and the callback reads it back.
+    // Remember the in-flight connect server-side. On mobile the OAuth
+    // return frequently lands in a DIFFERENT browser (the Instagram app's
+    // in-app view), where the sessionStorage the connect page stashed does
+    // not exist — the callback then has no idea whose connection to sync.
+    // This record lets /connect/reconcile-pending finish the association
+    // without the browser's help.
+    await this.prisma.customer.update({
+      where: { id: req.customerId },
+      data: { connectPendingPlatform: req.platform, connectPendingAt: new Date() },
+    });
+
     const { url } = await this.pfm.createAuthUrl({
       platform: req.platform,
       externalId: req.customerId,
@@ -152,6 +163,49 @@ export class ConnectService {
    * Step 2: the owner has returned from authorizing. Ask Post for Me what's now
    * connected for this customer and record it. Idempotent — safe to call again.
    */
+  /**
+   * Finish every connect whose owner never made it back in the same browser
+   * (the mobile case). For each customer with a recent in-flight connect,
+   * sync from Post for Me — the auth we started carried their id as the
+   * external id, so the association lives server-side — and report who
+   * gained which platforms so the caller can confirm over their channel.
+   */
+  async reconcilePending(): Promise<Array<{ customerId: string; gained: string[] }>> {
+    const cutoff = new Date(Date.now() - 30 * 60_000);
+    const waiting = await this.prisma.customer.findMany({
+      where: { connectPendingAt: { gte: cutoff } },
+      select: { id: true, connectPendingPlatform: true },
+    });
+    const results: Array<{ customerId: string; gained: string[] }> = [];
+    for (const c of waiting) {
+      try {
+        const before = new Set(
+          (
+            await this.prisma.connectedAccount.findMany({
+              where: { customerId: c.id, revoked: false },
+              select: { platform: true },
+            })
+          ).map((a) => a.platform),
+        );
+        const after = await this.reconcile(c.id);
+        const gained = after.map((a) => a.platform).filter((pl) => !before.has(pl));
+        const arrived =
+          gained.length > 0 ||
+          (c.connectPendingPlatform && after.some((a) => a.platform === c.connectPendingPlatform));
+        if (arrived) {
+          await this.prisma.customer.update({
+            where: { id: c.id },
+            data: { connectPendingPlatform: null, connectPendingAt: null },
+          });
+          if (gained.length > 0) results.push({ customerId: c.id, gained });
+        }
+      } catch (e) {
+        this.log.warn(`pending reconcile for ${c.id} failed: ${String(e)}`);
+      }
+    }
+    return results;
+  }
+
   async reconcile(customerId: string): Promise<ConnectedSummary[]> {
     if (!this.pfm.configured) {
       // Nothing to sync in demo mode.

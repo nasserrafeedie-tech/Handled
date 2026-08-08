@@ -35,7 +35,9 @@ export default function ConnectCallbackPage() {
     let customer = params.get('customer') ?? params.get('c');
     if (!customer) {
       try {
-        customer = sessionStorage.getItem('handled:connect:customer');
+        customer =
+          sessionStorage.getItem('handled:connect:customer') ??
+          localStorage.getItem('handled:connect:customer');
       } catch {
         customer = null;
       }
@@ -47,7 +49,17 @@ export default function ConnectCallbackPage() {
       return;
     }
     if (!customer) {
-      setPhase('error');
+      // The mobile case: the OAuth return opened in a different browser than
+      // the one that started it (often the Instagram app's), so nothing local
+      // knows who this is. The SERVER does — the connect was recorded when it
+      // started. Ask it to finish every recent pending connect; the owner
+      // gets their confirmation over text.
+      fetch(`${api}/connect/reconcile-pending`, { method: 'POST' })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((d: { reconciled: number }) =>
+          setPhase(d.reconciled > 0 ? 'done' : 'error'),
+        )
+        .catch(() => setPhase('error'));
       return;
     }
 

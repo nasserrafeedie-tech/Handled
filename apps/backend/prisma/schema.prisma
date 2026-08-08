@@ -125,6 +125,12 @@ model Customer {
   // questions; the owner can correct it in conversation.
   timezone        String         @default("America/Los_Angeles")
   planTier        String         @default("starter")
+  /// An OAuth connect the owner started but hasn't returned from. On mobile
+  /// the return often lands in a different browser (the Instagram app's), so
+  /// the callback can't identify the customer — this record lets the server
+  /// finish the association itself. Cleared once the platform arrives.
+  connectPendingPlatform String?
+  connectPendingAt       DateTime?
   // Generated photography is opt-in and off by default. Not because of the
   // plan tier — that gates access — but because posting model-made imagery is
   // a decision about how the business represents itself, and it is the owner's
