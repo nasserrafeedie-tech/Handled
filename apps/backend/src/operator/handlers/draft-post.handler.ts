@@ -16,6 +16,7 @@ import { detectFabrication, fabricationFeedback } from '../guardrails/fabricatio
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { isCarouselArchetype, tierHasCarousel } from '../graphics/carousel-content';
 import { subjectPreferences } from '../../concierge/photo-walk';
+import { TopicResearchService } from '../llm/topic-research.service';
 import { ModerationService } from '../guardrails/moderation.service';
 import { PublishGateService } from '../guardrails/publish-gate.service';
 import {
@@ -41,6 +42,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     private readonly moderation: ModerationService,
     private readonly gate: PublishGateService,
     private readonly customerContext: CustomerContextService,
+    private readonly topicResearch: TopicResearchService,
   ) {}
 
   async handle(task: Extract<Task, { type: 'DRAFT_POST' }>): Promise<Result> {
@@ -76,6 +78,20 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       take: 8,
       select: { caption: true, archetype: true },
     });
+    // The blandness fix (owner's call: quality over cost): informational
+    // posts get a real web-research pass first. The fact block becomes the
+    // only sanctioned source of claims beyond the brand profile — concrete
+    // specifics in, fabrication rules intact. Null on any failure, and the
+    // draft proceeds profile-only exactly as before.
+    const RESEARCHED = new Set(['educational_tip', 'seasonal', 'product_spotlight']);
+    const factBlock = RESEARCHED.has(archetype)
+      ? await this.topicResearch.factBlock(
+          task.payload.prompt_notes ||
+            `a ${archetype.replace(/_/g, ' ')} post for a ${profile.businessType ?? 'local business'}`,
+          profile.businessType ?? 'local business',
+        )
+      : null;
+
     const prompt = [
       `Write one ${archetype} post for ${platform}.`,
       // Without this the model has no idea what day it is and writes whatever
@@ -96,6 +112,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
           `mention a different month or season.`;
       })(),
       task.payload.prompt_notes ? `Notes: ${task.payload.prompt_notes}.` : '',
+      factBlock ? `\n${factBlock}\n` : '',
       '',
       // How this platform actually ranks content — see llm/playbook.ts.
       playbookFor(platform),
@@ -122,8 +139,10 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       'Never state that a specific thing happened on a specific day, or give a',
       'specific number, event, or result you were not told — no "we tested 3',
       'batches this afternoon", no "we sold out by noon". Only use facts from',
-      'the brand profile. Write offers as evergreen truth ("baked fresh daily")',
-      'or an invitation ("come try it"), never as dated news you made up.',
+      'the brand profile or the RESEARCHED MATERIAL block (when one appears',
+      'above — those facts are web-verified and encouraged). Write offers as',
+      'evergreen truth ("baked fresh daily") or an invitation ("come try it"),',
+      'never as dated news you made up.',
       // Opus fills thin profiles with plausible fiction — a profile that says
       // "three tiers" got a caption describing what each tier includes, all
       // invented. The details gap is an invitation to ask, never to imagine.
@@ -406,6 +425,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
         platform,
         caption: gen.caption,
         altText: gen.alt_text ?? null,
+        researchNotes: factBlock,
         hashtags: gen.hashtags,
         mediaRefs: bankedPhoto ? [bankedPhoto.r2Key] : [],
         scheduledTime: task.payload.scheduled_time

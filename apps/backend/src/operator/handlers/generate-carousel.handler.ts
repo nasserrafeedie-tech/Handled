@@ -149,29 +149,118 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
       caption: post.caption,
       brandName: customer?.businessName,
       ownerNote: task.payload.owner_feedback ?? null,
+      // The fact block the caption was researched from — same verified
+      // material, no second search.
+      research: post.researchNotes ?? null,
     };
-    let slidesCopy: CarouselLlmOutput['slides'];
-    try {
-      const gen = await this.llm.completeJson(
-        {
-          tier: 'voice',
-          // The slides deserve the same brand grounding as the caption —
-          // offers, voice, and the researched facts about THIS business.
-          // Without it the deck can only stretch the caption thin, and the
-          // CTA has no idea how customers actually engage.
-          cachedContext: profile ? buildBrandContext(profile) : '',
-          prompt: carouselInstruction(brief),
-          // 8-10 slide decks need the headroom — 700 was sized for 4-5.
-          maxTokens: 1600,
-          customerId: task.customer_id,
-        },
-        CarouselLlmOutput,
-      );
-      slidesCopy = gen.slides;
-    } catch (e) {
+    // The newsroom pipeline (owner's call, Aug 2026: maximum quality, cost
+    // is not the constraint): three full decks from three editorial lenses
+    // in parallel, a judge to pick the winner, an editor to tighten it. Any
+    // stage failing degrades to the best surviving draft — the extremes buy
+    // quality, never fragility.
+    const cachedContext = profile ? buildBrandContext(profile) : '';
+    const base = carouselInstruction(brief);
+    const LENSES = [
+      'ANGLE FOR THIS DRAFT — the contrarian: lead with what everyone gets ' +
+        'wrong or should STOP doing. Take one position a timid competitor ' +
+        'would never post.',
+      'ANGLE FOR THIS DRAFT — the surprising specific: open on the most ' +
+        'counterintuitive concrete fact available and build the deck around ' +
+        'why it changes what the reader should do.',
+      'ANGLE FOR THIS DRAFT — the keeper: a reference the reader saves and ' +
+        'sends. The checklist, the signs, the what-to-ask — complete enough ' +
+        'to be useful forever.',
+    ];
+    const attempts = await Promise.allSettled(
+      LENSES.map((lens) =>
+        this.llm.completeJson(
+          {
+            tier: 'voice',
+            cachedContext,
+            prompt: `${base}\n\n${lens}`,
+            maxTokens: 1600,
+            customerId: task.customer_id,
+          },
+          CarouselLlmOutput,
+        ),
+      ),
+    );
+    const candidates = attempts
+      .filter((a): a is PromiseFulfilledResult<CarouselLlmOutput> => a.status === 'fulfilled')
+      .map((a) => a.value.slides);
+    if (candidates.length === 0) {
+      const why = attempts
+        .map((a) => (a.status === 'rejected' ? String(a.reason) : ''))
+        .filter(Boolean)
+        .join(' | ');
       return fail(task.task_id,
         "I couldn't lay that one out as slides — I'll keep it as a plain post.",
-        'carousel_copy_failed', String(e), true);
+        'carousel_copy_failed', why, true);
+    }
+
+    let slidesCopy: CarouselLlmOutput['slides'] = candidates[0];
+    if (candidates.length > 1) {
+      try {
+        const judged = await this.llm.completeJson(
+          {
+            tier: 'voice',
+            cachedContext,
+            prompt: [
+              `You are judging ${candidates.length} carousel drafts for the post below. Score each on:`,
+              'stop-the-scroll (would the cover freeze a thumb), save-worthiness',
+              '(is it useful again later), specificity (concrete numbers and',
+              'mechanisms over vibes), and voice (said to one person, with a',
+              'position). Pick the single strongest deck.',
+              '',
+              `The caption: """${post.caption}"""`,
+              ...candidates.map((c, i) => `\nDRAFT ${i}:\n${JSON.stringify(c, null, 1)}`),
+              '',
+              'Return JSON: {"winner": <draft index>, "notes": "what the winner',
+              'should tighten, and any single slide worth stealing from a loser"}.',
+            ].join('\n'),
+            maxTokens: 800,
+            customerId: task.customer_id,
+          },
+          // Truncate long judge notes rather than reject them — a chatty
+          // judge killed the whole pass with a max() on the first live run.
+          z.object({ winner: z.number().int(), notes: z.string().transform((s) => s.slice(0, 1000)) }),
+        );
+        const idx =
+          Number.isInteger(judged.winner) && judged.winner >= 0 && judged.winner < candidates.length
+            ? judged.winner
+            : 0;
+        slidesCopy = candidates[idx];
+
+        // The editor pass: tighten the winner per the judge's notes and cut
+        // any slide that doesn't earn its place — material sets the length.
+        const edited = await this.llm.completeJson(
+          {
+            tier: 'voice',
+            cachedContext,
+            prompt: [
+              'You are the editor. Tighten this winning carousel draft:',
+              JSON.stringify({ slides: slidesCopy }, null, 1),
+              '',
+              `The judge's notes: """${judged.notes}"""`,
+              '',
+              'Rules: cut any slide that restates another or exists to reach a',
+              'count (never below 3 total, keep exactly one title first and one',
+              'cta last); every headline under 8 words, every body under ~20;',
+              'keep the concrete numbers, sharpen the position, change nothing',
+              'that was already strong.',
+              'Return JSON: {"slides": [...]} in the same shape.',
+            ].join('\n'),
+            maxTokens: 1600,
+            customerId: task.customer_id,
+          },
+          CarouselLlmOutput,
+        );
+        if (edited.slides.length >= 3) slidesCopy = edited.slides;
+      } catch (e) {
+        this.log.warn(
+          `deck judge/editor pass failed for ${post.id} — shipping the first draft: ${String(e)}`,
+        );
+      }
     }
 
     // The slides are a SEPARATE generation from the caption — the caption

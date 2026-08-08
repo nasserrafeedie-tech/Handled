@@ -103,6 +103,13 @@ export interface CarouselBrief {
    * this, a redo can only reshuffle the same guesses.
    */
   ownerNote?: string | null;
+  /**
+   * The web-researched fact block the caption was written from (topic
+   * research). The only sanctioned source of claims beyond the caption and
+   * brand profile — and the raw material that separates a saved deck from
+   * wallpaper.
+   */
+  research?: string | null;
 }
 
 /**
@@ -118,6 +125,7 @@ export function carouselInstruction(brief: CarouselBrief): string {
     '"""',
     brief.caption,
     '"""',
+    ...(brief.research ? ['', brief.research] : []),
     ...(brief.ownerNote
       ? [
           '',
@@ -176,12 +184,16 @@ export function carouselInstruction(brief: CarouselBrief): string {
     brief.brandName ? `  You may name the business ("${brief.brandName}") here; nowhere else needs it.` : '',
     '',
     'Rules:',
-    '- 6 to 10 slides when the caption + business context genuinely carry it;',
-    '  never fewer than 5 for a content deck (engagement rises with slide',
-    '  count, and under 4 slides performs like a single image). But NEVER pad:',
-    '  a slide that restates another slide or exists to reach a count is worse',
-    '  than no slide — cut it and ship fewer. Mine the business context for',
-    '  real material before shrinking the deck.',
+    '- THE MATERIAL SETS THE LENGTH. Count the genuinely distinct, concrete',
+    '  things you have to say (researched facts, myths, mistakes, real offers)',
+    '  and give each ONE slide — that is the deck. Rich material carries 8-10',
+    '  slides and engagement rises with count; thin material makes a sharp 5.',
+    '  Five slides that each land beat eight that restate each other.',
+    '  NEVER pad: a slide that exists to reach a count is the reader\'s cue to leave.',
+    '- TAKE A POSITION. Every deck carries at least one opinionated call a',
+    '  timid competitor would hesitate to post — a "stop doing X", a myth',
+    '  punctured, a number that reframes the habit. If every slide is agreeable,',
+    '  the deck is invisible; rewrite until one slide has an edge.',
     '- Every slide body stays under ~20 words. These are cards read at a',
     '  glance, not paragraphs.',
     '- Facts may come from the caption or the business context above. Do not',

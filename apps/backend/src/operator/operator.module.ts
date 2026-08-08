@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { OPERATOR_REGISTRY } from '../tasks/operator-registry';
 import { OperatorService } from './operator.service';
 import { LlmService } from './llm/llm.service';
+import { TopicResearchService } from './llm/topic-research.service';
 import { CustomerContextService } from './llm/customer-context.service';
 import { ModerationService } from './guardrails/moderation.service';
 import { PublishGateService } from './guardrails/publish-gate.service';
@@ -37,6 +38,7 @@ import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
   providers: [
     // cross-cutting
     LlmService,
+    TopicResearchService,
     CustomerContextService,
     ModerationService,
     PublishGateService,

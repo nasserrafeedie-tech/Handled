@@ -405,6 +405,10 @@ model Post {
   // Screen-reader description AND a real ranking input on IG/FB — the
   // platforms read it to understand the image. Written at draft time.
   altText         String?
+  /// The web-researched fact block this post was written from (topic
+  /// research). Stored so the carousel builder reuses the same verified
+  /// material instead of re-searching, and so a claim can be traced.
+  researchNotes   String?
   hashtags        String[]
   mediaRefs       String[]
   scheduledTime   DateTime?
