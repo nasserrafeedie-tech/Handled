@@ -3,12 +3,8 @@ import { HeroPhone } from './_components/hero-sms';
 import { Faq } from './_components/faq';
 import { LeadForm } from './_components/lead-form';
 import { TextUsButton } from './_components/text-us-button';
+import { InstaPost } from './_components/insta-post';
 import { SAMPLES } from './_lib/samples';
-
-// Real photography served straight from Unsplash's CDN (free license) so we
-// don't ship large binaries in the repo.
-const photo = (id: string, w = 800) =>
-  `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=${w}&q=80`;
 
 const MARQUEE = [
   'cafés',
@@ -41,22 +37,6 @@ const STEPS = [
   },
 ];
 
-const VOICES = [
-  {
-    id: '1573497019940-1c28c88b4f3e',
-    name: 'Maya Osei',
-    role: 'Owner, hair studio',
-    quote:
-      'It sounds like me. Clients actually message us about the posts now — and I haven’t touched Canva in months.',
-  },
-  {
-    id: '1507003211169-0a1dd7228f2d',
-    name: 'Devon Price',
-    role: 'Owner, barbershop',
-    quote:
-      'Posting used to be the thing I dreaded on Sundays. Now it’s a text I answer between clients. That’s it.',
-  },
-];
 
 const FAQS = [
   {
@@ -190,7 +170,7 @@ export default function Home() {
       </div>
 
       {/* ───────────────────── How it works ───────────────────── */}
-      <section id="how" className="mx-auto max-w-6xl scroll-mt-24 px-6 py-28">
+      <section id="how" className="mx-auto max-w-6xl scroll-mt-24 px-6 py-16 sm:py-28">
         <Reveal>
           <p className="eyebrow">№ 1 — The routine</p>
           <h2 className="mt-4 max-w-xl font-display text-4xl font-semibold tracking-tight sm:text-5xl">
@@ -218,7 +198,7 @@ export default function Home() {
 
       {/* ───────────────────── Samples gallery ───────────────────── */}
       <section className="border-y border-ink/10 bg-parchment/70">
-        <div className="mx-auto max-w-4xl px-6 py-28">
+        <div className="mx-auto max-w-4xl px-6 py-16 sm:py-28">
           <Reveal className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="eyebrow">№ 2 — The work</p>
@@ -228,47 +208,34 @@ export default function Home() {
               </h2>
             </div>
             <p className="max-w-sm text-[15px] leading-relaxed text-ink/60">
-              Some of these we designed. The rest are a photo the owner already
-              had, where the writing was the whole job. Both came out of the same
-              thing that would write yours.
+              Exactly as they&rsquo;d land on your feed. The photos are the
+              owner&rsquo;s; the writing is the job — first line built to stop
+              the scroll, last line built to be saved or sent to a friend.
             </p>
           </Reveal>
 
-          <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {SAMPLES.map((s, i) => (
-              <Reveal key={s.file} delay={i * 90}>
-                <figure className="group flex h-full flex-col overflow-hidden rounded-3xl border border-ink/10 bg-white shadow-soft transition-shadow duration-500 hover:shadow-lift">
-                  <div className="relative overflow-hidden">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/samples/${s.file}`}
-                      alt={s.alt}
-                      loading="lazy"
-                      className="aspect-square w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
-                    />
-                    <span className="absolute left-3 top-3 rounded-full bg-paper/90 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink/70 backdrop-blur-sm">
-                      {s.label}
-                    </span>
-                  </div>
-
-                  {/* The caption that ships with it — the half nobody shows */}
-                  <figcaption className="flex flex-1 flex-col gap-2.5 px-4 pb-5 pt-4">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-clay-600">
-                      {s.brand}
-                    </span>
-                    <p className="line-clamp-[7] whitespace-pre-line text-[15px] leading-[1.6] text-ink/80">
-                      {captionBody(s.caption)}
-                    </p>
-                    {hashtagsOf(s.caption) && (
-                      <p className="mt-auto pt-1 text-[12px] leading-relaxed text-ink/40">
-                        {hashtagsOf(s.caption)}
-                      </p>
-                    )}
-                  </figcaption>
-                </figure>
-              </Reveal>
+          <div className="mt-12 flex snap-x snap-mandatory gap-5 overflow-x-auto pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mt-16 sm:grid sm:grid-cols-3 sm:gap-6 sm:overflow-visible sm:pb-0">
+            {SAMPLES.filter((s) =>
+              ['photo-cortados.jpg', 'photo-window.jpg', 'composed-bouquet.jpg'].includes(s.file),
+            ).map((s, i) => (
+              <div key={s.file} className="w-[82vw] max-w-[340px] shrink-0 snap-center sm:w-auto sm:max-w-none">
+                <Reveal delay={i * 90} className="h-full">
+                  <InstaPost
+                    handle={s.brand === "Rosa's Coffee" ? 'rosas.coffee' : 'fieldnote.florals'}
+                    accent={s.brand === "Rosa's Coffee" ? '#a4653c' : '#2B5042'}
+                    image={`/samples/${s.file}`}
+                    alt={s.alt}
+                    label={s.label}
+                    caption={captionBody(s.caption)}
+                    hashtags={hashtagsOf(s.caption)}
+                  />
+                </Reveal>
+              </div>
             ))}
           </div>
+          <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.16em] text-ink/45 sm:hidden">
+            ← swipe for more
+          </p>
 
           {/* Carousels — the Growth flagship. Shown big, with real slides in a
               swipe strip, because it's the single biggest reason to move up. */}
@@ -360,73 +327,52 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ───────────────────── Voices ───────────────────── */}
-      <section className="mx-auto max-w-6xl px-6 py-28">
+      {/* ─────────────── Honesty, where testimonials would go ─────────────── */}
+      <section className="mx-auto max-w-6xl px-6 py-16 sm:py-24">
         <Reveal>
-          <p className="eyebrow">№ 3 — The owners</p>
-          <p className="mt-3 max-w-md font-mono text-[11px] uppercase tracking-[0.16em] text-ink/45">
-            Illustrative voices — real customer reviews will live here after launch
-          </p>
+          <div className="rounded-4xl border border-ink/10 bg-parchment/60 px-7 py-12 sm:px-14 sm:py-14">
+            <p className="eyebrow">№ 3 — The honesty rules</p>
+            <h2 className="mt-4 max-w-2xl font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+              No fake reviews here —{' '}
+              <span className="wonk italic text-clay-600">ours or yours.</span>
+            </h2>
+            <p className="mt-5 max-w-2xl text-[15px] leading-relaxed text-ink/65">
+              This is where testimonials go, and we just launched — so for now
+              it&rsquo;s empty, on purpose. The same rule runs the writing
+              engine: it will never invent a customer quote, a statistic, or an
+              event for your posts either. Real reviews land here as they
+              arrive.
+            </p>
+            <ul className="mt-9 grid gap-4 sm:grid-cols-3">
+              {[
+                {
+                  t: 'Never a made-up word',
+                  b: 'No invented reviews, quotes, or "we sold out by noon" — for us or for you.',
+                },
+                {
+                  t: 'Your real photos win',
+                  b: 'A photo you took beats anything we could generate, every single time it exists.',
+                },
+                {
+                  t: 'Numbers are checked',
+                  b: 'Educational posts are researched on the live web before we write a claim.',
+                },
+              ].map((r) => (
+                <li
+                  key={r.t}
+                  className="rounded-2xl border border-ink/10 bg-white px-5 py-5 shadow-soft"
+                >
+                  <p className="text-sm font-semibold text-ink">✳ {r.t}</p>
+                  <p className="mt-2 text-[13px] leading-relaxed text-ink/60">{r.b}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
         </Reveal>
-
-        {/* One giant editorial pull-quote */}
-        <Reveal delay={80}>
-          <figure className="relative mt-10">
-            <span
-              aria-hidden
-              className="pointer-events-none absolute -left-3 -top-14 select-none font-display text-[10rem] leading-none text-clay-500/20 sm:-left-8"
-            >
-              “
-            </span>
-            <blockquote className="max-w-3xl font-display text-3xl font-medium italic leading-[1.2] tracking-tight text-ink sm:text-[2.6rem]">
-              I run a coffee shop, not a marketing department. I text them
-              what’s going on and my Instagram just…{' '}
-              <span className="text-clay-600">stays alive.</span>
-            </blockquote>
-            <figcaption className="mt-8 flex items-center gap-4">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photo('1494790108377-be9c29b29330', 120)}
-                alt="Rosa Delgado"
-                className="h-12 w-12 rounded-full object-cover"
-              />
-              <div className="font-mono text-xs uppercase tracking-[0.16em] text-ink/55">
-                Rosa Delgado — Neighborhood café
-              </div>
-            </figcaption>
-          </figure>
-        </Reveal>
-
-        {/* Two supporting voices */}
-        <div className="mt-16 grid gap-6 sm:grid-cols-2">
-          {VOICES.map((v, i) => (
-            <Reveal key={v.name} delay={i * 130}>
-              <figure className="flex h-full flex-col justify-between rounded-3xl border border-ink/10 bg-white p-8 shadow-soft transition-shadow duration-500 hover:shadow-lift">
-                <blockquote className="font-display text-xl font-medium italic leading-relaxed text-ink">
-                  “{v.quote}”
-                </blockquote>
-                <figcaption className="mt-8 flex items-center gap-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={photo(v.id, 120)}
-                    alt={v.name}
-                    className="h-11 w-11 rounded-full object-cover"
-                  />
-                  <div>
-                    <p className="text-sm font-semibold text-ink">{v.name}</p>
-                    <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink/50">
-                      {v.role}
-                    </p>
-                  </div>
-                </figcaption>
-              </figure>
-            </Reveal>
-          ))}
-        </div>
       </section>
 
       {/* ───────────────────── FAQ ───────────────────── */}
-      <section className="mx-auto max-w-3xl px-6 pb-28">
+      <section className="mx-auto max-w-3xl px-6 pb-16 sm:pb-28">
         <Reveal>
           <p className="eyebrow">№ 4 — Questions</p>
           <h2 className="mb-10 mt-4 font-display text-4xl font-semibold tracking-tight">
@@ -439,7 +385,7 @@ export default function Home() {
       </section>
 
       {/* ───────────────────── Final CTA ───────────────────── */}
-      <section className="mx-auto max-w-6xl px-6 pb-28">
+      <section className="mx-auto max-w-6xl px-6 pb-16 sm:pb-28">
         <Reveal>
           <div className="relative overflow-hidden rounded-4xl bg-ink px-8 py-20 text-center text-paper sm:px-16">
             {/* Warm glow inside the dark panel */}
