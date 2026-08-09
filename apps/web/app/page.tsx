@@ -2,6 +2,7 @@ import { Reveal, RisingWords } from './_components/motion';
 import { HeroPhone } from './_components/hero-sms';
 import { Faq } from './_components/faq';
 import { LeadForm } from './_components/lead-form';
+import { TextUsButton } from './_components/text-us-button';
 import { SAMPLES } from './_lib/samples';
 
 // Real photography served straight from Unsplash's CDN (free license) so we
@@ -26,7 +27,7 @@ const STEPS = [
   {
     n: '01',
     title: 'Tell us about your business',
-    body: 'Five questions over text. Takes about four minutes and there is no form to fill in.',
+    body: 'Seven quick questions over text — a few minutes, no form. Then a ten-minute photo walk fills your photo bank, and real photos beat anything designed.',
   },
   {
     n: '02',
@@ -139,11 +140,12 @@ export default function Home() {
               className="mt-10 flex flex-wrap items-center gap-4 animate-fade-in"
               style={{ animationDelay: '750ms' }}
             >
-              <a href="/billing" className="btn-clay">
-                See plans
-                <span aria-hidden className="btn-arrow">
-                  →
-                </span>
+              <TextUsButton source="hero" tone="light" />
+              <a
+                href="/billing"
+                className="link-draw font-medium text-ink/80 hover:text-ink"
+              >
+                See plans →
               </a>
               <a
                 href="/demo"
@@ -283,29 +285,31 @@ export default function Home() {
                   </h3>
                 </div>
                 <p className="max-w-xs text-[15px] leading-relaxed text-ink/60">
-                  The things worth saying — how whitening works, what makes your
-                  espresso different — broken into clean, branded slides.
-                  Carousels are the most-saved, most-shared format on Instagram,
-                  and we build them from your posts automatically. Every word
-                  spelled right, in your colors.
+                  The things worth saying — how whitening works, what makes
+                  your espresso different — broken into clean, branded slides.
+                  Before we write an educational post we research the topic on
+                  the live web, so the numbers in your slides are real. Then
+                  three drafts compete, a judge picks, an editor tightens —
+                  every word spelled right, in your colors, on your real
+                  photos when you&rsquo;ve sent them.
                 </p>
               </div>
 
               {/* The real thing: swipe the actual rendered slides */}
               <div className="mt-10 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {[1, 2, 3, 4].map((n) => (
+                {[1, 2, 3, 4, 5, 6].map((n) => (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     key={n}
                     src={`/samples/carousel-slide-${n}.png`}
-                    alt={`Carousel slide ${n} of 4 — an educational coffee tip as a branded slide`}
+                    alt={`Carousel slide ${n} of 6 — an educational coffee tip as a branded portrait slide`}
                     loading="lazy"
                     className="w-56 shrink-0 snap-start rounded-2xl border border-ink/10 shadow-soft sm:w-64"
                   />
                 ))}
               </div>
               <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.16em] text-ink/45">
-                ← swipe · one post, four slides, built for you
+                ← swipe · one post, six slides, researched and built for you
               </p>
             </div>
           </Reveal>
@@ -454,16 +458,21 @@ export default function Home() {
             </div>
 
             <h2 className="mx-auto max-w-2xl font-display text-4xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
-              Ready to stop{' '}
-              <span className="wonk italic text-clay-300">worrying</span> about
-              posting?
+              Your first post is{' '}
+              <span className="wonk italic text-clay-300">free.</span>{' '}
+              Right now.
             </h2>
             <p className="mx-auto mt-6 max-w-md text-paper/60">
-              Leave your number and we’ll text you. That first message is
-              where it starts, and it is the same place everything else
-              happens.
+              Text us one line about your business — what you do and one thing
+              you&rsquo;d want customers to know this week — and we&rsquo;ll
+              write your first post on the spot. Before you&rsquo;ve paid
+              anything, before you&rsquo;ve signed up for anything.
             </p>
-            <div className="mx-auto mt-10 flex max-w-md flex-col items-center gap-4">
+            <div className="mx-auto mt-10 flex max-w-md flex-col items-center gap-5">
+              <TextUsButton source="homepage-cta" />
+              <p className="text-xs text-paper/40">
+                Prefer we reach out instead? Leave your number below.
+              </p>
               <LeadForm source="homepage-cta" />
               <a href="/billing" className="link-draw text-sm text-paper/60 hover:text-paper">
                 or see plans ↗

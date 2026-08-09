@@ -23,7 +23,7 @@ const PLANS: {
     features: [
       '3 posts / week',
       'Instagram + your Google Business Profile',
-      'Branded captions on your own photos',
+      'Branded captions on your own photos — matched to each post',
       'You approve every post by text',
     ],
     highlight: false,
@@ -35,8 +35,7 @@ const PLANS: {
     cadence: '/mo',
     blurb: 'Where most shops land — and where swipeable carousels begin.',
     features: [
-      'Swipeable branded carousels',
-      'Custom generated images',
+      'Swipeable branded carousels — web-researched, so the facts are real',
       '5 posts / week',
       'Instagram, Facebook + your Google Business Profile',
       'Routine posts go out hands-off',
@@ -52,6 +51,7 @@ const PLANS: {
     blurb: 'Something every day, everywhere you post.',
     features: [
       'Reels cut from your clips',
+      'Editorial imagery on every carousel, standard',
       'Daily posts (7 / week)',
       'Every channel — adds TikTok & Threads',
       'Full autopilot — runs itself',
