@@ -110,9 +110,8 @@ export default function Home() {
               className="mt-8 max-w-lg animate-fade-in text-lg leading-relaxed text-ink/70"
               style={{ animationDelay: '600ms' }}
             >
-              Every week we write and design your posts — swipeable carousels,
-              graphics, captions — and text them to you. You look them over
-              between customers and reply yes. An agency charges $1,500 a month
+              Every week we write and design your posts, and text them to you.
+              You reply yes between customers. An agency charges $1,500 a month
               to do the same job.
             </p>
 
@@ -127,22 +126,9 @@ export default function Home() {
               >
                 See plans →
               </a>
-              <a
-                href="/demo"
-                className="link-draw font-medium text-ink/80 hover:text-ink"
-              >
-                Watch it work ↗
-              </a>
             </div>
 
-            <p
-              className="mt-6 animate-fade-in font-mono text-[11px] uppercase tracking-[0.18em] text-ink/55"
-              style={{ animationDelay: '900ms' }}
-            >
-              Nothing to log into, we never see your passwords, and the first
-              two weeks are refundable if you don&rsquo;t like the work
-            </p>
-          </div>
+                      </div>
 
           <div className="animate-fade-in" style={{ animationDelay: '400ms' }}>
             <HeroPhone />
@@ -208,9 +194,8 @@ export default function Home() {
               </h2>
             </div>
             <p className="max-w-sm text-[15px] leading-relaxed text-ink/60">
-              Exactly as they&rsquo;d land on your feed. The photos are the
-              owner&rsquo;s; the writing is the job — first line built to stop
-              the scroll, last line built to be saved or sent to a friend.
+              Exactly as they&rsquo;d land on your feed — the photos are the
+              owner&rsquo;s, the writing is the job.
             </p>
           </Reveal>
 
@@ -252,13 +237,9 @@ export default function Home() {
                   </h3>
                 </div>
                 <p className="max-w-xs text-[15px] leading-relaxed text-ink/60">
-                  The things worth saying — how whitening works, what makes
-                  your espresso different — broken into clean, branded slides.
-                  Before we write an educational post we research the topic on
-                  the live web, so the numbers in your slides are real. Then
-                  three drafts compete, a judge picks, an editor tightens —
-                  every word spelled right, in your colors, on your real
-                  photos when you&rsquo;ve sent them.
+                  The things worth saying, broken into slides people actually
+                  swipe. Researched before we write, so the facts are real —
+                  every word spelled right, in your colors.
                 </p>
               </div>
 
@@ -313,17 +294,6 @@ export default function Home() {
               </div>
             </div>
           </Reveal>
-
-          <Reveal delay={120}>
-            <p className="mx-auto mt-14 max-w-2xl text-center text-[15px] leading-relaxed text-ink/60">
-              Captions are written for how the platforms actually work now. The
-              hook goes in the first 125 characters, because that is all anyone
-              reads before the caption cuts off. Plain search words go near the
-              top, since these apps are search engines now. And every post is
-              written to be sent to someone — one share into a DM does more for
-              reaching new people than a dozen likes.
-            </p>
-          </Reveal>
         </div>
       </section>
 
@@ -337,11 +307,9 @@ export default function Home() {
               <span className="wonk italic text-clay-600">ours or yours.</span>
             </h2>
             <p className="mt-5 max-w-2xl text-[15px] leading-relaxed text-ink/65">
-              This is where testimonials go, and we just launched — so for now
-              it&rsquo;s empty, on purpose. The same rule runs the writing
-              engine: it will never invent a customer quote, a statistic, or an
-              event for your posts either. Real reviews land here as they
-              arrive.
+              We just launched, so this spot is empty on purpose — the writing
+              engine never invents a review for your posts, and we won&rsquo;t
+              invent one for ours. Real ones land here as they arrive.
             </p>
             <ul className="mt-9 grid gap-4 sm:grid-cols-3">
               {[
@@ -409,20 +377,13 @@ export default function Home() {
               Right now.
             </h2>
             <p className="mx-auto mt-6 max-w-md text-paper/60">
-              Text us one line about your business — what you do and one thing
-              you&rsquo;d want customers to know this week — and we&rsquo;ll
-              write your first post on the spot. Before you&rsquo;ve paid
-              anything, before you&rsquo;ve signed up for anything.
+              Text us one line about your business and we&rsquo;ll write your
+              first post on the spot — before you&rsquo;ve paid or signed up
+              for anything.
             </p>
-            <div className="mx-auto mt-10 flex max-w-md flex-col items-center gap-5">
+            <div className="mx-auto mt-10 flex max-w-md flex-col items-center gap-6">
               <TextUsButton source="homepage-cta" />
-              <p className="text-xs text-paper/40">
-                Prefer we reach out instead? Leave your number below.
-              </p>
               <LeadForm source="homepage-cta" />
-              <a href="/billing" className="link-draw text-sm text-paper/60 hover:text-paper">
-                or see plans ↗
-              </a>
             </div>
           </div>
         </Reveal>
