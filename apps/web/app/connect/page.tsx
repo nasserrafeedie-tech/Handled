@@ -145,10 +145,13 @@ export default function ConnectPage() {
         </ul>
 
         <p className="text-sm leading-relaxed text-ink/50">
-          Instagram note: connecting needs a free{' '}
-          <span className="font-medium text-ink/70">Professional account</span>{' '}
-          (Instagram app → Settings → Account type and tools → Switch to
-          professional — takes a minute). Personal accounts can&rsquo;t be
+          Instagram note: you&rsquo;ll sign in with{' '}
+          <span className="font-medium text-ink/70">Facebook</span>, and your
+          Instagram needs to be a free{' '}
+          <span className="font-medium text-ink/70">Professional account linked
+          to a Facebook Page</span>. Two minutes in the Instagram app: Settings
+          → Account type and tools → Switch to professional, then Edit profile →
+          Page → connect or create one. Personal accounts can&rsquo;t be
           connected by any tool; Instagram doesn&rsquo;t allow it.
         </p>
 

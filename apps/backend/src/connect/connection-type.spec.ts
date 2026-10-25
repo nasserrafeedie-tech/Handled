@@ -43,18 +43,18 @@ describe('startAuth — which Instagram login flow gets requested', () => {
     delete process.env.PFM_INSTAGRAM_CONNECTION;
   });
 
-  it('defaults Instagram to Instagram Login', async () => {
+  it('defaults Instagram to Facebook Login — the route that completes on phones', async () => {
     const { svc, authCalls } = buildConnect();
     await svc.startAuth({ customerId: 'c1', platform: 'instagram' });
     assert.equal(authCalls.length, 1);
-    assert.equal(authCalls[0].connectionType, 'instagram');
+    assert.equal(authCalls[0].connectionType, 'facebook');
   });
 
-  it('PFM_INSTAGRAM_CONNECTION=facebook switches to Facebook Login', async () => {
-    process.env.PFM_INSTAGRAM_CONNECTION = 'facebook';
+  it('PFM_INSTAGRAM_CONNECTION=instagram switches to Instagram Login', async () => {
+    process.env.PFM_INSTAGRAM_CONNECTION = 'instagram';
     const { svc, authCalls } = buildConnect();
     await svc.startAuth({ customerId: 'c1', platform: 'instagram' });
-    assert.equal(authCalls[0].connectionType, 'facebook');
+    assert.equal(authCalls[0].connectionType, 'instagram');
   });
 
   it('non-Instagram platforms send no connection type at all', async () => {

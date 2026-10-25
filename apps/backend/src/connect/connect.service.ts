@@ -151,14 +151,17 @@ export class ConnectService {
     const { url } = await this.pfm.createAuthUrl({
       platform: req.platform,
       externalId: req.customerId,
-      // Instagram Login by default: no Facebook Page needed, and the iOS
-      // api.instagram.com workaround below only applies to it. Reels bake in
-      // licensed music, so Facebook Login's audio library isn't needed.
-      // Set PFM_INSTAGRAM_CONNECTION=facebook to switch.
+      // Facebook Login by default. Verified live on an iPhone (Oct 2026):
+      // Instagram Login's own login page deep-links into the Instagram app,
+      // whose OAuth dead-ends — every logged-out mobile customer hit it. The
+      // Facebook route completes in Safari and also unlocks Meta's Reels
+      // audio library. Cost: the owner's Instagram must be a Professional
+      // account linked to a Facebook Page (the connect page says so).
+      // PFM_INSTAGRAM_CONNECTION=instagram switches back for desktop-only tests.
       ...(req.platform === 'instagram'
         ? {
             connectionType:
-              process.env.PFM_INSTAGRAM_CONNECTION === 'facebook' ? 'facebook' : 'instagram',
+              process.env.PFM_INSTAGRAM_CONNECTION === 'instagram' ? 'instagram' : 'facebook',
           }
         : {}),
     });
@@ -298,6 +301,23 @@ export class ConnectService {
       );
       return false;
     });
+
+    // The connect this customer started has arrived: retire the pending
+    // record here too, not only in the cron sweep, so a connect confirmed
+    // by the callback page isn't re-checked for the next half hour.
+    const pending = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { connectPendingPlatform: true },
+    });
+    if (
+      pending?.connectPendingPlatform &&
+      admitted.some((a) => a.platform === pending.connectPendingPlatform)
+    ) {
+      await this.prisma.customer.update({
+        where: { id: customerId },
+        data: { connectPendingPlatform: null, connectPendingAt: null },
+      });
+    }
 
     for (const acct of admitted) {
       // Reconnecting restarts the clock, so this is set on both paths.
