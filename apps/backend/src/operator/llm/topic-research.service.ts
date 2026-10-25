@@ -37,6 +37,9 @@ const FactSheet = z.object({
 });
 export type TopicFactSheet = z.infer<typeof FactSheet>;
 
+/** Hard ceiling on one topic's research; a draft must never wait longer. */
+const RESEARCH_BOUND_MS = Number(process.env.TOPIC_RESEARCH_BOUND_MS ?? 180_000);
+
 @Injectable()
 export class TopicResearchService {
   private readonly log = new Logger(TopicResearchService.name);
@@ -80,11 +83,26 @@ export class TopicResearchService {
         );
         return sheet;
       })();
+      // 180s, up from 75s: two full QA weeks drafted with ZERO research
+      // because every run hit the old bound — and did so silently, so the
+      // drafts looked like a pipeline working on thin material rather than a
+      // pipeline that never got any. Both null paths now say so in the log.
+      const started = Date.now();
       const sheet = await Promise.race([
         run,
-        new Promise<null>((r) => setTimeout(() => r(null), 75_000)),
+        new Promise<null>((r) => setTimeout(() => r(null), RESEARCH_BOUND_MS)),
       ]);
-      if (!sheet || (sheet.facts.length === 0 && sheet.myths.length === 0)) {
+      if (!sheet) {
+        this.log.warn(
+          `topic research TIMED OUT after ${Math.round((Date.now() - started) / 1000)}s ` +
+            `for "${topic.slice(0, 60)}" — drafting without a fact block`,
+        );
+        return null;
+      }
+      if (sheet.facts.length === 0 && sheet.myths.length === 0) {
+        this.log.warn(
+          `topic research came back EMPTY for "${topic.slice(0, 60)}" — drafting without a fact block`,
+        );
         return null;
       }
       return formatFactBlock(sheet);

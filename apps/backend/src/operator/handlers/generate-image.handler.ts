@@ -62,7 +62,9 @@ export class GenerateImageHandler implements TaskHandler<'GENERATE_IMAGE'> {
         "Making photos is part of the Growth plan — reply UPGRADE and I'll send the details.",
         'tier_not_eligible', `planTier=${customer.planTier}`);
     }
-    if (!customer.aiImagesOptIn) {
+    // Pro includes generated imagery as standard (same door as the carousel
+    // builder); below Pro the owner opts in first.
+    if (!customer.aiImagesOptIn && customer.planTier !== 'pro') {
       return fail(task.task_id,
         "I can make photos for you, but I'd want your OK first — want me to?",
         'not_opted_in', `${task.customer_id} has not opted in`);

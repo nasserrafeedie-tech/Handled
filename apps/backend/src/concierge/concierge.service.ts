@@ -849,22 +849,43 @@ export class ConciergeService {
           /\b(carousels?|slides?|decks?|graphics?|designs?|layouts?|visuals?)\b/i.test(fb);
         // "Has a deck" means media WE assembled. An owner photo is never
         // touched, and an AI photo is not a carousel and doesn't become one.
-        const hasDeck =
-          pending!.mediaRefs.length > 0 &&
+        const carriesDeck = async (postId: string, mediaRefs: string[]) =>
+          mediaRefs.length > 0 &&
           (await this.prisma.mediaAsset.findFirst({
-            where: { postId: pending!.id, source: 'assembled', kind: 'image' },
+            where: { postId, source: 'assembled', kind: 'image' },
             select: { id: true },
           })) !== null &&
           (await this.prisma.mediaAsset.findFirst({
-            where: { postId: pending!.id, source: 'owner_upload' },
+            where: { postId, source: 'owner_upload' },
             select: { id: true },
           })) === null;
+
+        // "Redo the carousel" means the pending post WITH a carousel. The
+        // queue head is usually it — but when the head is a text post, the
+        // old code rewrote the head's caption and never touched the deck two
+        // slots down (QA, Sep 2026: the rewrite even said "swipe for the
+        // full rig" on a post with no slides). Walk the queue for the deck.
+        let target = pending!;
+        let hasDeck = await carriesDeck(target.id, target.mediaRefs);
+        if (aboutTheDeck && !hasDeck) {
+          const queue = await this.prisma.post.findMany({
+            where: { customerId, status: 'pending_approval', id: { not: pending!.id } },
+            orderBy: { createdAt: 'asc' },
+          });
+          for (const candidate of queue) {
+            if (await carriesDeck(candidate.id, candidate.mediaRefs)) {
+              target = candidate;
+              hasDeck = true;
+              break;
+            }
+          }
+        }
         const deckOnly = aboutTheDeck && hasDeck;
 
         if (!deckOnly) {
           const result = await this.bus.emit(
             this.task(customerId, 'REGENERATE_POST', {
-              post_id: pending!.id,
+              post_id: target.id,
               owner_feedback: fb,
               regenerate_caption: true,
               regenerate_media: false,
@@ -882,12 +903,12 @@ export class ConciergeService {
           // awaiting the owner and let their next "yes" schedule it, exactly like
           // an approval plan. The reworked caption is in the re-present below.
           const revised = await this.prisma.post.findUnique({
-            where: { id: pending!.id },
+            where: { id: target.id },
             select: { status: true },
           });
           if (revised?.status === 'approved') {
             await this.prisma.post.update({
-              where: { id: pending!.id },
+              where: { id: target.id },
               data: { status: 'pending_approval', approvalState: 'awaiting_owner' },
             });
           }
@@ -899,7 +920,7 @@ export class ConciergeService {
         if (hasDeck) {
           const rebuilt = await this.bus.emit(
             this.task(customerId, 'GENERATE_CAROUSEL', {
-              post_id: pending!.id,
+              post_id: target.id,
               replace_existing: true,
               owner_feedback: fb,
             }),
@@ -909,13 +930,13 @@ export class ConciergeService {
           }
         }
 
-        // Re-present the draft in full — whole caption, whole deck attached —
-        // instead of a 120-char slice with nothing attached. The owner must
-        // see exactly what their "yes" would now publish.
+        // Re-present THE CHANGED draft in full — whole caption, whole deck
+        // attached — instead of a 120-char slice with nothing attached. The
+        // owner must see exactly what their "yes" would now publish.
         await this.presentNextDraft(
           customerId,
           deckOnly ? 'Rebuilt the carousel ✳' : 'Reworked it ✳',
-          { promptedByOwner: true },
+          { promptedByOwner: true, postId: target.id },
         );
         return;
       }
@@ -1291,11 +1312,15 @@ export class ConciergeService {
   async presentNextDraft(
     customerId: string,
     lead?: string,
-    opts?: { promptedByOwner?: boolean },
+    opts?: { promptedByOwner?: boolean; postId?: string },
   ): Promise<boolean> {
     const [next, customer] = await Promise.all([
       this.prisma.post.findFirst({
-        where: { customerId, status: 'pending_approval' },
+        // A specific post when the caller just changed one (a redo on the
+        // third draft must re-present THAT draft, not the queue head).
+        where: opts?.postId
+          ? { id: opts.postId, customerId }
+          : { customerId, status: 'pending_approval' },
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.customer.findUnique({
@@ -1767,7 +1792,7 @@ export class ConciergeService {
     if (asked) {
       const {
         clarify: followUp,
-        website,
+        website: extractedWebsite,
         ...patch
       } = await this.onboarding.interpret(
         asked,
@@ -1778,6 +1803,17 @@ export class ConciergeService {
         !alreadyClarified,
       );
       clarify = followUp;
+      // "no site yet" answered the website question and got "didn't quite
+      // catch that" (QA, Sep 2026): the model returned nothing rather than
+      // the "none" sentinel. A negative to the website question IS the
+      // answer — settle it here so the checklist moves on.
+      const website =
+        extractedWebsite ??
+        (asked === 'website' &&
+        !profile?.websiteUrl &&
+        /\b(no|none|nope|nah|not yet|nothing|don'?t have)\b/i.test(answer)
+          ? NO_WEBSITE
+          : undefined);
 
       // The website answer never rides the task bus — it's interview state,
       // stored directly. A real link kicks the "look you up" research in the
@@ -1796,10 +1832,21 @@ export class ConciergeService {
             })
             .then((findings) => {
               if (!findings || findings.highlights.length === 0) return;
+              // The lookup fills the offers field when the interview hasn't,
+              // which SKIPS the offers question. An assumption the owner never
+              // saw reads as a question that vanished (QA, Sep 2026) — so say
+              // what was noted and invite the correction, in one line.
+              const assumedOffers =
+                (profile?.offers ?? []).length === 0 && findings.offers.length > 0
+                  ? `\n\nI've noted what you offer as: ${findings.offers
+                      .slice(0, 5)
+                      .join(', ')}. Text me if that's off or missing something.`
+                  : '';
               return this.notify(
                 customerId,
                 `Went and looked you up ✳\n` +
                   findings.highlights.map((h) => `— ${h}`).join('\n') +
+                  assumedOffers +
                   `\n\nAll of that feeds into your posts now.`,
                 { promptedByOwner: true },
               );

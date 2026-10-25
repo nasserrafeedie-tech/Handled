@@ -486,8 +486,14 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     const canGenerate = !bankedPhoto && !task.payload.needs_asset;
     const needsCarousel =
       canGenerate && tierHasCarousel(customer.planTier) && isCarouselArchetype(archetype);
+    // Pro buys editorial imagery as standard, not just on carousels: a
+    // behind-the-scenes or we're-open post on Pro went out as bare text
+    // (QA, Sep 2026) because this door only read the opt-in. Same door the
+    // carousel builder uses for its per-slide imagery.
     const needsImage =
-      canGenerate && !needsCarousel && customer.aiImagesOptIn;
+      canGenerate &&
+      !needsCarousel &&
+      (customer.aiImagesOptIn || customer.planTier === 'pro');
 
     const data: DraftPostResult = {
       post_id: post.id,

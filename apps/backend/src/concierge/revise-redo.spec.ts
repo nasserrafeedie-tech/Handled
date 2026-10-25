@@ -21,6 +21,8 @@ function makeWorld(opts?: {
   mediaRefs?: string[];
   ownerUpload?: boolean;
   carouselFails?: boolean;
+  /** A SECOND pending post, behind the head, that carries the deck. */
+  deckOnSecondPost?: boolean;
 }) {
   const emitted: Array<{ type: string; payload: Row }> = [];
   const notified: Array<{ body: string; mediaUrls?: string[] }> = [];
@@ -35,18 +37,33 @@ function makeWorld(opts?: {
     scheduledTime: null,
     presentedAt: new Date(),
   };
+  const second: Row = {
+    id: 'p2',
+    customerId: 'cust1',
+    status: 'pending_approval',
+    caption: 'Second draft: the tunnel-wash carousel.',
+    mediaRefs: ['c1/deck/slide-1.png', 'c1/deck/slide-2.png'],
+    scheduledTime: null,
+    presentedAt: new Date(),
+  };
+  const byId = (id: string) => (id === 'p2' ? second : post);
 
   const prisma = {
     post: {
-      findFirst: async () => ({ ...post }),
-      findUnique: async () => ({ ...post }),
-      update: async (args: { data: Row }) => {
-        Object.assign(post, args.data);
-        return { ...post };
+      findFirst: async (args?: { where?: { id?: string } }) =>
+        args?.where?.id ? { ...byId(args.where.id) } : { ...post },
+      findUnique: async (args: { where: { id: string } }) => ({ ...byId(args.where.id) }),
+      findMany: async () => (opts?.deckOnSecondPost ? [{ ...second }] : []),
+      update: async (args: { where: { id: string }; data: Row }) => {
+        const row = byId(args.where.id);
+        Object.assign(row, args.data);
+        return { ...row };
       },
     },
     mediaAsset: {
-      findFirst: async ({ where }: { where: { source?: string } }) => {
+      findFirst: async ({ where }: { where: { source?: string; postId?: string } }) => {
+        // p2 carries an assembled deck whenever it exists; p1 as configured.
+        if (where.postId === 'p2') return where.source === 'assembled' ? { id: 'm-p2' } : null;
         if (where.source === 'owner_upload') return opts?.ownerUpload ? { id: 'm-owner' } : null;
         if (where.source === 'assembled') return opts?.ownerUpload ? null : { id: 'm-slides' };
         return null;
@@ -68,6 +85,10 @@ function makeWorld(opts?: {
         return { summary_for_owner: 'Reworked it ✳', status: 'pending_approval', data: null, error: null };
       }
       if (t.type === 'GENERATE_CAROUSEL') {
+        if (t.payload.post_id === 'p2') {
+          second.mediaRefs = ['c1/deck2/slide-1.png', 'c1/deck2/slide-2.png', 'c1/deck2/slide-3.png'];
+          return { summary_for_owner: 'Rebuilt it.', status: 'done', data: null, error: null };
+        }
         if (opts?.carouselFails) {
           return {
             summary_for_owner: "I couldn't lay that one out as slides — I'll keep it as a plain post.",
@@ -149,6 +170,20 @@ describe('revise routing', () => {
     const w = makeWorld({ feedback: 'redo the design of this', mediaRefs: [] });
     await w.run();
     assert.deepEqual(w.emitted.map((e) => e.type), ['REGENERATE_POST']);
+  });
+
+  it('"redo the carousel" finds the pending post WITH the deck, not the text post at the head', async () => {
+    // QA, Sep 2026: head of queue was a text post; the carousel sat two slots
+    // down. The old code rewrote the head's caption ("swipe for the full rig"
+    // on a post with no slides) and never touched the deck.
+    const w = makeWorld({ feedback: 'redo the carousel', mediaRefs: [], deckOnSecondPost: true });
+    await w.run();
+    assert.deepEqual(w.emitted.map((e) => e.type), ['GENERATE_CAROUSEL'], 'no caption rewrite anywhere');
+    assert.equal(w.emitted[0].payload.post_id, 'p2', 'the deck post is the target');
+    assert.equal(w.post.caption, 'Original caption about pan dulce.', 'head post untouched');
+    assert.equal(w.notified.length, 1);
+    assert.match(w.notified[0].body, /tunnel-wash carousel/, 'the CHANGED draft is re-presented, not the head');
+    assert.equal(w.notified[0].mediaUrls?.length, 3, 'with its new deck');
   });
 
   it('a failed rebuild is reported honestly — no cheerful re-present', async () => {

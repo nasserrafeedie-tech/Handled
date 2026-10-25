@@ -106,8 +106,19 @@ describe('onboarding — cadence is capped to the plan', () => {
     assert.equal(await freq('three times', 5), 3);
     assert.equal(await freq('daily', 7), 7);
     assert.equal(await freq('5x', 5), 5);
-    // A stray promo number must not be read as cadence — falls to the default 3.
-    assert.equal(await freq('post about our 20% special', 5), 3);
+    // A stray promo number must not be read as cadence — falls to the plan's
+    // cadence (the default is the cap once we know it).
+    assert.equal(await freq('post about our 20% special', 5), 5);
+  });
+
+  it('"you pick" takes the plan\'s full cadence, not a generic 3 (QA: Pro got 3)', async () => {
+    const freq = async (a: string, cap?: number) =>
+      (await svc.interpret('posting_frequency', a, null, null, cap)).posting_frequency;
+    assert.equal(await freq('you pick', 7), 7);
+    assert.equal(await freq('up to you', 5), 5);
+    assert.equal(await freq('you pick', 3), 3);
+    // With no cap known at all, the old generic default still applies.
+    assert.equal(await freq('you pick'), 3);
   });
 });
 

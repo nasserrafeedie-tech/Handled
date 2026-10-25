@@ -299,7 +299,14 @@ export class OnboardingService {
       return { dos_and_donts: [NO_DOS_DONTS] };
     }
 
-    const patch = await this.interpretRaw(asked, text, profile, businessName, allowClarify);
+    const patch = await this.interpretRaw(
+      asked,
+      text,
+      profile,
+      businessName,
+      allowClarify,
+      postsCap,
+    );
     // Never store a cadence above what the plan sells. An owner who asks for 4
     // on Starter (cap 3) is capped to 3 here, at the source, so the planner and
     // every read-back downstream see the honest number.
@@ -315,18 +322,26 @@ export class OnboardingService {
     profile: BrandProfile | null,
     businessName?: string | null,
     allowClarify = true,
+    postsCap?: number,
   ): Promise<InterpretResult> {
     const answer = text;
     const llmOn =
       Boolean(process.env.ANTHROPIC_API_KEY) && process.env.LLM_FAKE !== '1';
     if (llmOn) {
       try {
-        return await this.interpretWithLlm(asked, text, profile, businessName, allowClarify);
+        return await this.interpretWithLlm(
+          asked,
+          text,
+          profile,
+          businessName,
+          allowClarify,
+          postsCap,
+        );
       } catch (err) {
         this.log.warn(`LLM interpret failed, falling back: ${String(err)}`);
       }
     }
-    return this.interpretOffline(asked, text);
+    return this.interpretOffline(asked, text, postsCap);
   }
 
   private async interpretWithLlm(
@@ -335,6 +350,7 @@ export class OnboardingService {
     profile: BrandProfile | null,
     businessName?: string | null,
     allowClarify = true,
+    postsCap?: number,
   ): Promise<InterpretResult> {
     const known = JSON.stringify({
       business_name: businessName ?? null,
@@ -408,7 +424,11 @@ export class OnboardingService {
           (asked === 'voice_tone'
             ? ' (suggested default: "warm but polished")'
             : '') +
-          (asked === 'posting_frequency' ? ' (suggested default: 3)' : '') +
+          // "You pick" on Pro used to yield 3 posts a week (QA, Sep 2026) —
+          // the plan sells 7. Deferring to us means the plan's full cadence.
+          (asked === 'posting_frequency'
+            ? ` (suggested default: ${postsCap ?? 3})`
+            : '') +
           (allowClarify
             ? ''
             : '\nFollow-ups are NOT allowed for this answer — do not return ' +
@@ -425,7 +445,7 @@ export class OnboardingService {
     const { clarify, ...fields } = patch;
     return Object.keys(fields).length > 0 || clarify
       ? patch
-      : this.interpretOffline(asked, answer);
+      : this.interpretOffline(asked, answer, postsCap);
   }
 
   /**
@@ -534,7 +554,11 @@ export class OnboardingService {
   }
 
   /** Free-mode parsing: fill exactly the field we asked about. */
-  private interpretOffline(asked: ProfileField, answer: string): InterpretResult {
+  private interpretOffline(
+    asked: ProfileField,
+    answer: string,
+    postsCap?: number,
+  ): InterpretResult {
     const agreed =
       /^\s*(y(es|ep|eah|up)?|sure|sounds good|that works|perfect|ok(ay)?|you pick|do (?:it|that))\b/i;
     switch (asked) {
@@ -586,12 +610,14 @@ export class OnboardingService {
           /(\d{1,2})\s*(?:x\b|times?\b|posts?\b|\/|(?:a|per)\s*week)/i.exec(answer) ??
           /^\s*(\d{1,2})\s*$/.exec(answer);
         const word = new RegExp(`\\b(${Object.keys(WORDS).join('|')})\\b`, 'i').exec(lower);
-        let n = 3; // the suggested default
+        // The suggested default is the plan's full cadence when we know it:
+        // "you pick" on Pro means 7, not the generic 3 (QA, Sep 2026).
+        let n = postsCap ?? 3;
         if (/daily|every ?day/i.test(lower)) n = 7;
         else if (cued) n = Number(cued[1]);
         else if (word) n = WORDS[word[1].toLowerCase()];
         // else: an agreement ("you pick") or anything with no readable number
-        // keeps the default of 3.
+        // keeps the default.
         return { posting_frequency: Math.max(1, Math.min(21, n)) };
       }
     }
