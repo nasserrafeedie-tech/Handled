@@ -129,17 +129,35 @@ export class PostForMeService {
   }
 
   /**
-   * The unfiltered account list, raw as Post for Me returns it. Diagnostic
-   * only (admin endpoint): when a connect's OAuth visibly succeeds but the
-   * external_id-filtered list stays empty, this shows whether the account
-   * landed under a different external_id or never landed at all.
+   * The unfiltered account list for diagnostics (admin endpoint): when a
+   * connect's OAuth visibly succeeds but the external_id-filtered list stays
+   * empty, this shows whether the account landed under a different
+   * external_id or never landed at all. Tokens are STRIPPED before return —
+   * Post for Me includes live access tokens in this resource, and no
+   * diagnostic needs them.
    */
   async listAccountsRaw(externalId?: string): Promise<unknown> {
     this.assertConfigured();
     const path = externalId
       ? `/v1/social-accounts?external_id=${encodeURIComponent(externalId)}`
       : '/v1/social-accounts';
-    return this.call<unknown>('GET', path);
+    const raw = await this.call<{ data?: Array<Record<string, unknown>> }>('GET', path);
+    if (raw && Array.isArray(raw.data)) {
+      raw.data = raw.data.map(
+        ({ access_token: _a, refresh_token: _r, ...rest }) => rest,
+      );
+    }
+    return raw;
+  }
+
+  /**
+   * Remove one account from Post for Me (by their spc_… id). Used to clear a
+   * stale row whose Instagram user blocks a fresh connect from registering
+   * under the right external_id — Post for Me dedupes on the platform user.
+   */
+  async deleteAccount(id: string): Promise<unknown> {
+    this.assertConfigured();
+    return this.call<unknown>('DELETE', `/v1/social-accounts/${encodeURIComponent(id)}`);
   }
 
   async publish(req: PublishRequest): Promise<PublishOutcome> {
@@ -209,7 +227,7 @@ export class PostForMeService {
 
   /** One place that talks to Post for Me. Flips on when the key is set. */
   private async call<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: unknown,
   ): Promise<T> {

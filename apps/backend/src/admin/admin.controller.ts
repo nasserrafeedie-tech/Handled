@@ -323,6 +323,27 @@ export class AdminController {
   }
 
   /**
+   * Remove one Post for Me account by its spc_… id. For stale rows that block
+   * a fresh connect: Post for Me dedupes on the platform user, so an old
+   * account under a dead external_id swallows every new grant for that same
+   * Instagram. Requires explicit confirm, same as the customer delete.
+   */
+  @HttpDelete('pfm-account')
+  async deletePfmAccount(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    assertAdmin(token);
+    if (!this.pfm.configured) return { error: 'pfm_not_configured' };
+    const parsed = z
+      .object({ id: z.string().startsWith('spc_'), confirm: z.literal(true) })
+      .safeParse(body);
+    if (!parsed.success) return { error: 'need { id: "spc_…", confirm: true }' };
+    await this.pfm.deleteAccount(parsed.data.id);
+    return { deleted: parsed.data.id };
+  }
+
+  /**
    * Hard-delete a customer and everything under them (conversation, posts,
    * brand profile, connected accounts, media rows…). Every child relation is
    * onDelete: Cascade, so one delete cleans the whole tree. Requires an explicit
