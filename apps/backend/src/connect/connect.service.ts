@@ -11,6 +11,7 @@ import {
   socialsOffered,
 } from '../operator/tier-entitlements';
 import { platformName } from '../operator/publishing/platform-names';
+import { ConciergeService } from '../concierge/concierge.service';
 
 export interface StartAuthRequest {
   customerId: string;
@@ -49,6 +50,7 @@ export class ConnectService {
     private readonly crypto: TokenCryptoService,
     private readonly pfm: PostForMeService,
     private readonly google: GoogleBusinessService,
+    private readonly concierge: ConciergeService,
   ) {}
 
   private get siteUrl(): string {
@@ -222,6 +224,26 @@ export class ConnectService {
       }
     }
     return results;
+  }
+
+  /**
+   * reconcilePending plus the confirmation text each owner is waiting on.
+   * Called from the callback page's no-identity path AND from a cron sweep —
+   * Post for Me can register an account seconds or minutes after the owner
+   * saw their OAuth succeed, and without the sweep a slow registration left
+   * the connect stranded forever (nothing else ever retried).
+   */
+  async confirmPending(): Promise<number> {
+    const results = await this.reconcilePending();
+    for (const r of results) {
+      const labels = r.gained.map((p) => platformName(p)).join(' and ');
+      void this.concierge
+        .notify(r.customerId, `${labels} connected ✓ You're all set — I'll take it from here.`, {
+          promptedByOwner: true,
+        })
+        .catch(() => undefined);
+    }
+    return results.length;
   }
 
   async reconcile(customerId: string): Promise<ConnectedSummary[]> {

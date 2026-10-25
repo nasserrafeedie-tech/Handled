@@ -73,3 +73,39 @@ describe('reconcilePending — finishing connects the browser lost', () => {
     );
   });
 });
+
+describe('confirmPending — the sweep the cron runs', () => {
+  it('texts each owner whose account finally landed, and reports the count', async () => {
+    const { svc } = build({
+      waiting: [{ id: 'c1', platform: 'instagram' }],
+      connectsAfter: { c1: ['instagram'] },
+    });
+    const texts: Array<{ customerId: string; message: string }> = [];
+    (svc as unknown as { concierge: unknown }).concierge = {
+      notify: async (customerId: string, message: string) => {
+        texts.push({ customerId, message });
+      },
+    };
+    const reconciled = await svc.confirmPending();
+    assert.equal(reconciled, 1);
+    assert.equal(texts.length, 1);
+    assert.equal(texts[0].customerId, 'c1');
+    assert.match(texts[0].message, /Instagram connected/);
+  });
+
+  it('sends nothing while accounts are still propagating', async () => {
+    const { svc } = build({
+      waiting: [{ id: 'c1', platform: 'instagram' }],
+      connectsAfter: { c1: [] },
+    });
+    const texts: unknown[] = [];
+    (svc as unknown as { concierge: unknown }).concierge = {
+      notify: async (...args: unknown[]) => {
+        texts.push(args);
+      },
+    };
+    const reconciled = await svc.confirmPending();
+    assert.equal(reconciled, 0);
+    assert.equal(texts.length, 0, 'no premature "connected ✓" text');
+  });
+});

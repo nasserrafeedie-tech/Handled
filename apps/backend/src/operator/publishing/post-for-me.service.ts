@@ -128,6 +128,20 @@ export class PostForMeService {
     }));
   }
 
+  /**
+   * The unfiltered account list, raw as Post for Me returns it. Diagnostic
+   * only (admin endpoint): when a connect's OAuth visibly succeeds but the
+   * external_id-filtered list stays empty, this shows whether the account
+   * landed under a different external_id or never landed at all.
+   */
+  async listAccountsRaw(externalId?: string): Promise<unknown> {
+    this.assertConfigured();
+    const path = externalId
+      ? `/v1/social-accounts?external_id=${encodeURIComponent(externalId)}`
+      : '/v1/social-accounts';
+    return this.call<unknown>('GET', path);
+  }
+
   async publish(req: PublishRequest): Promise<PublishOutcome> {
     this.assertConfigured();
     const caption = [req.caption, req.hashtags.map((h) => `#${h}`).join(' ')]

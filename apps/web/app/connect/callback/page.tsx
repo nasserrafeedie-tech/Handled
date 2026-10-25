@@ -15,7 +15,7 @@ const LABELS: Record<string, string> = {
   threads: 'Threads',
 };
 
-type Phase = 'working' | 'done' | 'demo' | 'error';
+type Phase = 'working' | 'done' | 'waiting' | 'demo' | 'error';
 
 /**
  * Return landing after the owner authorizes a platform. Post for Me sends the
@@ -56,27 +56,57 @@ export default function ConnectCallbackPage() {
       // gets their confirmation over text.
       fetch(`${api}/connect/reconcile-pending`, { method: 'POST' })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        // Nothing synced yet is NOT a failure: Post for Me can register the
+        // account minutes after the OAuth succeeded, and the server keeps
+        // retrying (pending-connect cron) and texts the confirmation. Be
+        // honest here instead of guessing either way.
         .then((d: { reconciled: number }) =>
-          setPhase(d.reconciled > 0 ? 'done' : 'error'),
+          setPhase(d.reconciled > 0 ? 'done' : 'waiting'),
         )
         .catch(() => setPhase('error'));
       return;
     }
 
-    fetch(`${api}/connect/reconcile`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ customerId: customer }),
-    })
-      .then((r) => {
+    // Post for Me often registers the account a beat after the browser lands
+    // back here, so one sync is a coin flip. Poll for up to ~30s; "done" only
+    // when an account actually exists — this page used to say "You're
+    // connected" on an empty sync, which read as success while nothing was
+    // connected at all.
+    let cancelled = false;
+    const sync = () =>
+      fetch(`${api}/connect/reconcile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ customerId: customer }),
+      }).then((r) => {
         if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((d: { accounts: Connected[] }) => {
-        setAccounts(d.accounts ?? []);
-        setPhase('done');
-      })
-      .catch(() => setPhase('error'));
+        return r.json() as Promise<{ accounts: Connected[] }>;
+      });
+    (async () => {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        try {
+          const d = await sync();
+          if (cancelled) return;
+          if ((d.accounts ?? []).length > 0) {
+            setAccounts(d.accounts);
+            setPhase('done');
+            return;
+          }
+        } catch {
+          if (cancelled) return;
+          setPhase('error');
+          return;
+        }
+        await new Promise((res) => setTimeout(res, 5000));
+        if (cancelled) return;
+      }
+      // Still nothing after ~30s. The server-side sweep keeps retrying and
+      // texts the owner when it lands, so tell them that instead of lying.
+      setPhase('waiting');
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [api]);
 
   return (
@@ -124,6 +154,22 @@ export default function ConnectCallbackPage() {
           >
             Connect another account
           </a>
+        </>
+      )}
+
+      {phase === 'waiting' && (
+        <>
+          <div className="grid h-12 w-12 place-items-center rounded-full bg-parchment text-xl">
+            ⏳
+          </div>
+          <h1 className="font-display text-4xl font-semibold tracking-tight">
+            Almost there.
+          </h1>
+          <p className="text-ink/60">
+            Your login went through — the platform is just taking a moment to
+            hand things over. No need to do anything: we keep checking, and
+            we&rsquo;ll text you the moment it&rsquo;s confirmed.
+          </p>
         </>
       )}
 

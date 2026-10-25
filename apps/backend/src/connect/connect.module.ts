@@ -14,6 +14,6 @@ import { ReauthService } from './reauth.service';
   imports: [OperatorModule, ConciergeModule],
   controllers: [ConnectController],
   providers: [ConnectService, ReauthService],
-  exports: [ReauthService],
+  exports: [ReauthService, ConnectService],
 })
 export class ConnectModule {}

@@ -11,7 +11,6 @@ import {
 import { z } from 'zod';
 import { Platform } from '@smm/contracts';
 import { ConnectService } from './connect.service';
-import { ConciergeService } from '../concierge/concierge.service';
 
 const StartBody = z.object({
   customerId: z.string().min(1),
@@ -31,10 +30,7 @@ const ReconcileBody = z.object({
 export class ConnectController {
   private readonly log = new Logger(ConnectController.name);
 
-  constructor(
-    private readonly connect: ConnectService,
-    private readonly concierge: ConciergeService,
-  ) {}
+  constructor(private readonly connect: ConnectService) {}
 
   /** Start authorizing one platform → returns a URL to redirect the browser. */
   @Post('start')
@@ -99,18 +95,8 @@ export class ConnectController {
    */
   @Post('reconcile-pending')
   async reconcilePending() {
-    const results = await this.connect.reconcilePending();
-    for (const r of results) {
-      const labels = r.gained
-        .map((p) => ({ instagram: 'Instagram', facebook: 'Facebook', tiktok: 'TikTok', threads: 'Threads', google_business: 'Google Business Profile' }[p] ?? p))
-        .join(' and ');
-      void this.concierge
-        .notify(r.customerId, `${labels} connected ✓ You're all set — I'll take it from here.`, {
-          promptedByOwner: true,
-        })
-        .catch(() => undefined);
-    }
-    return { reconciled: results.length };
+    const reconciled = await this.connect.confirmPending();
+    return { reconciled };
   }
 
   /** Sync connected accounts after the owner returns from authorizing. */

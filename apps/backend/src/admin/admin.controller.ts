@@ -307,6 +307,22 @@ export class AdminController {
   }
 
   /**
+   * Raw Post for Me account list, unfiltered or by external_id. Diagnostic:
+   * when an owner's OAuth visibly succeeds but reconcile keeps finding
+   * nothing, this shows whether the account landed under a different
+   * external_id or never landed at all.
+   */
+  @Get('pfm-accounts')
+  async pfmAccounts(
+    @Headers('x-admin-token') token: string | undefined,
+    @Query('external_id') externalId: string | undefined,
+  ) {
+    assertAdmin(token);
+    if (!this.pfm.configured) return { error: 'pfm_not_configured' };
+    return this.pfm.listAccountsRaw(externalId || undefined);
+  }
+
+  /**
    * Hard-delete a customer and everything under them (conversation, posts,
    * brand profile, connected accounts, media rows…). Every child relation is
    * onDelete: Cascade, so one delete cleans the whole tree. Requires an explicit

@@ -8,6 +8,7 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import { ArchetypeResearchService } from '../playbook/archetype-research.service';
 import { ReauthService } from '../connect/reauth.service';
+import { ConnectService } from '../connect/connect.service';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
 import { ReconcileService } from './reconcile.service';
 import { RecapService } from '../concierge/recap.service';
@@ -49,6 +50,7 @@ export class CronService {
     private readonly concierge: ConciergeService,
     private readonly research: ArchetypeResearchService,
     private readonly reauth: ReauthService,
+    private readonly connect: ConnectService,
     private readonly reconcile: ReconcileService,
     private readonly performance: ArchetypePerformanceService,
     private readonly recap: RecapService,
@@ -338,6 +340,24 @@ export class CronService {
     await this.concierge
       .presentStrandedDrafts()
       .catch((e) => this.log.warn(`stranded-draft sweep failed: ${e.message}`));
+  }
+
+  /**
+   * Every 5 minutes: finish in-flight connects the browser couldn't confirm.
+   *
+   * Post for Me can register an account seconds-to-minutes AFTER the owner saw
+   * their OAuth succeed, so the callback page's sync often fires too early and
+   * finds nothing. The pending record (30-minute window) survives that; this
+   * sweep retries the sync and sends the "connected ✓" text the moment the
+   * account lands. Without it a slow registration stranded the connect forever
+   * while the owner believed they were done. See ConnectService.confirmPending.
+   */
+  @Cron('*/5 * * * *', { timeZone: CRON_TZ })
+  async finishPendingConnects(): Promise<void> {
+    if (!this.enabled) return;
+    await this.connect
+      .confirmPending()
+      .catch((e) => this.log.warn(`pending-connect sweep failed: ${e.message}`));
   }
 
   /**
