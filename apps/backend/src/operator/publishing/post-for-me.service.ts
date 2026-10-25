@@ -42,9 +42,10 @@ export interface AuthUrlRequest {
   redirectUrl?: string;
   /**
    * Post for Me's `connection_type` — which login flow the owner authorizes
-   * through. For Instagram it's "instagram" or "facebook"; we default IG to
-   * "facebook" (see connect.service) because Meta's audio library for Reels is
-   * only exposed on Facebook-Login connections. Omitted when unset.
+   * through. For Instagram it's "instagram" or "facebook"; connect.service
+   * picks the default (Instagram Login unless PFM_INSTAGRAM_CONNECTION says
+   * otherwise). Sent nested under `platform_data.<platform>`; omitted when
+   * unset.
    */
   connectionType?: string;
 }
@@ -98,7 +99,11 @@ export class PostForMeService {
         // Omitted entirely when unset — sending it as null still trips the
         // Quickstart check.
         ...(req.redirectUrl ? { redirect_url_override: req.redirectUrl } : {}),
-        ...(req.connectionType ? { connection_type: req.connectionType } : {}),
+        // Post for Me reads connection_type from platform_data.<platform>, not
+        // the top level. Sent at the top level it was silently ignored.
+        ...(req.connectionType
+          ? { platform_data: { [req.platform]: { connection_type: req.connectionType } } }
+          : {}),
       },
     );
     return { url: data.url };

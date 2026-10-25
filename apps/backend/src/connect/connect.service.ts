@@ -149,12 +149,16 @@ export class ConnectService {
     const { url } = await this.pfm.createAuthUrl({
       platform: req.platform,
       externalId: req.customerId,
-      // Connect Instagram via Facebook Login, not Instagram Login: Meta only
-      // exposes its Reels audio library to Facebook-Login connections, and we
-      // want customers audio-eligible the day Post for Me ships audio support.
-      // Switching connection type later is free and doesn't disturb scheduled
-      // posts, so defaulting this way has no downside.
-      ...(req.platform === 'instagram' ? { connectionType: 'facebook' } : {}),
+      // Instagram Login by default: no Facebook Page needed, and the iOS
+      // api.instagram.com workaround below only applies to it. Reels bake in
+      // licensed music, so Facebook Login's audio library isn't needed.
+      // Set PFM_INSTAGRAM_CONNECTION=facebook to switch.
+      ...(req.platform === 'instagram'
+        ? {
+            connectionType:
+              process.env.PFM_INSTAGRAM_CONNECTION === 'facebook' ? 'facebook' : 'instagram',
+          }
+        : {}),
     });
 
     // iOS hands www.instagram.com links to the Instagram app (universal
