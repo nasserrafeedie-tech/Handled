@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { isBlockedFromPublishing, type PublishGateInput } from './publish-due.handler';
+import { PublishDueHandler, isBlockedFromPublishing, type PublishGateInput } from './publish-due.handler';
 
 /**
  * The publish-time gate is the last thing between a draft and the public, and
@@ -67,5 +67,31 @@ describe('isBlockedFromPublishing — the last gate before a post goes public', 
     // The predicate checks moderationState !== 'passed', so any value the query
     // hands us that isn't literally "passed" is held rather than sent.
     assert.equal(isBlockedFromPublishing({ ...READY, moderationState: 'weird' }), true);
+  });
+});
+
+describe('a post that goes out on a later try', () => {
+  it("drops the earlier try's error once it publishes", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const post = {
+      id: 'p1', customerId: 'c1', platform: 'instagram', status: 'scheduled', moderationState: 'passed',
+      approvalState: 'approved', publishStartedAt: null, customer: { status: 'active' },
+      caption: 'Fresh fades', hashtags: [], mediaRefs: [], aiGeneratedMedia: false,
+      failureReason: '[transient] POST_FOR_ME_API_KEY not configured',
+    };
+    const prisma = {
+      post: {
+        findMany: async () => [post],
+        updateMany: async () => ({ count: 1 }),
+        update: async ({ data }: { data: Record<string, unknown> }) => void updates.push(data),
+      },
+      connectedAccount: { findFirst: async () => ({ platform: 'instagram', postForMeRef: 'spc_1', refreshTokenEnc: null }) },
+    };
+    const pfm = { publish: async () => ({ externalPostId: 'sp_1' }) };
+    const h = new PublishDueHandler(prisma as never, pfm as never, {} as never, {} as never);
+    await h.handle({ type: 'PUBLISH_DUE', customer_id: 'c1', task_id: 't1', payload: {} } as never);
+    const done = updates.find((u) => u.status === 'published');
+    assert.ok(done, 'published');
+    assert.equal(done.failureReason, null);
   });
 });
