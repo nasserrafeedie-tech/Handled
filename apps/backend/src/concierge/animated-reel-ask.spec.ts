@@ -69,3 +69,25 @@ describe('words sent with two photos', () => {
     assert.equal(isRevealCaption('new photos for the week'), false);
   });
 });
+
+describe('asking to see a reel, or for a reel with no kind', () => {
+  it('reads a look at a reel they already have', async () => {
+    const { isReelLook } = await import('./animated-reel-ask');
+    for (const t of ['show me the reel', "where's the video", 'can I see the reel again', 'send me the reel', 'resend the video']) {
+      assert.equal(isReelLook(t), true, t);
+    }
+    for (const t of ["I'll send you the video tomorrow", 'make a reel', 'send the video to my sister?', 'see you tomorrow']) {
+      assert.equal(isReelLook(t), false, t);
+    }
+  });
+
+  it('reads a reel ask that names no kind', async () => {
+    const { isPlainReelAsk } = await import('./animated-reel-ask');
+    for (const t of ['make a reel', 'can you do a video for us', 'I want a reel this week']) {
+      assert.equal(isPlainReelAsk(t), true, t);
+    }
+    for (const t of ['make a promo reel for kids cuts $20', 'do a before and after reel', 'show me the reel', 'make a carousel']) {
+      assert.equal(isPlainReelAsk(t), false, t);
+    }
+  });
+});

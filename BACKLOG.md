@@ -81,6 +81,7 @@ would. Everything up to linking the account can be built now.
 - [x] A new Growth or Pro owner's first week gets the same carousel safety net as the Monday plan: a post that came out with no visual gets a carousel instead of shipping as text. Before, the first week (the one that decides whether they stay) could be mostly text with a photo ask under each.
 - [x] Offline mode (no key, or `LLM_FAKE=1`) answers any structured call with a valid placeholder, so local test runs now reach carousels and the steps behind them.
 - [x] The email sign-up on `/start` is hidden, and refused by the backend, until Postmark works both ways. The page offers "email us" instead, so the no-phone path stays.
+- [x] QA rounds 9 and 10: four reel fixes, then a clean Pro and Starter run. "Show me the reel" resends its link and says where it sits, a plain "make a reel" says where to send clips (and the no-footage options), a before and after with one photo asks for both instead of tacking it on a draft, and a bare "yes" after a reel text shows the draft that's up first instead of doing nothing.
 
 ## Only Nasser can do these
 
