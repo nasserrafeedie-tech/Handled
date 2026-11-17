@@ -164,8 +164,11 @@ export class ReelService {
       }
       if (segments.length === 0) throw new Error('no usable segments to assemble');
 
-      // 2. End card: brand PNG (square) letterboxed onto the brand-dark frame,
-      //    with silent audio so the concat's audio streams stay aligned.
+      // 2. End card: the brand card centred on a blurred, darkened copy of
+      //    itself filling the 9:16 frame, with silent audio so the concat's
+      //    audio streams stay aligned. (It used to be forced to a 1080×1080
+      //    square and letterboxed in black — but the card is 1080×1350, so
+      //    the squeeze flattened every letter on it.)
       if (opts.endCardPng) {
         const cardPng = join(work, 'card.png');
         writeFileSync(cardPng, opts.endCardPng);
@@ -173,8 +176,8 @@ export class ReelService {
         await this.ffmpeg([
           '-loop', '1', '-t', String(ReelService.CARD_SECS), '-i', cardPng,
           '-f', 'lavfi', '-t', String(ReelService.CARD_SECS), '-i', 'anullsrc=r=44100:cl=stereo',
-          '-vf',
-          'scale=1080:1080,pad=1080:1920:0:420:black,fps=30,setsar=1,format=yuv420p',
+          '-filter_complex', END_CARD_FILTER,
+          '-map', '[v]', '-map', '1:a',
           ...X264_LOW_MEMORY,
           '-c:a', 'aac', '-ar', '44100', '-ac', '2',
           '-shortest',
@@ -247,6 +250,17 @@ export class ReelService {
  */
 const FIT_9_16 =
   'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1';
+
+/**
+ * The end card at its true aspect ratio, centred over a blurred, darkened copy
+ * of itself that fills the 1080×1920 frame — no squeeze, no black bars.
+ */
+export const END_CARD_FILTER =
+  '[0:v]split=2[c1][c2];' +
+  '[c1]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,' +
+  'boxblur=40:2,eq=brightness=-0.12[bg];' +
+  '[c2]scale=1080:-2[fg];' +
+  '[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30,setsar=1,format=yuv420p[v]';
 
 /**
  * Tone map HDR down to bt709.
