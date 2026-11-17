@@ -2454,6 +2454,7 @@ export class ConciergeService {
   ): Promise<void> {
     const channel = to.includes('@') ? 'email' : 'sms';
     if (channel === 'email') {
+      body = forEmail(body);
       // Email has no MMS: the image rides as a link the branded HTML renders
       // clickable. Same information, channel-appropriate shape.
       const withMedia = mediaUrls?.length
@@ -2594,4 +2595,23 @@ export function connectMessage(site: string, customerId: string, toldAboutResear
     `${site}/upload?c=${customerId}&kind=logo` +
     (toldAboutResearch ? '' : `\n\nMeanwhile I'm writing your first week — give me a moment.`)
   );
+}
+
+/**
+ * The owner-facing copy is written for texting. An email customer reading
+ * "text me a photo" or "I'll text you" would reasonably wonder whether to get
+ * out their phone, so the wording follows the channel the message goes out on.
+ */
+const EMAIL_WORDING: [RegExp, string][] = [
+  [/\bText me\b/g, 'Email me'],
+  [/\btext me\b/g, 'email me'],
+  [/\bI'll text you\b/g, "I'll email you"],
+  [/\bI'll text\b/g, "I'll email"],
+  [/\bmy texts\b/g, 'my emails'],
+  [/\bby text\b/g, 'by email'],
+  [/\btext back\b/g, 'email back'],
+];
+
+export function forEmail(body: string): string {
+  return EMAIL_WORDING.reduce((b, [re, to]) => b.replace(re, to), body);
 }

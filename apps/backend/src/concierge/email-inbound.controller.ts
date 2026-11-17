@@ -6,6 +6,8 @@ import {
   HttpCode,
   ForbiddenException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { StorageService } from '../common/storage.service';
 import { ConciergeService } from './concierge.service';
 
 /**
@@ -29,11 +31,38 @@ interface PostmarkInbound {
   TextBody?: string;
   StrippedTextReply?: string;
   MessageID?: string;
+  /** Base64 file contents, as Postmark's inbound stream sends them. */
+  Attachments?: { Name?: string; Content?: string; ContentType?: string; ContentLength?: number }[];
+}
+
+/** Same ceiling the MMS path holds a photo or clip to. */
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The photos and clips in an inbound email, the way an MMS carries them. A
+ * signature logo or a PDF is not something to post, so only images and video
+ * count, and tiny inline images (signature icons) are skipped.
+ */
+export function postableAttachments(
+  atts: PostmarkInbound['Attachments'],
+): { bytes: Buffer; contentType: string }[] {
+  const out: { bytes: Buffer; contentType: string }[] = [];
+  for (const a of atts ?? []) {
+    const type = (a.ContentType ?? '').toLowerCase();
+    if (!a.Content || !/^(image|video)\//.test(type)) continue;
+    const bytes = Buffer.from(a.Content, 'base64');
+    if (bytes.length < 10 * 1024 || bytes.length > MAX_ATTACHMENT_BYTES) continue;
+    out.push({ bytes, contentType: type });
+  }
+  return out.slice(0, 10);
 }
 
 @Controller('webhooks/email')
 export class EmailInboundController {
-  constructor(private readonly concierge: ConciergeService) {}
+  constructor(
+    private readonly concierge: ConciergeService,
+    private readonly storage: StorageService,
+  ) {}
 
   @Post('inbound')
   @HttpCode(204)
@@ -51,13 +80,29 @@ export class EmailInboundController {
     const from = body.FromFull?.Email ?? body.From;
     if (!from) return;
     const text = (body.StrippedTextReply ?? body.TextBody ?? '').trim();
-    if (!text) return;
+    // A photo emailed back is the email version of an MMS: store it where the
+    // media pipeline can fetch it and hand it over like Twilio's media URLs.
+    // Before this the attachment was dropped while the reply told the owner to
+    // send a photo.
+    const media = postableAttachments(body.Attachments);
+    const mediaUrls: string[] = [];
+    const mediaContentTypes: string[] = [];
+    for (const m of media) {
+      const key = `inbound-email/${randomUUID()}`;
+      await this.storage.put(key, m.bytes, m.contentType);
+      mediaUrls.push(this.storage.publicUrl(key));
+      mediaContentTypes.push(m.contentType);
+    }
+    if (!text && !mediaUrls.length) return;
 
     await this.concierge.handleInbound({
       from,
       body: text,
-      mediaUrls: [],
-      mediaContentTypes: [],
+      mediaUrls,
+      mediaContentTypes,
+      // Postmark retries a delivery it thinks failed; the message id lets the
+      // same duplicate guard that catches Twilio's retries catch these too.
+      twilioSid: body.MessageID ? `email:${body.MessageID}` : undefined,
     });
   }
 }

@@ -15,6 +15,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
+let postStatus = 'scheduled';
 function makeHandler() {
   const puts: Array<{ key: string; bytes: Buffer }> = [];
   const created: unknown[] = [];
@@ -33,7 +34,7 @@ function makeHandler() {
       update: async () => ({}),
     },
     post: {
-      findUnique: async () => ({ mediaRefs: postMediaRefs, platform: 'instagram' }),
+      findUnique: async () => ({ mediaRefs: postMediaRefs, platform: 'instagram', status: postStatus }),
       update: async (args: { data: { mediaRefs: string[] } }) => {
         postMediaRefs = args.data.mediaRefs;
         return {};
@@ -57,6 +58,21 @@ const task = (overrides: Record<string, unknown> = {}) =>
       ...overrides,
     },
   }) as never;
+
+describe('INGEST_MEDIA — what the owner is told', () => {
+  it('a photo on a draft still waiting says the draft needs their yes', async () => {
+    globalThis.fetch = (async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2]).buffer })) as never;
+    postStatus = 'pending_approval';
+    try {
+      const r = await makeHandler().handler.handle(task());
+      assert.match(r.summary_for_owner ?? '', /upcoming Instagram post\. Reply “yes” to schedule it/);
+    } finally {
+      postStatus = 'scheduled';
+    }
+    const r2 = await makeHandler().handler.handle(task());
+    assert.doesNotMatch(r2.summary_for_owner ?? '', /Reply/);
+  });
+});
 
 describe('INGEST_MEDIA — real fetch and store', () => {
   it('fetches the bytes, stores them, and links the post', async () => {
