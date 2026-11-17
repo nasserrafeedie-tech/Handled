@@ -24,7 +24,7 @@ function handler(customer: Row, profile: Row | null) {
   const prisma = {
     brandProfile: { findUnique: async () => profile },
     customer: { update: async ({ data }: any) => Object.assign(customer, data) },
-    post: { updateMany: async (a: any) => (postCalls.push(a), { count: restorable }) },
+    post: { updateMany: async (a: any) => (postCalls.push(a), { count: restorable }), count: async () => restorable },
     queuedText: { deleteMany: async () => ({ count: 0 }) },
     $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
   };
@@ -76,6 +76,22 @@ describe('posts the pause took off the schedule', () => {
     assert.match(out.summary_for_owner, /2 posts I had lined up are ready again/);
     assert.equal((out.data as Row).restored_posts, 2);
     restorable = 0;
+  });
+});
+
+describe('coming back to drafts that were already waiting', () => {
+  it('says so and hands them back, instead of promising a new plan', async () => {
+    const c: Row = { status: 'paused', pausedReason: 'owner_stop' };
+    const prisma = {
+      brandProfile: { findUnique: async () => ({ onboardingComplete: true }) },
+      customer: { update: async () => ({}) },
+      post: { updateMany: async () => ({ count: 0 }), count: async () => 3 },
+      queuedText: { deleteMany: async () => ({ count: 0 }) },
+    };
+    const out = await new PauseCustomerHandler(prisma as any, {} as any).handle(task({ reason: 'owner_stop', resume: true }));
+    assert.equal(out.summary_for_owner, "You're back on. Here's where we left off.");
+    assert.equal((out.data as Row).waiting_posts, 3);
+    void c;
   });
 });
 
@@ -186,7 +202,7 @@ describe('texts held for quiet hours around a pause', () => {
     const prisma = {
       brandProfile: { findUnique: async () => ({ onboardingComplete: true }) },
       customer: { update: async () => ({}) },
-      post: { updateMany: async () => ({ count: 0 }) },
+      post: { updateMany: async () => ({ count: 0 }), count: async () => 0 },
       queuedText: { deleteMany: async (a: Row) => void deleted.push(a.where) },
       $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
     };

@@ -373,7 +373,8 @@ export class ConciergeService {
           this.task(customer.id, 'PAUSE_CUSTOMER', { reason: 'owner_stop', resume: true }),
         );
         await this.reply(this.addressOf(customer), conversation.id, result.summary_for_owner);
-        if ((result.data as { restored_posts?: number } | undefined)?.restored_posts) {
+        const back = result.data as { restored_posts?: number; waiting_posts?: number } | undefined;
+        if (back?.restored_posts || back?.waiting_posts) {
           await this.presentNextDraft(customer.id, undefined, { promptedByOwner: true });
           return;
         }

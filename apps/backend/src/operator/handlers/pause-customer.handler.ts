@@ -70,15 +70,20 @@ export class PauseCustomerHandler implements TaskHandler<'PAUSE_CUSTOMER'> {
         },
       });
       const back = restored.count;
+      const waiting = await this.prisma.post.count({
+        where: { customerId: task.customer_id, status: 'pending_approval' },
+      });
       return ok(
         task.task_id,
         !profile?.onboardingComplete
           ? "You're back on. Let's pick up where we left off."
           : back > 0
             ? `You're back on. The ${back === 1 ? 'post' : `${back} posts`} I had lined up ${back === 1 ? 'is' : 'are'} ready again for a quick look.`
-            : "You're back on. I'll plan your next posts and send them over for a look.",
+            : waiting > 0
+              ? "You're back on. Here's where we left off."
+              : "You're back on. I'll plan your next posts and send them over for a look.",
         'done',
-        { restored_posts: back },
+        { restored_posts: back, waiting_posts: waiting },
       );
     }
 
