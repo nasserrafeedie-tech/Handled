@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConciergeService, CANCEL_PLAN_RE } from './concierge.service';
+import { ConciergeService, CANCEL_PLAN_RE, BARE_CANCEL_RE } from './concierge.service';
 
 /**
  * Ending the plan, from the owner's side.
@@ -62,6 +62,15 @@ describe('Asking to cancel the plan', () => {
     }
     for (const t of ['cancel it', 'cancel the post', "cancel tomorrow's post", 'how do i cancel a post', 'skip this one', 'stop']) {
       assert.ok(!CANCEL_PLAN_RE.test(t), t);
+    }
+  });
+
+  it('asks which, for a bare "I want to cancel" (QA round 5)', () => {
+    for (const t of ['I want to cancel', "i'd like to cancel.", 'i wanna cancel', 'can I cancel?', 'cancel please']) {
+      assert.ok(BARE_CANCEL_RE.test(t), t);
+    }
+    for (const t of ['cancel it', 'I want to cancel my plan', 'cancel', 'i want to cancel the friday post']) {
+      assert.ok(!BARE_CANCEL_RE.test(t), t);
     }
   });
 });

@@ -446,6 +446,20 @@ export class ConciergeService {
           "If something isn't working for you, tell me and I'll try to fix it.",
       );
     }
+    // "I want to cancel" with nothing after it could mean this draft or the
+    //     whole plan. It fell through to "Reply yes to send that draft" (QA
+    //     round 5), which answers neither, so ask which, with both ways out.
+    if (BARE_CANCEL_RE.test(msg.body)) {
+      const waiting = await this.prisma.post.count({ where: { customerId: customer.id, status: 'pending_approval' } });
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        waiting
+          ? `Happy to. Do you mean the draft I sent? Reply "skip it" and I won't post it. To end your Handled plan, it's on your billing page: ${portalLink(customer.id)}`
+          : `You can cancel any time on your billing page: ${portalLink(customer.id)} ` +
+            "If something isn't working for you, tell me and I'll try to fix it.",
+      );
+    }
     // 1e. Billing — "billing", "update my card". The answer is always the same
     //     signed link to their Stripe portal, so it needs no interpretation.
     //     The expired-link page tells owners to text exactly this.
@@ -3061,6 +3075,10 @@ export function looksLikePostRequest(text: string): boolean {
   if (t.split(/\s+/).length < 3) return false;
   return /\b(about|post|posts|feature|highlight|promote|show(?:case)?|mention|announce|shout ?out|next one|one on|do one)\b/i.test(t);
 }
+
+/** "I want to cancel", with no word for what: the draft, or the plan. */
+export const BARE_CANCEL_RE =
+  /^\s*(?:(?:i\s*)?(?:want|wanna|would like|'d like|need)\s+(?:to\s+)?cancel|can\s+i\s+cancel|cancel\s+please|please\s+cancel|i'?m\s+cancell?ing)\s*[.!?]*\s*$/i;
 
 /** Asking to end the plan itself, not to skip a post. */
 export const CANCEL_PLAN_RE =
