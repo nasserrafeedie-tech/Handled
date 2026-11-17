@@ -52,17 +52,35 @@ export function zonedToUtc(date: string, time: string, timeZone: string): Date {
 }
 
 /** "Tue, 9:00 AM" in the business's own zone — how the owner thinks about it. */
-export function formatInZone(when: Date, timeZone: string): string {
+export function formatInZone(when: Date, timeZone: string, now: Date = new Date()): string {
+  // A weekday alone is only clear within the coming week: QA round 4 showed
+  // "Draft for Tue 10:00 AM" (tomorrow) right after "Draft for Tue 12:30 PM"
+  // (a week out). Near days get "today"/"tomorrow", far ones get the date.
   try {
-    return when.toLocaleString('en-US', {
-      timeZone,
-      weekday: 'short',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    const time = when.toLocaleString('en-US', { timeZone, hour: 'numeric', minute: '2-digit' });
+    const days = Math.round((localMidnight(when, timeZone) - localMidnight(now, timeZone)) / 86_400_000);
+    if (days === 0) return `today ${time}`;
+    if (days === 1) return `tomorrow ${time}`;
+    if (days > 1 && days < 7) return `${when.toLocaleString('en-US', { timeZone, weekday: 'short' })} ${time}`;
+    return formatFull(when, timeZone);
   } catch {
     return when.toISOString();
   }
+}
+
+/** Weekday, date and time, e.g. "Tue, Nov 24, 12:30 PM", for prompts and far dates. */
+export function formatFull(when: Date, timeZone: string): string {
+  try {
+    return when.toLocaleString('en-US', { timeZone, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  } catch {
+    return when.toISOString();
+  }
+}
+
+/** The local calendar day of an instant, as a UTC timestamp of its midnight. */
+function localMidnight(when: Date, timeZone: string): number {
+  const [y, m, d] = when.toLocaleDateString('en-CA', { timeZone }).split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
 }
 
 /**

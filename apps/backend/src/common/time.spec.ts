@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { isValidTimeZone, parseTimeLocally, zonedToUtc } from './time';
+import { formatInZone, isValidTimeZone, parseTimeLocally, zonedToUtc } from './time';
 
 describe('isValidTimeZone', () => {
   it('accepts real IANA zones', () => {
@@ -56,5 +56,19 @@ describe('reading timing without the model', () => {
 
   it('says nothing when there is no timing', () => {
     assert.equal(at('make it shorter'), null);
+  });
+});
+
+describe('saying when a post goes out', () => {
+  const tz = 'America/Los_Angeles';
+  // Mon Nov 16, 9:44 PM in Los Angeles.
+  const now = new Date('2026-11-17T05:44:00Z');
+  it('says today or tomorrow for the next two days', () => {
+    assert.equal(formatInZone(new Date('2026-11-17T06:30:00Z'), tz, now), 'today 10:30 PM');
+    assert.equal(formatInZone(new Date('2026-11-17T18:00:00Z'), tz, now), 'tomorrow 10:00 AM');
+  });
+  it('gives a weekday within the week and the date past it', () => {
+    assert.equal(formatInZone(new Date('2026-11-19T01:00:00Z'), tz, now), 'Wed 5:00 PM');
+    assert.equal(formatInZone(new Date('2026-11-24T20:30:00Z'), tz, now), 'Tue, Nov 24, 12:30 PM');
   });
 });

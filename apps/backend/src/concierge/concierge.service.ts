@@ -28,6 +28,7 @@ import {
 import { ArchetypeResearchService } from '../playbook/archetype-research.service';
 import {
   formatInZone,
+  formatFull,
   inTextingWindow,
   nextTextingWindowOpen,
   tomorrowMorningInZone,
@@ -657,9 +658,9 @@ export class ConciergeService {
           tier: 'bulk',
           cachedContext: '',
           prompt: [
-            `The owner's local time right now is ${formatInZone(new Date(), tz)} (${tz}).`,
+            `The owner's local time right now is ${formatFull(new Date(), tz)} (${tz}).`,
             plannedTime
-              ? `The post under discussion is planned for ${formatInZone(plannedTime, tz)}.`
+              ? `The post under discussion is planned for ${formatFull(plannedTime, tz)}.`
               : '',
             `Their message: """${body}"""`,
             'When do they want it to go out? Return JSON:',
