@@ -150,6 +150,17 @@ const FREE_TASTE_INTRO =
   "want customers to know this week, and I'll write you a post on the spot. " +
   "Free, takes ten seconds — and that's the only question.";
 
+/** The intro, naming the business when the signup form already gave it. */
+function freeTasteIntro(businessName?: string | null): string {
+  const name = businessName?.trim();
+  if (!name) return FREE_TASTE_INTRO;
+  return (
+    `Hey — it's Handled ✳ Tell me what ${name} does and one thing you'd ` +
+    "want customers to know this week, and I'll write you a post on the spot. " +
+    "Free, takes ten seconds — and that's the only question."
+  );
+}
+
 const PAYWALL_REPLY =
   "Handled: You've used your free draft ✳ To get posts written, designed and " +
   'published for you every week, pick a plan at texthandled.com/billing — ' +
@@ -1281,10 +1292,10 @@ export class ConciergeService {
     // stripeCustomerId is set, so paying customers flow straight through.
     const payer = await this.prisma.customer.findUnique({
       where: { id: customerId },
-      select: { stripeCustomerId: true },
+      select: { stripeCustomerId: true, businessName: true },
     });
     if (!payer?.stripeCustomerId) {
-      await this.notify(customerId, FREE_TASTE_INTRO, { promptedByOwner: true });
+      await this.notify(customerId, freeTasteIntro(payer?.businessName), { promptedByOwner: true });
       return;
     }
     const profile = await this.prisma.brandProfile.findUnique({
@@ -1296,7 +1307,7 @@ export class ConciergeService {
     await this.notify(
       customerId,
       first === 'business_type'
-        ? this.onboarding.welcome()
+        ? this.onboarding.welcome(payer.businessName)
         : this.onboarding.question(first),
       { promptedByOwner: true },
     );
@@ -1869,8 +1880,8 @@ export class ConciergeService {
         phone,
         conversationId,
         outboundCount === 0
-          ? this.onboarding.welcome()
-          : this.onboarding.question('business_type'),
+          ? this.onboarding.welcome(businessName)
+          : this.onboarding.question('business_type', undefined, businessName),
       );
     }
     // One follow-up per field, ever: the marker survives in pendingIntent
@@ -2019,7 +2030,7 @@ export class ConciergeService {
     }
 
     if (next) {
-      const q = this.onboarding.question(next, next === 'posting_frequency' ? postsCap : undefined);
+      const q = this.onboarding.question(next, next === 'posting_frequency' ? postsCap : undefined, businessName);
       return this.reply(phone, conversationId, ack ? `${ack} ${q}` : q);
     }
 

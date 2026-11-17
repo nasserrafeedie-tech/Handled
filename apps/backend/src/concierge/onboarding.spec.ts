@@ -94,6 +94,14 @@ describe('onboarding — cadence is capped to the plan', () => {
     assert.equal(patch.posting_frequency, 5);
   });
 
+  it('does not ask for a business name the signup form already gave (F18)', () => {
+    assert.match(svc.question('business_type'), /what's it called/);
+    const named = svc.question('business_type', undefined, 'Fieldnote Florals');
+    assert.match(named, /Fieldnote Florals/);
+    assert.doesNotMatch(named, /called/);
+    assert.doesNotMatch(svc.welcome('Fieldnote Florals'), /called/);
+  });
+
   it('the cadence question names the plan allowance', () => {
     assert.match(svc.question('posting_frequency', 3), /3 a week/);
   });

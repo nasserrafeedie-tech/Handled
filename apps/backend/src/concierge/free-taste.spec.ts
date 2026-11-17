@@ -236,6 +236,14 @@ describe('free-taste paywall', () => {
     assert.equal(isPriceQuestion('whats the price'), true);
   });
 
+  it('an email signup that gave its name gets an intro that uses it (F18)', async () => {
+    // beginOnboarding looks the customer up by id, and the fake keys rows by
+    // phone, so the row is stored under its id.
+    world.seed({ ...UNPAID, phone: 'cust1', businessName: 'Fieldnote Florals' });
+    await world.svc.beginOnboarding('cust1');
+    assert.match(world.sent.join(' '), /what Fieldnote Florals does/);
+  });
+
   it('an empty body (photo only) re-asks instead of drafting from nothing', async () => {
     world.seed({ ...UNPAID });
     await world.svc.handleInbound({ ...sms('   '), mediaUrls: ['https://x/y.jpg'], mediaContentTypes: ['image/jpeg'] });

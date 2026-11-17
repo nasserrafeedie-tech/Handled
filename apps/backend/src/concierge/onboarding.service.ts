@@ -164,7 +164,7 @@ export class OnboardingService {
   }
 
   /** The welcome + question one, for a first contact that told us nothing yet. */
-  welcome(): string {
+  welcome(businessName?: string | null): string {
     // Tester feedback (Nasser's mom, Aug 2026): say how long the tunnel is
     // BEFORE the first question. An interview with no stated bound reads as
     // "how many of these are coming?" — the count up front plus a running
@@ -177,7 +177,7 @@ export class OnboardingService {
       'texthandled.com/contact\n\n' +
       'Setup is seven quick questions — plus one or two tailored to your ' +
       'answers at the end. A few minutes by text, then I get to work.\n\n' +
-      this.question('business_type')
+      this.question('business_type', undefined, businessName)
     );
   }
 
@@ -188,7 +188,7 @@ export class OnboardingService {
    * question offers exactly that instead of a generic "3–4 a week" — a Starter
    * (cap 3) must not be invited to pick 4 and then be under-served or over-served.
    */
-  question(field: ProfileField, postsCap?: number): string {
+  question(field: ProfileField, postsCap?: number, businessName?: string | null): string {
     // "n of 7:" on every prompt (tester feedback — Nasser's mom): the reader
     // always knows where they are in the tunnel. The number is the field's
     // checklist position, so a question skipped because the owner already
@@ -196,6 +196,10 @@ export class OnboardingService {
     const tag = `${REQUIRED.indexOf(field) + 1} of ${REQUIRED.length}: `;
     switch (field) {
       case 'business_type':
+        // A name they already gave (the web signup form) is not asked again.
+        if (businessName?.trim()) {
+          return `${tag}Tell me about ${businessName.trim()} — what do you do, and where are you?`;
+        }
         return (
           `${tag}Tell me about your business — what do you do, what's it ` +
           'called, and where are you?'
