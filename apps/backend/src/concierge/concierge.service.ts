@@ -488,22 +488,7 @@ export class ConciergeService {
 
     // 4. Graphic request ("make a graphic/carousel/quote card/promo...").
     if (this.isGraphicRequest(msg.body)) {
-      const slides = buildSlidesFromText(msg.body);
-      const result = await this.bus.emit(
-        this.task(customer.id, 'MAKE_GRAPHIC', { slides }),
-      );
-      // "Made your graphic" with nothing attached is a claim, not a review —
-      // the rendered slides ride along so the owner sees what was made.
-      const made = result.data as { slides?: Array<{ media_ref: string }> } | undefined;
-      const mediaUrls = (made?.slides ?? [])
-        .slice(0, 10)
-        .map((s) => (/^https?:\/\//.test(s.media_ref) ? s.media_ref : this.storage.publicUrl(s.media_ref)));
-      return this.reply(
-        this.addressOf(customer),
-        conversation.id,
-        result.summary_for_owner,
-        mediaUrls,
-      );
+      return this.makeRequestedGraphic(customer.id, this.addressOf(customer), conversation.id, msg.body);
     }
 
     // 5. Steady-state loop (§6): approve / revise / cancel / question.
@@ -1353,6 +1338,85 @@ export class ConciergeService {
             : "Got it — I'll keep that in mind. Text me any time you want something posted.",
         );
     }
+  }
+
+  /**
+   * "Make a graphic for our birthday packages". The graphic used to arrive on
+   * its own with "ready to review", and then nothing could be done with it:
+   * "post it" found no draft. Now it comes as a draft post with a caption, so
+   * "yes" schedules it like any other. If drafting the caption fails, the
+   * graphic still arrives on its own.
+   */
+  private async makeRequestedGraphic(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    body: string,
+  ): Promise<void> {
+    const slides = buildSlidesFromText(body);
+    const mediaOf = (result: { data?: unknown }) =>
+      ((result.data as { slides?: Array<{ media_ref: string }> } | undefined)?.slides ?? [])
+        .slice(0, 10)
+        .map((s) => (/^https?:\/\//.test(s.media_ref) ? s.media_ref : this.storage.publicUrl(s.media_ref)));
+
+    const postId = await this.draftForGraphic(customerId, body, slides[0]?.kind === 'promo').catch((e) => {
+      this.log.warn(`caption for a requested graphic failed for ${customerId}: ${String(e)}`);
+      return null;
+    });
+    const result = await this.bus.emit(
+      this.task(customerId, 'MAKE_GRAPHIC', postId ? { slides, post_id: postId } : { slides }),
+    );
+    if (!postId || result.error) {
+      return this.reply(phone, conversationId, result.summary_for_owner, mediaOf(result));
+    }
+    const waiting = await this.prisma.post.findFirst({
+      where: { customerId, status: 'pending_approval', id: { not: postId } },
+      select: { id: true },
+    });
+    if (waiting) {
+      return this.reply(
+        phone,
+        conversationId,
+        "Made it ✳ It's a post now, next in line after the draft that's waiting on you.",
+        mediaOf(result),
+      );
+    }
+    await this.presentNextDraft(customerId, 'Made it ✳ Here it is as a post:', {
+      promptedByOwner: true,
+      postId,
+    });
+  }
+
+  /** A draft post to carry a requested graphic, tomorrow at 10 their time. */
+  private async draftForGraphic(customerId: string, request: string, promo: boolean): Promise<string | null> {
+    const [customer, account] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }),
+      this.prisma.connectedAccount.findFirst({
+        where: { customerId, revoked: false, platform: { not: 'google_business' } },
+        select: { platform: true },
+      }),
+    ]);
+    const tz = customer?.timezone ?? 'America/Los_Angeles';
+    const tomorrow = new Date(Date.now() + 24 * 3600_000).toLocaleDateString('en-CA', { timeZone: tz });
+    const drafted = await this.bus.emit(
+      this.task(customerId, 'DRAFT_POST', {
+        platform: account?.platform ?? 'instagram',
+        archetype: promo ? 'promo' : 'product_spotlight',
+        scheduled_time: zonedToUtc(tomorrow, '10:00', tz).toISOString(),
+        needs_asset: false,
+        prompt_notes: `The owner asked for a graphic post by text: ${request.slice(0, 400)}. The caption goes with that graphic.`,
+      }),
+    );
+    const id = (drafted.data as DraftPostResult | undefined)?.post_id;
+    if (drafted.error || !id) return null;
+    const post = await this.prisma.post.findUnique({ where: { id }, select: { status: true } });
+    if (post?.status !== 'pending_approval' && post?.status !== 'approved') return null;
+    // They asked to see it, so it waits for their yes even on autopilot.
+    await this.prisma.post.update({
+      where: { id },
+      data: { status: 'pending_approval', approvalState: 'awaiting_owner' },
+    });
+    return id;
   }
 
   /**
@@ -2742,8 +2806,10 @@ export function buildSlidesFromText(
     return [{ kind: 'promo', headline, body: stripCommand(text) }];
   }
 
-  // Default: a title slide from the request text.
-  const headline = stripCommand(text) || 'New Post';
+  // Default: a title slide from the request text, read as a headline:
+  // "for our birthday party packages" → "Birthday party packages".
+  const topic = stripCommand(text).replace(/^(?:about|for|on)\s+/i, '').replace(/^(?:our|my|the)\s+/i, '');
+  const headline = topic ? topic[0].toUpperCase() + topic.slice(1) : 'New Post';
   return [{ kind: 'title', headline }];
 }
 
