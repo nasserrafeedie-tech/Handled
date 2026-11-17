@@ -42,6 +42,7 @@ import { OWNER_CONSENT_COPY } from '../operator/graphics/image-prompt';
 import { entitlementLine, upgradePitch, postsPerWeek, tierHas } from '../operator/tier-entitlements';
 import { ReelQueueService } from '../scheduler/reel-queue.service';
 import { animatedReelsOn } from '../operator/video/animated/flag';
+import { ensureVisual } from '../operator/graphics/visual-safety-net';
 import { animatedReelAsk, type AnimatedAsk } from './animated-reel-ask';
 import { polishCaption } from '../operator/llm/caption-polish';
 import { detectSlop, slopFeedback } from '../operator/llm/slop';
@@ -2827,6 +2828,7 @@ export class ConciergeService {
   /** Drafts each planned slot, with its visuals; returns how many landed. */
   private async draftSlots(customerId: string, tz: string, slots: CalendarSlot[]): Promise<number> {
     let drafted = 0;
+    const plan = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { planTier: true } });
     for (const slot of slots) {
       try {
         const result = await this.bus.emit(
@@ -2859,6 +2861,17 @@ export class ConciergeService {
           await this.bus
             .emit(this.task(customerId, 'GENERATE_IMAGE', { post_id: d.post_id, aspect: '1:1' }, 'concierge'))
             .catch((e) => this.log.warn(`first-week image failed: ${String(e)}`));
+        }
+        // Nothing came out of that (no image key, a declined photo): a
+        // carousel rather than a bare text post, as the Monday plan does.
+        if (d?.post_id) {
+          await ensureVisual(
+            {
+              findMedia: (id) => this.prisma.post.findUnique({ where: { id }, select: { mediaRefs: true } }),
+              makeCarousel: (id) => this.bus.emit(this.task(customerId, 'GENERATE_CAROUSEL', { post_id: id }, 'concierge')),
+            },
+            { id: d.post_id, needsAsset: slot.needs_asset, planTier: plan?.planTier ?? 'starter' },
+          ).catch((e) => this.log.warn(`first-week fallback carousel failed: ${String(e)}`));
         }
       } catch (e) {
         // One bad draft must not cost the owner their whole first week.

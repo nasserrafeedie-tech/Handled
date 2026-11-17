@@ -10,7 +10,7 @@ import { ConciergeService } from '../concierge/concierge.service';
 import { ArchetypeResearchService } from '../playbook/archetype-research.service';
 import { ReauthService } from '../connect/reauth.service';
 import { ConnectService } from '../connect/connect.service';
-import { tierHasCarousel } from '../operator/graphics/carousel-content';
+import { ensureVisual } from '../operator/graphics/visual-safety-net';
 import { ReconcileService } from './reconcile.service';
 import { RecapService } from '../concierge/recap.service';
 import { ReferralCreditService } from '../billing/referral-credit.service';
@@ -210,29 +210,15 @@ export class CronService {
           }
         }
 
-        // Carousel safety net. A post that should have had a visual but ended
-        // up with none — an AI image the place-guard declined, a photo-first
-        // archetype the owner never opted into imagery for, an archetype the
-        // carousel set does not recognise — used to ship as bare text. On a
-        // carousel-capable plan that is never the right answer: a carousel needs
-        // no photo, no image API and cannot be declined. So if the post is still
-        // empty after its intended treatment, make one. Photo-ask slots are left
-        // alone — they are meant to wait for the owner's real shot.
-        if (
-          drafted_?.post_id &&
-          !slot.needs_asset &&
-          tierHasCarousel(customer?.planTier ?? 'starter')
-        ) {
-          const persisted = await this.prisma.post.findUnique({
-            where: { id: drafted_.post_id },
-            select: { mediaRefs: true },
-          });
-          if (persisted && persisted.mediaRefs.length === 0) {
-            await this.emit(customerId, 'GENERATE_CAROUSEL', { post_id: drafted_.post_id })
-              .catch((e) =>
-                this.log.warn(`fallback carousel for ${drafted_.post_id} failed: ${e.message}`),
-              );
-          }
+        // Carousel safety net (see ensureVisual).
+        if (drafted_?.post_id) {
+          await ensureVisual(
+            {
+              findMedia: (id) => this.prisma.post.findUnique({ where: { id }, select: { mediaRefs: true } }),
+              makeCarousel: (id) => this.emit(customerId, 'GENERATE_CAROUSEL', { post_id: id }),
+            },
+            { id: drafted_.post_id, needsAsset: slot.needs_asset, planTier: customer?.planTier ?? 'starter' },
+          ).catch((e) => this.log.warn(`fallback carousel for ${drafted_.post_id} failed: ${e.message}`));
         }
 
         // Auto-approved posts must be scheduled here — nothing else does it.

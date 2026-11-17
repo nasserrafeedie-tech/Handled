@@ -77,6 +77,8 @@ would. Everything up to linking the account can be built now.
 - [x] QA round 6: three fixes. "Do one about our new beard trims" while a draft waits is saved for an upcoming post instead of being dropped, a bare "thanks" gets a short reply instead of the generic one, and "what do you actually do" gets the explanation instead of the paywall.
 - [x] QA rounds 7 and 8: both clean. All three round 6 fixes held up.
 - [x] A reel up for its yes comes with its watch link and says it's a reel (it used to be shown as a caption only, so the owner approved a video blind). A post with no slot of its own takes the first open time instead of tomorrow 9:00 on top of a planned post.
+- [x] A new Growth or Pro owner's first week gets the same carousel safety net as the Monday plan: a post that came out with no visual gets a carousel instead of shipping as text. Before, the first week (the one that decides whether they stay) could be mostly text with a photo ask under each.
+- [x] Offline mode (no key, or `LLM_FAKE=1`) answers any structured call with a valid placeholder, so local test runs now reach carousels and the steps behind them.
 - [x] The email sign-up on `/start` is hidden, and refused by the backend, until Postmark works both ways. The page offers "email us" instead, so the no-phone path stays.
 
 ## Only Nasser can do these
