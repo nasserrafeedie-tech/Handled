@@ -89,8 +89,8 @@ export default function PhotoWalkPage() {
           <p className="mt-4 text-ink/60">
             {business ? `Walk ${business}` : 'Walk your business'} with your
             phone and grab each shot below — any order, and skipping one is
-            fine. Real photos of you and your work get roughly double the
-            response of anything designed.
+            fine. Real photos of you and your work tend to get more response
+            than anything designed.
           </p>
         </div>
 

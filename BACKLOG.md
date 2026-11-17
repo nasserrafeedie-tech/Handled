@@ -29,12 +29,12 @@ Last re-ranked: 2026-11-17.
 - [ ] **Quote and CTA slide variety.** The covers now rotate through five layouts. Quote and call-to-action slides still use one look each.
 - [ ] **Real footage reel test.** The sample reels use still photos. Cut one from real phone clips and check the trims, captions and hook against it.
 - [ ] **Light review step for graphics.** Before a carousel goes to the owner, run a cheap automatic check that the photo isn't covered by the card in the spot where the subject is.
-- [ ] **Unsourced claim in copy (F9).** The photo-walk nudge says photos get "roughly double the response". Drop the claim or soften it.
+- [x] **Unsourced claim in copy (F9).** Softened to "tend to get more response" in the text, the hint and the photo-walk page. The photo-walk nudge says photos get "roughly double the response". Drop the claim or soften it.
 
 ## 4. Housekeeping
 
 - [ ] **Schema drift (F10).** An `archetype_performance` index name and three id defaults differ from what Prisma expects. Add a migration so `prisma migrate diff` comes back empty.
-- [ ] **README is out of date.** It still calls Anthropic, Post for Me, R2 and the crons "stubs". They are all wired now.
+- [x] **README is out of date.** Now names Handled, the real test commands, the real model defaults and what each key turns on. `.env.example` gained the R2, Postmark and admin variables the code reads. It still calls Anthropic, Post for Me, R2 and the crons "stubs". They are all wired now.
 - [ ] **Admin overview journey.** Check that every number on the admin page matches the database for a seeded customer.
 - [ ] **Two clean QA rounds in a row.** Rerun every journey after the fixes. It's done when two rounds in a row turn up nothing new.
 
