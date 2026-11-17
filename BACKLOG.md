@@ -52,10 +52,10 @@ Last re-ranked: 2026-11-17.
 Handled should post and promote itself through the product, as a customer
 would. Everything up to linking the account can be built now.
 
-- [ ] **A house account.** One customer row for Handled itself: Pro tier, owner phone set to Nasser's, marked paid without a Stripe charge (a `house` customer id) and left out of MRR and lead counts. Made by an admin-only setup route, so nobody signs up or pays.
-- [ ] **Its brand profile, pre-filled.** Business type, voice, audience (local service owners with no time for social), offers ($95/$249/$699 plans, the free taste), the brand colours and fonts from the site, and do's and don'ts (no fake testimonials, no invented numbers). Written from the site's own copy, so onboarding has nothing left to ask.
-- [ ] **Its content plan.** Posts that sell by showing: before/after of a real small-business feed, a "this post was planned, written and designed by text" carousel, the text thread itself as a screenshot-style graphic, pricing, the free-taste offer. Uses the four sample businesses as the "after".
-- [ ] **Approvals go to Nasser by text,** like any owner, so nothing posts without his yes.
+- [x] **A house account.** Built: `POST /admin/house-account` and a button on the admin page. One customer row for Handled itself: Pro tier, owner phone set to Nasser's, marked paid without a Stripe charge (a `house` customer id) and left out of MRR and lead counts. Made by an admin-only setup route, so nobody signs up or pays.
+- [x] **Its brand profile, pre-filled.** Business type, voice, audience (local service owners with no time for social), offers ($95/$349/$699 plans, the free taste), the brand colours and fonts from the site, and do's and don'ts (no fake testimonials, no invented numbers). Written from the site's own copy, so onboarding has nothing left to ask.
+- [x] **Its content plan.** Five starter posts are queued as owner requests, so the first plans build around them. Posts that sell by showing: before/after of a real small-business feed, a "this post was planned, written and designed by text" carousel, the text thread itself as a screenshot-style graphic, pricing, the free-taste offer. Uses the four sample businesses as the "after".
+- [x] **Approvals go to Nasser by text,** like any owner, so nothing posts without his yes.
 - [ ] **Nasser:** create the Instagram account (and a Facebook page if wanted), then link it through the normal connect link. That's the only step that needs him.
 - [ ] **Promotion** (boosting posts) is spending money, so it stays off until he says yes and names a budget.
 
@@ -80,7 +80,7 @@ would. Everything up to linking the account can be built now.
 ## Only Nasser can do these
 
 - Merge the PR and run `prisma migrate deploy` on the production database (new migrations, including `20261117c_post_requests`).
-- Create Handled's own Instagram account and link it, once the house account is built (section 5).
+- Handled's own Instagram: create the account, press "Handled's own account" on the admin page and give it your phone, then open the connect link it shows and log in.
 - Turn on the Stripe customer portal, so the "update your card" link works.
 - Set the Post for Me redirect URL and run one live account-linking test.
 - Add the Anthropic and OpenAI keys when you're ready for the all-out look (designed posts and top-quality photos).

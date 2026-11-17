@@ -23,6 +23,8 @@ import { ReelQueueService } from '../scheduler/reel-queue.service';
 import { ADMIN_PAGE_HTML } from './admin-page';
 import { assertAdmin } from './admin-auth';
 import { ReferralCreditService } from '../billing/referral-credit.service';
+import { ConciergeService } from '../concierge/concierge.service';
+import { NOT_HOUSE, setUpHouseAccount } from './house-account';
 
 const PublishNowBody = z.object({ postId: z.string().uuid() });
 
@@ -133,7 +135,32 @@ export class AdminController {
     private readonly storage: StorageService,
     private readonly reelQueue: ReelQueueService,
     private readonly referrals?: ReferralCreditService,
+    private readonly concierge?: ConciergeService,
   ) {}
+
+  /**
+   * Set up Handled's own account on the owner's phone (house-account.ts), and
+   * plan its first week. Each draft is texted to that phone for a yes; nothing
+   * publishes until the Instagram is linked through the connect link returned
+   * here.
+   */
+  @HttpPost('house-account')
+  async houseAccount(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
+    assertAdmin(token);
+    const parsed = z.object({ phone: z.string().min(7) }).safeParse(body);
+    if (!parsed.success) return { error: 'bad_request', detail: parsed.error.issues };
+    const out = await setUpHouseAccount(this.prisma, parsed.data.phone);
+    if ('error' in out) return out;
+    const planning = this.concierge
+      ? this.concierge.planIfIdle(out.customerId, { promptedByOwner: false }).catch(() => false)
+      : Promise.resolve(false);
+    void planning;
+    return {
+      ...out,
+      connectLink: `${process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com'}/connect?c=${out.customerId}`,
+      next: 'Open the connect link and log in to the Handled Instagram. The first draft is being written and will be texted to this phone for a yes.',
+    };
+  }
 
   /**
    * The operator's page. Served WITHOUT a token on purpose: this is an empty
@@ -806,8 +833,8 @@ export class AdminController {
       mediaMix: await this.metrics.mediaMix(),
       counts: {
         leads: await this.prisma.lead.count(),
-        customers: await this.prisma.customer.count(),
-        activeCustomers: await this.prisma.customer.count({ where: { status: 'active' } }),
+        customers: await this.prisma.customer.count({ where: NOT_HOUSE }),
+        activeCustomers: await this.prisma.customer.count({ where: { status: 'active', ...NOT_HOUSE } }),
         // A real count: failedPosts below is the 25 most recent, so its
         // length stopped at 25 however many had failed.
         failedPosts: await this.prisma.post.count({ where: { status: 'failed' } }),

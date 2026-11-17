@@ -112,6 +112,7 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
       <span class="grow"></span>
       <span id="stamp" class="cap"></span>
       <button onclick="load()">Refresh</button>
+      <button onclick="houseAccount()">Handled's own account</button>
       <button onclick="forget()">Forget token</button>
     </div>
 
@@ -283,6 +284,19 @@ async function approve(id){
   await api('/admin/approve',{method:'POST',
     body:JSON.stringify({postId:id,approvedBy:who.trim()})});
   load();
+}
+
+async function houseAccount(){
+  // Handled runs its own Instagram as a customer. Drafts go to this phone for
+  // a yes, so it has to be a real number that isn't a paying customer's.
+  const phone=prompt('Which phone should Handled\'s own drafts be texted to for a yes?');
+  if(!phone)return;
+  const r=await api('/admin/house-account',{method:'POST',body:JSON.stringify({phone:phone.trim()})});
+  const box=document.getElementById('err');
+  if(r.error){box.innerHTML='<div class="err">'+esc(typeof r.detail==='string'?r.detail:'Could not set it up: '+r.error)+'</div>';return;}
+  box.innerHTML='Handled\'s account is set up on '+esc(r.phone)+'. Now <a href="'+esc(r.connectLink)+
+    '" target="_blank" rel="noopener">open the connect link</a> and log in to the Handled Instagram. '+
+    'The first draft will be texted to that phone for a yes.';
 }
 
 if(TOKEN)load();
