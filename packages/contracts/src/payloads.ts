@@ -218,7 +218,7 @@ export type GenerateCarouselPayload = z.infer<typeof GenerateCarouselPayload>;
 // Kill switch (§8). Halt all scheduled publishing immediately.
 export const PauseCustomerPayload = z
   .object({
-    reason: z.enum(['owner_stop', 'billing', 'moderation', 'admin']),
+    reason: z.enum(['owner_stop', 'billing', 'moderation', 'admin', 'subscription_ended']),
     resume: z
       .boolean()
       .default(false)

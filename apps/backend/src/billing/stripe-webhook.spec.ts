@@ -588,6 +588,50 @@ describe('Getting back on after a billing pause', () => {
   });
 });
 
+describe('Stripe subscription ended', () => {
+  const ended = (ctrl: any) =>
+    ctrl.onSubscriptionDeleted({
+      type: 'customer.subscription.deleted',
+      data: { object: { customer: 'cus_stripe_123' } },
+    });
+
+  it('pauses as "ended", not as a failed payment, and says how to restart', async () => {
+    const rows: Record<string, any> = {
+      '+15550001111': { id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123', status: 'active' },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await ended(ctrl);
+    assert.equal(rows['+15550001111'].pausedReason, 'subscription_ended');
+    assert.match(calls.notified[0], /\/billing\b/);
+    assert.doesNotMatch(calls.notified[0], /card|payment/i);
+  });
+
+  it('a later invoice.paid alone does not lift it (only a new checkout does)', async () => {
+    const rows: Record<string, any> = {
+      '+15550001111': {
+        id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123',
+        status: 'paused', pausedReason: 'subscription_ended',
+      },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await ctrl.onInvoicePaid({ type: 'invoice.paid', data: { object: { customer: 'cus_stripe_123' } } });
+    assert.equal(calls.tasks.length, 0);
+  });
+
+  it('re-subscribing after it ends brings them back', async () => {
+    const rows: Record<string, any> = {
+      '+14244098341': {
+        id: 'c1', phone: '+14244098341', stripeCustomerId: 'cus_old',
+        status: 'paused', pausedReason: 'subscription_ended', onboarded: true,
+      },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await checkout(ctrl, '+14244098341');
+    assert.equal(rows['+14244098341'].status, 'active');
+    assert.match(calls.notified.at(-1), /Welcome back/);
+  });
+});
+
 describe('Stripe checkout after an email signup', () => {
   it('attaches the phone to the email customer instead of making a second one', async () => {
     const rows: Record<string, any> = {

@@ -463,14 +463,20 @@ export class StripeWebhookController {
       task_id: randomUUID(),
       customer_id: customer.id,
       type: 'PAUSE_CUSTOMER',
-      payload: { reason: 'billing', resume: false },
+      // Not 'billing': nothing failed. Every later text would otherwise say
+      // their payment didn't go through and offer a card update that can't
+      // restart an ended plan.
+      payload: { reason: 'subscription_ended', resume: false },
       requires_approval: false,
       created_by: 'concierge',
       created_at: new Date().toISOString(),
     } as Task);
+    const site = (process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com').replace(/\/+$/, '');
     await this.concierge.notify(
       customer.id,
-      "Your subscription has ended, so I've paused all posting — nothing will go out. If you ever want to pick things back up, I'm one text away. Thank you for letting me run your social media 💛",
+      "Your subscription has ended, so I've paused all posting and nothing will go out. " +
+        `If you ever want to pick things back up, choose a plan at ${site}/billing and I'll carry on where we left off. ` +
+        'Thank you for letting me run your social media 💛',
     );
   }
 

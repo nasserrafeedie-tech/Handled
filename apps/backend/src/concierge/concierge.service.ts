@@ -340,6 +340,15 @@ export class ConciergeService {
         }
         return;
       }
+      if (reason === 'subscription_ended') {
+        const site = (process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com').replace(/\/+$/, '');
+        return this.reply(
+          this.addressOf(customer),
+          conversation.id,
+          'Your subscription has ended, so nothing is posting. If you want to pick back up, ' +
+            `choose a plan here and I'll carry on where we left off: ${site}/billing`,
+        );
+      }
       if (reason === 'billing') {
         return this.reply(
           this.addressOf(customer),
@@ -374,6 +383,17 @@ export class ConciergeService {
       return this.handleFreeTaste(customer, conversation.id, msg, created);
     }
 
+    // 1e. Ending the plan — "I want to cancel my subscription". It isn't about
+    //     a post: without this it reached the draft queue and got "Reply yes
+    //     to send that draft". Cancelling lives in their Stripe portal.
+    if (CANCEL_PLAN_RE.test(msg.body)) {
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        `You can cancel any time on your billing page: ${portalLink(customer.id)} ` +
+          "If something isn't working for you, tell me and I'll try to fix it.",
+      );
+    }
     // 1e. Billing — "billing", "update my card". The answer is always the same
     //     signed link to their Stripe portal, so it needs no interpretation.
     //     The expired-link page tells owners to text exactly this.
@@ -2665,3 +2685,7 @@ export function lastMessageShowsDraft(body: string | null, caption: string | nul
   if (snippet && body.includes(snippet)) return true;
   return /\bdraft\b|reply\s*[“"']?(?:yes|post it)/i.test(body);
 }
+
+/** Asking to end the plan itself, not to skip a post. */
+export const CANCEL_PLAN_RE =
+  /\b(?:cancel|end|stop|quit|terminate)\s+(?:my\s+|the\s+|our\s+)?(?:subscription|membership|plan|account|service|handled)\b|\bhow (?:do|can) i cancel\b(?!\s+(?:a|the|this|that|my)\s+post)/i;
