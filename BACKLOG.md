@@ -12,7 +12,7 @@ Last re-ranked: 2026-11-17.
 
 - [x] **Weekly loop journey.** Ran plan → approve → publish → metrics → Friday text against a fake Post for Me. Found and fixed: a repeated rewrite said "Reworked it" (`bfab2e0`). Simulate a whole week for one customer: plan the week, draft the posts, text them for approval, the owner says yes, the posts publish, metrics come back. Mock Twilio, Stripe, Post for Me and the LLM. Fix whatever breaks.
 - [x] **Risk gate on publishing.** Fixed: "#1" claims never matched, health claims weren't flagged, carousel slide text and the reel's burned-in hook skipped the check.
-- [ ] **Plan changes in Stripe.** Make sure `customer.subscription.updated` (an upgrade, a downgrade or a card that is fixed) moves the customer's tier and status, not just `checkout.session.completed`.
+- [x] **Plan changes in Stripe.** The tier already moved. Fixed: the upgrade text always said "carousels are switched on", even on Growth → Pro. It now names what the new plan adds. The homepage said reels come with Growth; code and billing say Pro, so the homepage now says Pro. Make sure `customer.subscription.updated` (an upgrade, a downgrade or a card that is fixed) moves the customer's tier and status, not just `checkout.session.completed`.
 - [ ] **Unpaid price question (F3).** Someone who hasn't paid asks "how much is it?" and gets the paywall text with no price in it. Give them the plan prices and the link.
 - [ ] **Email signup re-asks the business name (F18).** Someone who signs up on the web with a business name gets asked for it again over text.
 - [ ] **"What's coming up" hides drafts (F17).** The answer lists scheduled posts only. It leaves out drafts that are waiting on the owner, and those are the ones that need them.

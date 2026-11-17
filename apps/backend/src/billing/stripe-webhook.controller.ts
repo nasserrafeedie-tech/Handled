@@ -18,7 +18,7 @@ import type { PlanId } from './billing.service';
 import { ReferralCreditService } from './referral-credit.service';
 import { portalLink } from './portal-link';
 import { normalizePhone } from '../common/phone';
-import { socialLimit, isGoogleBusiness } from '../operator/tier-entitlements';
+import { socialLimit, isGoogleBusiness, postsPerWeek } from '../operator/tier-entitlements';
 
 /**
  * Plan order, for telling an upgrade from a downgrade. Only used to decide
@@ -234,11 +234,7 @@ export class StripeWebhookController {
     // Only speak up on an upgrade. A downgrade is a decision they already made
     // and being congratulated on losing features reads as tone-deaf.
     if (RANK[plan] > RANK[from]) {
-      await this.concierge.notify(
-        customer.id,
-        "You're on the new plan — carousels are switched on, and you'll see " +
-          "them in this week's posts. Nothing else changes.",
-      );
+      await this.concierge.notify(customer.id, upgradeText(from, plan));
     }
   }
 
@@ -508,4 +504,24 @@ export class StripeWebhookController {
       }
     });
   }
+}
+
+/**
+ * What an upgrade switches on, in the owner's words, named against the plan
+ * they came from. A flat "carousels are switched on" was wrong for anyone
+ * moving Growth → Pro: they already had carousels and paid for reels.
+ */
+export function upgradeText(from: string, to: PlanId): string {
+  const rank = (t: string) => RANK[t as PlanId] ?? 0;
+  const parts: string[] = [];
+  if (rank(from) < RANK.growth && rank(to) >= RANK.growth) parts.push('carousels are switched on');
+  if (rank(to) >= RANK.pro) parts.push("I'll cut reels from short clips you send through your upload link");
+  const before = postsPerWeek(from);
+  const after = postsPerWeek(to);
+  if (after > before) parts.push(after >= 7 ? "you'll get a post every day" : `you'll get ${after} posts a week instead of ${before}`);
+  const accounts = socialLimit(to) - socialLimit(from);
+  if (accounts > 0) parts.push(`you can link ${accounts === 1 ? 'one more account' : `${accounts} more accounts`}`);
+  const name = to === 'pro' ? 'Pro' : 'Growth';
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] ?? 'nothing else changes';
+  return `You're on ${name} now: ${list}. It starts with your next weekly plan.`;
 }

@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { Prisma } from '@prisma/client';
-import { StripeWebhookController } from './stripe-webhook.controller';
+import { StripeWebhookController, upgradeText } from './stripe-webhook.controller';
 
 /**
  * Payment must land on the customer who already exists.
@@ -244,6 +244,30 @@ describe('Stripe subscription updated → plan tier', () => {
     const { ctrl, calls } = makeController(starterCustomer());
     await updated(ctrl, 'price_growth');
     assert.match(calls.notified.join(' '), /carousel/i);
+  });
+
+  it('Growth → Pro names reels and daily posts, not the carousels they already had', async () => {
+    const rows = starterCustomer();
+    rows['+14244098341'].planTier = 'growth';
+    const { ctrl, calls } = makeController(rows);
+    await updated(ctrl, 'price_pro');
+    const text = calls.notified.join(' ');
+    assert.match(text, /reels/);
+    assert.match(text, /every day/);
+    assert.doesNotMatch(text, /carousel/i);
+  });
+
+  it('Starter → Pro names everything the jump adds', () => {
+    const text = upgradeText('starter', 'pro');
+    assert.match(text, /carousels/);
+    assert.match(text, /reels/);
+    assert.match(text, /every day/);
+    assert.match(text, /3 more accounts/);
+  });
+
+  it('Starter → Growth gives the real cadence change', () => {
+    assert.match(upgradeText('starter', 'growth'), /5 posts a week instead of 3/);
+    assert.match(upgradeText('starter', 'growth'), /one more account/);
   });
 
   it('stays quiet on a downgrade', async () => {
