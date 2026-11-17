@@ -205,3 +205,33 @@ export function parseTimeLocally(
   if (!date && when.getTime() <= now.getTime()) when = zonedToUtc(dayOffset(1), time, timeZone);
   return when;
 }
+
+/** The local times an unplanned post may take, in order of preference. */
+const OPEN_TIMES = ['09:00', '12:30', '17:00'];
+
+/**
+ * The first open time for a post that came with no slot of its own (a reel, a
+ * graphic): from tomorrow, at 9:00, 12:30 or 17:00 in the owner's zone, the
+ * first one with no other live post within two hours. Two posts going out in
+ * the same minute split the audience and look like a glitch. Looks a week
+ * ahead, then falls back to tomorrow 9:00.
+ */
+export function openSlot(taken: readonly Date[], timeZone: string, now = Date.now()): Date {
+  const GAP = 2 * 3_600_000;
+  for (let d = 1; d <= 7; d++) {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(
+      new Date(now + d * 86_400_000),
+    );
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '01';
+    const day = `${get('year')}-${get('month')}-${get('day')}`;
+    for (const hm of OPEN_TIMES) {
+      const at = zonedToUtc(day, hm, timeZone);
+      if (taken.every((t) => Math.abs(t.getTime() - at.getTime()) >= GAP)) return at;
+    }
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(
+    new Date(now + 86_400_000),
+  );
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '01';
+  return zonedToUtc(`${get('year')}-${get('month')}-${get('day')}`, '09:00', timeZone);
+}

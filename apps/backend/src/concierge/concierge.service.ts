@@ -34,6 +34,7 @@ import {
   tomorrowMorningInZone,
   zonedToUtc,
   parseTimeLocally,
+  openSlot,
 } from '../common/time';
 import { z } from 'zod';
 import { strategySummary } from './strategy-summary';
@@ -1128,7 +1129,9 @@ export class ConciergeService {
         const when =
           (timed ? new Date(Math.max(timed.when.getTime(), Date.now() + 60_000)) : null) ??
           rollForward(pending!.scheduledTime) ??
-          tomorrowMorningInZone(tz);
+          // A post with no slot of its own (a reel, a graphic) takes the
+          // first open time, not tomorrow 9:00 on top of a planned post.
+          openSlot(await this.takenTimes(customerId, pending!.id), tz);
         const result = await this.bus.emit(
           this.task(customerId, 'SCHEDULE_POST', {
             post_id: pending!.id,
@@ -1947,6 +1950,20 @@ export class ConciergeService {
     return { postId: next?.id, shownDraft: false };
   }
 
+  /** When this customer's other live posts go out, for finding an open slot. */
+  private async takenTimes(customerId: string, exceptPostId: string): Promise<Date[]> {
+    const rows = await this.prisma.post.findMany({
+      where: {
+        customerId,
+        id: { not: exceptPostId },
+        status: { in: ['scheduled', 'approved', 'pending_approval'] },
+        scheduledTime: { gte: new Date() },
+      },
+      select: { scheduledTime: true },
+    });
+    return rows.map((r) => r.scheduledTime).filter((t): t is Date => !!t);
+  }
+
   async presentNextDraft(
     customerId: string,
     lead?: string,
@@ -1978,6 +1995,19 @@ export class ConciergeService {
     // (it lands on THIS post) or approve as text-only. Posts that already have
     // a carousel or photo skip the ask.
     const needsPhoto = next.mediaRefs.length === 0;
+    // A reel is approved by watching it: give the link and say what it is.
+    // Not attached: a video over MMS is cut down or dropped by many carriers.
+    const reel = next.mediaRefs.find((k) => /\.mp4($|\?)/i.test(k));
+    if (reel) {
+      const url = /^https?:\/\//.test(reel) ? reel : this.storage.publicUrl(reel);
+      const reelBody =
+        (lead ? `${lead}\n\n` : '') +
+        `Reel${when} 🎬 Watch it here: ${url}\n\nCaption:\n\n“${(next.caption ?? '').trim()}”\n\n` +
+        'Reply “yes” to schedule it, or tell me what to change.';
+      await this.notify(customerId, reelBody, { ...opts });
+      await this.prisma.post.update({ where: { id: next.id }, data: { presentedAt: new Date() } });
+      return true;
+    }
     // The whole carousel travels with the draft — the owner is approving the
     // deck, not its cover. MMS caps at 10 attachments / ~5MB; slides are flat
     // PNGs well under that, and the catch below degrades to slide 1 if a
