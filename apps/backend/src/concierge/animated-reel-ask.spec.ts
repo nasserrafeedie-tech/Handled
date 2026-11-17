@@ -54,7 +54,7 @@ describe('asking for an animated reel by text', () => {
     const w = concierge(false);
     await w.ask('pro', 'promo');
     assert.equal(w.emitted[0].type, 'ANIMATED_REEL');
-    assert.deepEqual(w.emitted[0].payload, { kind: 'promo', platform: 'instagram' });
+    assert.deepEqual(w.emitted[0].payload, { kind: 'promo', platform: 'instagram', owner_asked: true });
     assert.equal(w.sent[0], 'Your promo reel is ready');
   });
 });

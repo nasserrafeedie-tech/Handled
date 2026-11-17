@@ -238,6 +238,32 @@ export function isPriceQuestion(body: string): boolean {
 }
 
 /**
+ * A paying owner asking what the plans cost ("how much is pro", "what does
+ * growth cost"). Narrower than isPriceQuestion: "what's my plan" is about
+ * their strategy, and "how much should I charge" is about their business, so
+ * it has to name a plan or Handled itself.
+ */
+export function isPaidPriceQuestion(body: string): boolean {
+  const t = body.trim();
+  if (!t || t.split(/\s+/).length > 10) return false;
+  return (
+    /\bhow much\b|\b(price|prices|pricing|cost|costs|monthly fee)\b/i.test(t) &&
+    /\b(starter|growth|pro|plans?|upgrade|upgrading|handled|subscription|tiers?)\b/i.test(t)
+  );
+}
+
+/** The three prices, then where they stand and the next step up. */
+export function paidPriceText(planTier: string | null): string {
+  const tier = (planTier ?? '').toLowerCase();
+  const name = tier === 'pro' ? 'Pro' : tier === 'growth' ? 'Growth' : 'Starter';
+  const list =
+    'Starter is $95/mo (3 posts a week), Growth $349/mo (5 a week, plus designed carousels) ' +
+    'and Pro $699/mo (a post every day, plus reels).';
+  if (tier === 'pro') return `${list} You're on Pro, the top plan.`;
+  return `${list} You're on ${name}. Reply UPGRADE and I'll move you to ${tier === 'growth' ? 'Pro' : 'Growth'}.`;
+}
+
+/**
  * A short text about Handled itself rather than about their business: asking
  * to sign up ("sign me up for starter", "how do I pay") or what this is ("how
  * does this work?"). Before this, the free-taste lane took either one as the
@@ -545,6 +571,12 @@ export class ConciergeService {
           upgrade: upgradePitch(customer.planTier),
         }),
       );
+    }
+
+    // 4d. A paying owner asking what the plans cost. Used to reach the open
+    //     question path, which has no price list and could guess.
+    if (isPaidPriceQuestion(msg.body)) {
+      return this.reply(this.addressOf(customer), conversation.id, paidPriceText(customer.planTier));
     }
 
     // 4. Graphic request ("make a graphic/carousel/quote card/promo...").
@@ -898,12 +930,20 @@ export class ConciergeService {
     conversationId: string,
     body: string,
   ): Promise<void> {
-    // Oldest first: this is the one we last showed them, so "yes" resolves
-    // the draft they are actually looking at.
-    const pending = await this.prisma.post.findFirst({
-      where: { customerId, status: 'pending_approval' },
-      orderBy: { createdAt: 'asc' },
-    });
+    // The draft they're looking at: the one we showed them last. Usually
+    // that's the oldest, since drafts come one at a time, but a graphic or
+    // reel they asked for is shown straight away, ahead of the queue. Before,
+    // "yes" always took the oldest, so a carousel asked for during onboarding
+    // waited behind eight drafts (QA, Nov 17). Nothing shown yet: the oldest.
+    const pending =
+      (await this.prisma.post.findFirst({
+        where: { customerId, status: 'pending_approval', presentedAt: { not: null } },
+        orderBy: { presentedAt: 'desc' },
+      })) ??
+      (await this.prisma.post.findFirst({
+        where: { customerId, status: 'pending_approval' },
+        orderBy: { createdAt: 'asc' },
+      }));
 
     // A color question we asked is answered by whatever comes next —
     // intercept before intent classification sends "oxblood and cream" to
@@ -1471,6 +1511,7 @@ export class ConciergeService {
         platform: 'instagram',
         ...(ask.offerText ? { offer_text: ask.offerText } : {}),
         ...(ask.mediaAssetIds?.length === 2 ? { media_asset_ids: ask.mediaAssetIds } : {}),
+        owner_asked: true,
       }),
     );
     return this.reply(phone, conversationId, result.summary_for_owner);
@@ -1499,27 +1540,36 @@ export class ConciergeService {
       this.log.warn(`caption for a requested graphic failed for ${customerId}: ${String(e)}`);
       return null;
     });
+    // "Make a carousel about…" on a plan with carousels: a real deck written
+    // from the post, not a single title card (QA, Nov 17). If the deck can't
+    // be made, the single graphic below still goes out.
+    if (postId && /\b(carousel|slides|slideshow|swipe)\b/i.test(body)) {
+      const owner = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { planTier: true } });
+      if (tierHas(owner?.planTier ?? 'starter', 'carousel')) {
+        const deck = await this.bus
+          .emit(
+            this.task(customerId, 'GENERATE_CAROUSEL', {
+              post_id: postId,
+              owner_feedback: `The owner asked for this carousel by text: ${body.slice(0, 400)}`,
+            }),
+          )
+          .catch((e) => ({ error: { code: 'threw', message: String(e) } }) as { error: unknown });
+        if (!deck.error) {
+          await this.presentNextDraft(customerId, 'Made it ✳ Here it is as a post:', { promptedByOwner: true, postId });
+          return;
+        }
+        this.log.warn(`requested carousel failed for ${customerId}, sending a single graphic`);
+      }
+    }
     const result = await this.bus.emit(
       this.task(customerId, 'MAKE_GRAPHIC', postId ? { slides, post_id: postId } : { slides }),
     );
     if (!postId || result.error) {
       return this.reply(phone, conversationId, result.summary_for_owner, mediaOf(result));
     }
-    // Drafts are shown oldest first, so this one comes after every draft
-    // already waiting. "Next in line" was wrong with three ahead of it (QA
-    // round 5), so say how many.
-    const waiting = await this.prisma.post.count({
-      where: { customerId, status: 'pending_approval', id: { not: postId } },
-    });
-    if (waiting) {
-      const ahead = waiting === 1 ? 'the draft already waiting on you' : `the ${waiting} drafts already waiting on you`;
-      return this.reply(
-        phone,
-        conversationId,
-        `Made it ✳ It's a post now, and I'll bring it back for your yes right after ${ahead}.`,
-        mediaOf(result),
-      );
-    }
+    // They asked for it, so it's shown now and "yes" answers it; the drafts
+    // already waiting come back after (handleSteadyState takes the draft
+    // shown last).
     await this.presentNextDraft(customerId, 'Made it ✳ Here it is as a post:', {
       promptedByOwner: true,
       postId,
@@ -1988,14 +2038,7 @@ export class ConciergeService {
     });
     const post = video?.post;
     if (!video || !post || post.status === 'cancelled' || post.status === 'failed' || post.status === 'draft') return false;
-    const [waitingAhead, tz] = await Promise.all([
-      post.status === 'pending_approval'
-        ? this.prisma.post.count({
-            where: { customerId, status: 'pending_approval', id: { not: post.id }, createdAt: { lt: post.createdAt } },
-          })
-        : Promise.resolve(0),
-      this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }),
-    ]);
+    const tz = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } });
     await this.reply(
       phone,
       conversationId,
@@ -2004,9 +2047,13 @@ export class ConciergeService {
         url: /^https?:\/\//.test(video.r2Key) ? video.r2Key : this.storage.publicUrl(video.r2Key),
         status: post.status,
         when: post.scheduledTime ? formatInZone(post.scheduledTime, tz?.timezone ?? 'America/Los_Angeles') : null,
-        waitingAhead,
       }),
     );
+    // A waiting reel they just asked to see is the draft in front of them,
+    // so "yes" now answers it.
+    if (post.status === 'pending_approval') {
+      await this.prisma.post.update({ where: { id: post.id }, data: { presentedAt: new Date() } });
+    }
     return true;
   }
 
@@ -3206,13 +3253,20 @@ export function buildSlidesFromText(
   return [{ kind: 'title', headline }];
 }
 
-/** Remove the leading "make a graphic/carousel ... that says/about" command. */
-function stripCommand(text: string): string {
+/**
+ * Remove the ask around the subject: "can you make a carousel about our nail
+ * trims please?" → "our nail trims". The slide shows what's left, so a polite
+ * ask used to print "Can you make a carousel about…" on the graphic (QA,
+ * Nov 17).
+ */
+export function stripCommand(text: string): string {
   return text
+    .replace(/^\s*(?:hey|hi|ok|okay|so)\b[\s,!.]*/i, '')
     .replace(
-      /^\s*(please\s+)?(make|create|build|design)\s+(me\s+)?a\s+(graphic|carousel|slide|quote card|promo(?:\s+post|\s+graphic)?|flyer|post)\s*(that says|saying|about|for|:)?\s*/i,
+      /^\s*(?:(?:please|pls|plz)\s+)?(?:(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+|pls\s+)?|i\s+(?:need|want|would like|'?d like)\s+(?:you\s+to\s+)?|let'?s\s+)?(?:make|create|build|design|do|whip up|put together|get)?\s*(?:me\s+|us\s+)?(?:a|an|another|one|some)?\s*(?:new\s+)?(?:graphic|carousel|slides?|slideshow|quote card|promo(?:\s+post|\s+graphic)?|flyer|post|image|banner|story)s?\s*(?:that says|saying|about|for|on|of|:)?\s*/i,
       '',
     )
+    .replace(/[\s,]*(?:please|pls|plz|thanks|thank you|thx)?[\s?.!]*$/i, '')
     .replace(/^["“]|["”]$/g, '')
     .trim();
 }

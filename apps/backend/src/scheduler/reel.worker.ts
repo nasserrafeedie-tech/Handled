@@ -111,6 +111,7 @@ export function buildReelTask(data: ReelJobData): Task {
         platform: data.platform,
         ...(data.animated.offerText ? { offer_text: data.animated.offerText } : {}),
         ...(data.animated.mediaAssetIds?.length === 2 ? { media_asset_ids: data.animated.mediaAssetIds } : {}),
+        ...(data.weekly ? {} : { owner_asked: true }),
       },
     } as Task;
   }
@@ -120,6 +121,7 @@ export function buildReelTask(data: ReelJobData): Task {
     payload: {
       platform: data.platform,
       ...(data.mediaAssetIds?.length ? { media_asset_ids: data.mediaAssetIds } : {}),
+      ...(data.weekly ? {} : { owner_asked: true }),
     },
   } as Task;
 }

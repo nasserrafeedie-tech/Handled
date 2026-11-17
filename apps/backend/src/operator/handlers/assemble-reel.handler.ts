@@ -314,12 +314,15 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
     const waitingAhead = await this.prisma.post.count({
       where: { customerId: task.customer_id, status: 'pending_approval', id: { not: post.id } },
     });
-    if (!waitingAhead && verdict.passed) {
+    // Shown now when nothing is ahead, or when the owner sent the clips: then
+    // this text is the draft in front of them and "yes" answers it.
+    const ownerAsked = !!task.payload.owner_asked;
+    if ((!waitingAhead || ownerAsked) && verdict.passed) {
       await this.prisma.post.update({ where: { id: post.id }, data: { presentedAt: new Date() } });
     }
     return ok(
       task.task_id,
-      reelReadyText('reel', this.storage.publicUrl(r2Key), waitingAhead),
+      reelReadyText('reel', this.storage.publicUrl(r2Key), waitingAhead, ownerAsked),
       'pending_approval',
       {
         post_id: post.id,

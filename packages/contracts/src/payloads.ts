@@ -133,6 +133,9 @@ export const AssembleReelPayload = z
     hook_text: z.string().max(80).optional(),
     platform: Platform.default('instagram'),
     scheduled_time: iso8601.optional(),
+    /** The owner asked for it (not the weekly plan), so it's shown as soon
+     *  as it's ready and "yes" answers it, even with older drafts waiting. */
+    owner_asked: z.boolean().optional(),
   })
   .strict();
 export type AssembleReelPayload = z.infer<typeof AssembleReelPayload>;
@@ -151,6 +154,9 @@ export const AnimatedReelPayload = z
     media_asset_ids: z.array(uuid).length(2).optional(),
     platform: Platform.default('instagram'),
     scheduled_time: iso8601.optional(),
+    /** The owner asked for it (not the weekly plan), so it's shown as soon
+     *  as it's ready and "yes" answers it, even with older drafts waiting. */
+    owner_asked: z.boolean().optional(),
   })
   .strict();
 export type AnimatedReelPayload = z.infer<typeof AnimatedReelPayload>;

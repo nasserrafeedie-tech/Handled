@@ -10,16 +10,13 @@ describe('reel replies', () => {
     assert.equal(reelName('promo', 'c/x/reel.mp4'), 'reel');
   });
 
-  it('shows the link and only invites a yes when nothing is ahead of it', () => {
+  it('shows the link, invites a yes while it waits, and says where it stands', () => {
     const base = { what: 'promo reel', url: 'https://cdn/x.mp4', when: null };
-    const first = reelLookText({ ...base, status: 'pending_approval', waitingAhead: 0 });
-    assert.match(first, /https:\/\/cdn\/x\.mp4/);
-    assert.match(first, /Reply “yes”/);
-    const behind = reelLookText({ ...base, status: 'pending_approval', waitingAhead: 2 });
-    assert.doesNotMatch(behind, /Reply “yes”/);
-    assert.match(behind, /right after the 2 drafts already waiting on you/);
-    assert.match(reelLookText({ ...base, status: 'scheduled', when: 'Fri 2:00 PM', waitingAhead: 0 }), /scheduled for Fri 2:00 PM/);
-    assert.match(reelLookText({ ...base, status: 'published', waitingAhead: 0 }), /already posted/);
+    const waiting = reelLookText({ ...base, status: 'pending_approval' });
+    assert.match(waiting, /https:\/\/cdn\/x\.mp4/);
+    assert.match(waiting, /Reply “yes”/);
+    assert.match(reelLookText({ ...base, status: 'scheduled', when: 'Fri 2:00 PM' }), /scheduled for Fri 2:00 PM/);
+    assert.match(reelLookText({ ...base, status: 'published' }), /already posted/);
   });
 
   it('a plain reel ask gets the clip link, the no-footage kinds, or the upgrade', () => {
@@ -38,12 +35,13 @@ describe('reel replies', () => {
 });
 
 describe('"show me the reel" in the concierge', () => {
-  async function look(video: unknown, ahead = 0) {
+  async function look(video: unknown) {
     const { ConciergeService } = await import('./concierge.service');
     const sent: string[] = [];
+    const presented: string[] = [];
     const prisma = {
       mediaAsset: { findFirst: async () => video },
-      post: { count: async () => ahead },
+      post: { update: async (a: any) => void presented.push(a.where.id) },
       customer: { findUnique: async () => ({ timezone: 'America/Los_Angeles' }) },
     };
     const storage = { publicUrl: (k: string) => `https://cdn.example/${k}` };
@@ -51,17 +49,18 @@ describe('"show me the reel" in the concierge', () => {
     const svc = new ConciergeService(prisma as never, {} as never, ...(rest as [never]), storage as never);
     (svc as any).reply = async (_to: string, _c: string, body: string) => void sent.push(body);
     const shown = await (svc as any).showLatestReel('c1', '+1555', 'conv1');
-    return { shown, sent };
+    return { shown, sent, presented };
   }
 
-  it('sends the newest reel again with where it stands', async () => {
-    const r = await look(
-      { r2Key: 'c1/x/animated-reel.mp4', post: { id: 'p1', status: 'pending_approval', archetype: 'promo', scheduledTime: null, createdAt: new Date() } },
-      1,
-    );
+  it('sends the newest reel again, and a waiting one takes the next yes', async () => {
+    const r = await look({
+      r2Key: 'c1/x/animated-reel.mp4',
+      post: { id: 'p1', status: 'pending_approval', archetype: 'promo', scheduledTime: null, createdAt: new Date() },
+    });
     assert.equal(r.shown, true);
     assert.match(r.sent[0], /Here's your promo reel 🎬 https:\/\/cdn\.example\/c1\/x\/animated-reel\.mp4/);
-    assert.match(r.sent[0], /right after the draft already waiting on you/);
+    assert.match(r.sent[0], /Reply “yes”/);
+    assert.deepEqual(r.presented, ['p1']);
   });
 
   it('with no reel yet, or a cancelled one, leaves the text to the usual handling', async () => {

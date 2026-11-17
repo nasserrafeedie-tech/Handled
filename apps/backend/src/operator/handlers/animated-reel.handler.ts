@@ -189,14 +189,16 @@ export class AnimatedReelHandler implements TaskHandler<'ANIMATED_REEL'> {
     const waitingAhead = await this.prisma.post.count({
       where: { customerId: task.customer_id, status: 'pending_approval', id: { not: post.id } },
     });
-    if (!waitingAhead && verdict.passed) {
+    // Shown now when nothing is ahead, or when the owner asked for it: this
+    // text is then the draft in front of them, and "yes" answers it.
+    if ((!waitingAhead || p.owner_asked) && verdict.passed) {
       // This text shows it, so it counts as presented (the stranded-draft
       // sweep would otherwise text it a second time).
       await this.prisma.post.update({ where: { id: post.id }, data: { presentedAt: new Date() } });
     }
     return ok(
       task.task_id,
-      reelReadyText(what, this.storage.publicUrl(r2Key), waitingAhead),
+      reelReadyText(what, this.storage.publicUrl(r2Key), waitingAhead, !!p.owner_asked),
       'pending_approval',
       {
         post_id: post.id,

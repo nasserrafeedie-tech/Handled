@@ -10,23 +10,13 @@ export function reelName(archetype: string | null, r2Key: string): string {
 }
 
 /**
- * "show me the reel": the watch link again, and where the reel stands. "yes"
- * answers the oldest waiting draft, so it only invites a yes when nothing is
- * ahead of the reel.
+ * "show me the reel": the watch link again, and where the reel stands. A
+ * waiting reel shown this way is the draft in front of them, so "yes"
+ * answers it (the caller marks it shown).
  */
-export function reelLookText(v: {
-  what: string;
-  url: string;
-  status: string;
-  when: string | null;
-  waitingAhead: number;
-}): string {
+export function reelLookText(v: { what: string; url: string; status: string; when: string | null }): string {
   const head = `Here's your ${v.what} 🎬 ${v.url}`;
-  if (v.status === 'pending_approval') {
-    if (v.waitingAhead <= 0) return `${head}\n\nReply “yes” to schedule it, or tell me what to change.`;
-    const ahead = v.waitingAhead === 1 ? 'the draft already waiting on you' : `the ${v.waitingAhead} drafts already waiting on you`;
-    return `${head}\n\nIt's waiting for your yes, right after ${ahead}.`;
-  }
+  if (v.status === 'pending_approval') return `${head}\n\nReply “yes” to schedule it, or tell me what to change.`;
   if (v.status === 'published') return `${head}\n\nIt's already posted.`;
   if ((v.status === 'scheduled' || v.status === 'approved') && v.when) return `${head}\n\nIt's scheduled for ${v.when}.`;
   return head;

@@ -131,6 +131,14 @@ describe('ANIMATED_REEL', () => {
     assert.equal(created.post.presentedAt, undefined);
   });
 
+  it('one the owner asked for is shown now and takes the yes, even behind drafts', async () => {
+    const { handler, created } = build({ waiting: 2 });
+    const r = await handler.handle(task({ kind: 'promo', owner_asked: true }));
+    assert.match(r.summary_for_owner, /Reply “yes”/);
+    assert.match(r.summary_for_owner, /Your other 2 drafts are still waiting/);
+    assert.ok(created.post.presentedAt instanceof Date);
+  });
+
   it('counts as shown when nothing is ahead of it', async () => {
     const { handler, created } = build();
     await handler.handle(task({ kind: 'promo' }));
