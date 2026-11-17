@@ -106,7 +106,7 @@ const APPROVE_RE =
    contains revise-words, and before APPROVE because "post it right now" is
    an approval WITH a time — the reschedule handler honors both halves. */
 const RESCHEDULE_RE =
-  /\b(?:shift|move|push|bump|reschedule)\b[\s\S]{0,40}\b(?:schedule|post|posts|it|time|earlier|later|up|back|forward)\b|\b(?:change|move)\s+the\s+(?:schedule|time|timing)\b|\bstart\s+(?:posting\s+)?(?:today|now|tomorrow|this week)\b|\bpost\s+(?:it|this|everything)\s+(?:right\s+|asap\s+)?(?:now|today|tonight|tomorrow|earlier|later|sooner)\b/i;
+  /\b(?:shift|move|push|bump|reschedule)\b[\s\S]{0,40}\b(?:schedule|post|posts|it|time|earlier|later|up|back|forward)\b|\b(?:change|move)\s+the\s+(?:schedule|time|timing)\b|\bstart\s+(?:posting\s+)?(?:today|now|tomorrow|this week)\b|\bpost\s+(?:it|this|everything)\s+(?:right\s+|asap\s+)?(?:now|today|tonight|tomorrow|earlier|later|sooner)\b|\b(?:shift|move|push|bump)\b[\s\S]{0,30}\bto\s+(?:mon|tue|wed|thu|fri|sat|sun|today|tomorrow|tonight|next\s+\w+|\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b)/i;
 const REVISE_RE =
   /\b(change|edit|revise|reword|rewrite|redo|tweak|fix|swap|replace|shorter|longer|warmer|funnier|softer|punchier|different|instead|less |more |add |remove|drop the|take out|make it|can you make)\b/i;
 const QUESTION_RE =

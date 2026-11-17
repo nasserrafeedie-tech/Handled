@@ -2910,7 +2910,8 @@ export function draftIsLastAsk(
     const tagAlong =
       older &&
       sent[i].createdAt.getTime() - older.createdAt.getTime() <= 60_000 &&
-      !(sent[i].body ?? '').includes('?');
+      // A link's query string ("…/photo-walk?c=…") is not a question.
+      !(sent[i].body ?? '').replace(/https?:\/\/\S+/g, '').includes('?');
     if (!tagAlong) return false;
   }
   return false;

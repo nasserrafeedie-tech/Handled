@@ -38,7 +38,7 @@ describe('which message a bare "ok" answers', () => {
   it('a tip sent right after the first draft does not swallow the "yes" the draft asked for', () => {
     const t = new Date('2026-11-17T10:00:00Z').getTime();
     const draft = { body: 'Draft for Mon 9:00 AM:\n\n“Fresh fades.”\n\nreply “yes” to post as text-only.', createdAt: new Date(t) };
-    const tip = { body: 'One more thing — the biggest upgrade is real photos: https://x.test/photo-walk', createdAt: new Date(t + 2000) };
+    const tip = { body: 'One more thing — the biggest upgrade is real photos: https://x.test/photo-walk?c=abc — a short checklist.', createdAt: new Date(t + 2000) };
     assert.ok(draftIsLastAsk([tip, draft], 'Fresh fades.'));
     const later = { ...tip, createdAt: new Date(t + 3 * 3600_000) };
     assert.equal(draftIsLastAsk([later, draft], 'Fresh fades.'), false, 'a notice hours later is the last word');
