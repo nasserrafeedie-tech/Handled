@@ -237,7 +237,7 @@ model PlaybookArchetype {
 // it: said once is tentative, said again is confirmed. So a throwaway comment
 // can't quietly rewrite how every future post is written.
 model CustomerPreference {
-  id         String   @id @default(uuid()) @db.Uuid
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   customerId String   @db.Uuid
   // The preference as it reads in the prompt: a short instruction.
   text       String
@@ -260,7 +260,7 @@ model CustomerPreference {
 }
 
 model LlmUsage {
-  id           String   @id @default(uuid()) @db.Uuid
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // Null for work not tied to one customer (playbook research, for instance,
   // which is paid once and reused by everyone in that trade).
   customerId   String?  @db.Uuid
@@ -293,7 +293,7 @@ model LlmUsage {
 // Pooled only in aggregate. No caption, no customer, and nothing identifying
 // crosses between businesses — just the counts.
 model ArchetypePerformance {
-  id            String   @id @default(uuid()) @db.Uuid
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // Which playbook archetype (the kind of business).
   archetypeSlug String
   // Which post format within it (promo, behind_the_scenes, …).
@@ -305,7 +305,7 @@ model ArchetypePerformance {
   engagements   BigInt   @default(0)
   updatedAt     DateTime @updatedAt
 
-  @@unique([archetypeSlug, postArchetype, platform])
+  @@unique([archetypeSlug, postArchetype, platform], map: "archetype_performance_slug_format_platform_key")
   @@index([archetypeSlug])
   @@map("archetype_performance")
 }
