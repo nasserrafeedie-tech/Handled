@@ -69,12 +69,17 @@ export function strategySummary(v: StrategyView): string {
 
   if (v.upcoming.length) {
     lines.push('', 'Coming up:');
-    for (const p of v.upcoming.slice(0, 3)) {
+    // A draft waiting on their OK goes first and says so: it's the one line
+    // here they have to act on. Sorting is stable, so time order holds within.
+    const waiting = (p: { status: string }) => (p.status === 'pending_approval' ? 0 : 1);
+    const shown = [...v.upcoming].sort((a, b) => waiting(a) - waiting(b)).slice(0, 3);
+    for (const p of shown) {
       const when = p.scheduledTime
         ? formatInZone(p.scheduledTime, v.timezone)
         : 'soon';
       const preview = (p.caption ?? '').replace(/\s+/g, ' ').slice(0, 60);
-      lines.push(`· ${when} — "${preview}${preview.length >= 60 ? '…' : ''}"`);
+      const ask = p.status === 'pending_approval' ? ' (waiting on your OK)' : '';
+      lines.push(`· ${when} — "${preview}${preview.length >= 60 ? '…' : ''}"${ask}`);
     }
   }
 

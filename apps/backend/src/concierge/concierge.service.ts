@@ -1604,9 +1604,11 @@ export class ConciergeService {
       this.prisma.customer.findUnique({ where: { id: customerId } }),
       this.prisma.brandProfile.findUnique({ where: { customerId } }),
       this.prisma.post.findMany({
-        where: { customerId, status: { in: ['approved', 'scheduled'] } },
+        // Drafts waiting on the owner are the ones that need them, so they
+        // belong in "coming up" too (F17). The summary puts them first.
+        where: { customerId, status: { in: ['pending_approval', 'approved', 'scheduled'] } },
         orderBy: { scheduledTime: 'asc' },
-        take: 3,
+        take: 6,
         select: { caption: true, scheduledTime: true, status: true },
       }),
       this.prisma.post.count({

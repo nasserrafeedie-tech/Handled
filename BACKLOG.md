@@ -15,7 +15,7 @@ Last re-ranked: 2026-11-17.
 - [x] **Plan changes in Stripe.** The tier already moved. Fixed: the upgrade text always said "carousels are switched on", even on Growth → Pro. It now names what the new plan adds. The homepage said reels come with Growth; code and billing say Pro, so the homepage now says Pro. Make sure `customer.subscription.updated` (an upgrade, a downgrade or a card that is fixed) moves the customer's tier and status, not just `checkout.session.completed`.
 - [x] **Unpaid price question (F3).** Fixed: it now gets the three prices and the link, and no longer spends the free draft on the question. Someone who hasn't paid asks "how much is it?" and gets the paywall text with no price in it. Give them the plan prices and the link.
 - [x] **Email signup re-asks the business name (F18).** Fixed: the first question and the free-draft intro use the name they gave instead of asking "what's it called". Someone who signs up on the web with a business name gets asked for it again over text.
-- [ ] **"What's coming up" hides drafts (F17).** The answer lists scheduled posts only. It leaves out drafts that are waiting on the owner, and those are the ones that need them.
+- [x] **"What's coming up" hides drafts (F17).** Fixed: drafts waiting on the owner are listed first and marked "waiting on your OK". The answer lists scheduled posts only. It leaves out drafts that are waiting on the owner, and those are the ones that need them.
 - [ ] **Duplicates and gibberish.** Twilio sends the same message twice, or the owner sends "asdfgh" or only an emoji. Make sure there's no double reply and no confused answer.
 
 ## 2. Results the owner can see (keeps them paying)
