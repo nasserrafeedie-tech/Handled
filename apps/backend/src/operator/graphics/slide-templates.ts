@@ -52,8 +52,10 @@ export type SlideKind = 'title' | 'body' | 'quote' | 'promo' | 'cta';
  *   card  — photo fills the frame, text sits in a floating card
  *   band  — photo on top, solid brand color below
  *   frame — photo inset with a margin, like a print on a mat, words below
+ *   top   — photo fills the frame, words at the top on a scrim that fades
+ *           down; chosen by the photo review when the subject sits low
  */
-export type PhotoLayout = 'full' | 'card' | 'band' | 'frame';
+export type PhotoLayout = 'full' | 'card' | 'band' | 'frame' | 'top';
 
 /**
  * Which photo layout slide `index` of a post seeded `seed` uses. Covers walk
@@ -773,9 +775,14 @@ function pickLook(
   const dark = darkPool[s % darkPool.length];
   const light = lightPool[s % lightPool.length];
   const leadsDark = s % 2 === 0;
+  // The closing slide pops. A deep accent floods the slide; a light accent
+  // (mustard, tan, pink) flooded with dark type read as muddy, so then the
+  // slide is a dark brand surface and the accent goes on the button: the
+  // deep one the deck's own slides don't use, so the ending still stands out.
+  const ctaIdx = luminance(b.accent) > 0.5 && !primaryIsLight ? (dark === 2 ? 0 : 2) : 4;
   const idx =
     kind === 'cta'
-      ? 4 // accent flood — the closing slide pops (rotation[4] = accentSurface)
+      ? ctaIdx
       : (variant % 2 === 0) === leadsDark
         ? dark
         : light;
@@ -812,6 +819,12 @@ function photoFrame(p: Palette, photo: string, layout: PhotoLayout, focusY?: num
         <stop offset="0.42" stop-color="${p.bgBottom}" stop-opacity="0.55"/>
         <stop offset="1"    stop-color="${p.bgBottom}" stop-opacity="0.92"/>
       </linearGradient>
+      <linearGradient id="topScrim" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0"    stop-color="${p.bgBottom}" stop-opacity="0.92"/>
+        <stop offset="0.38" stop-color="${p.bgBottom}" stop-opacity="0.62"/>
+        <stop offset="0.62" stop-color="${p.bgBottom}" stop-opacity="0.08"/>
+        <stop offset="1"    stop-color="${p.bgBottom}" stop-opacity="0"/>
+      </linearGradient>
       <linearGradient id="bandFade" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0" stop-color="${p.bgBottom}" stop-opacity="0.15"/>
         <stop offset="1" stop-color="${p.bgBottom}" stop-opacity="0.55"/>
@@ -847,6 +860,14 @@ function photoFrame(p: Palette, photo: string, layout: PhotoLayout, focusY?: num
     return `${defs}
       ${img(0, CANVAS_H)}
       <rect width="${CANVAS}" height="${CANVAS_H}" fill="${p.bgBottom}" opacity="0.34"/>`;
+  }
+
+  if (layout === 'top') {
+    // The subject sits low, so the photo keeps the whole frame and the wash
+    // runs the other way: dark at the top where the words are, clear below.
+    return `${defs}
+      ${img(0, CANVAS_H)}
+      <rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#topScrim)"/>`;
   }
 
   // full — photo edge to edge with a graduated scrim for legibility.
@@ -934,8 +955,10 @@ function logoBadge(dataUri: string, centered: boolean, pad: number): string {
 
 /** How wide ctaButton draws a label, so a left-aligned button can sit on the margin. */
 function ctaButtonWidth(label: string): number {
-  return Math.round(label.toUpperCase().length * 30 * 0.7) + 96 + 46;
+  return Math.round(label.toUpperCase().length * CTA_FS * 0.7) + 110 + 56;
 }
+const CTA_FS = 36;
+const CTA_H = 92;
 
 /**
  * Which treatment a quote or call-to-action slide takes, from its post's
@@ -954,23 +977,65 @@ function endLookFor(
   return deck === 'split' && spec.kind === 'quote' ? 'block' : 'center';
 }
 
-/** A pill-shaped call-to-action button with a cleanly drawn arrow. */
+/**
+ * A pill-shaped call-to-action button with a cleanly drawn arrow. Sized like
+ * a real button you'd tap, not a tag: the small one read as an afterthought
+ * at the bottom of an otherwise empty slide.
+ */
 function ctaButton(cx: number, cy: number, label: string, p: Palette, t: TypeSet): string {
-  const fs = 30;
+  const fs = CTA_FS;
   const upper = label.toUpperCase();
-  const arrowW = 46;
+  const arrowW = 56;
   const w = ctaButtonWidth(label);
-  const h = 66;
+  const h = CTA_H;
   const x = cx - w / 2;
   const y = cy - h / 2;
   const textCx = cx - arrowW / 2;
-  const ax = x + w - 56;
+  const ax = x + w - 66;
   return `
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h / 2}" fill="${p.accent}"/>
-    <text x="${textCx}" y="${cy + fs * 0.35}" text-anchor="middle" font-family="${t.body}" font-size="${fs}" font-weight="600" letter-spacing="2" fill="${p.onAccent}">${esc(upper)}</text>
-    <line x1="${ax - 16}" y1="${cy}" x2="${ax + 16}" y2="${cy}" stroke="${p.onAccent}" stroke-width="5" stroke-linecap="round"/>
-    <path d="M ${ax} ${cy - 11} L ${ax + 17} ${cy} L ${ax} ${cy + 11}" fill="none" stroke="${p.onAccent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="${textCx}" y="${cy + fs * 0.35}" text-anchor="middle" font-family="${t.body}" font-size="${fs}" font-weight="700" letter-spacing="2" fill="${p.onAccent}">${esc(upper)}</text>
+    <line x1="${ax - 20}" y1="${cy}" x2="${ax + 20}" y2="${cy}" stroke="${p.onAccent}" stroke-width="6" stroke-linecap="round"/>
+    <path d="M ${ax + 2} ${cy - 14} L ${ax + 21} ${cy} L ${ax + 2} ${cy + 14}" fill="none" stroke="${p.onAccent}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
   `;
+}
+
+/**
+ * The person a quote is from, as an initial in a circle beside their name.
+ * Gives the quote a face without inventing one: the letter comes from the
+ * attribution itself.
+ */
+function attribution(
+  name: string,
+  x: number,
+  y: number,
+  centered: boolean,
+  p: Palette,
+  t: TypeSet,
+): string {
+  const fs = 34;
+  const r = 34;
+  const initial = (name.trim()[0] ?? '').toUpperCase();
+  const nameW = textWidth(name, t.body, fs, 600, 1) ?? name.length * fs * 0.55;
+  const rowW = r * 2 + 22 + nameW;
+  const left = centered ? x - rowW / 2 : x;
+  const cy = y + r;
+  return `
+    <circle cx="${left + r}" cy="${cy}" r="${r}" fill="${p.accent}"/>
+    <text x="${left + r}" y="${cy + fs * 0.36}" text-anchor="middle" font-family="${t.body}" font-size="${fs}" font-weight="700" fill="${p.onAccent}">${esc(initial)}</text>
+    <text x="${left + r * 2 + 22}" y="${cy + fs * 0.36}" font-family="${t.body}" font-size="${fs}" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(name)}</text>`;
+}
+
+/** "Swipe →" on a carousel's cover, bottom right. */
+function swipeCue(p: Palette, t: TypeSet): string {
+  const fs = 28;
+  const x = CANVAS - 96;
+  const y = CANVAS_H - 84;
+  const ax = x - 22;
+  return `
+    <text x="${ax - 26}" y="${y}" text-anchor="end" font-family="${t.body}" font-size="${fs}" font-weight="600" letter-spacing="3" fill="${p.fgSoft}">SWIPE</text>
+    <line x1="${ax - 14}" y1="${y - fs * 0.34}" x2="${x}" y2="${y - fs * 0.34}" stroke="${p.fgSoft}" stroke-width="4" stroke-linecap="round"/>
+    <path d="M ${x - 10} ${y - fs * 0.34 - 10} L ${x} ${y - fs * 0.34} L ${x - 10} ${y - fs * 0.34 + 10}" fill="none" stroke="${p.fgSoft}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
 
 /* ── stack layout ──────────────────────────────────────────────────────── */
@@ -1060,6 +1125,14 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   if (tl === 'numeral' && !(spec.kind === 'title' ? lead : stepNo ?? lead)) {
     tl = Math.floor(Math.abs(seed) / 5) % 2 === 0 ? 'highlight' : 'stack';
   }
+  // Inside slides of a deck are numbered in every layout, not only numeral:
+  // without it they were the cover again with smaller words, and a reader
+  // couldn't tell the hook from the content.
+  const insideNo =
+    !layout && tl !== 'numeral' && spec.kind === 'body' && spec.variant !== undefined && (spec.total ?? 0) > 1
+      ? String(spec.variant).padStart(2, '0')
+      : null;
+  const bodyFs = spec.kind === 'body' ? 48 : 42;
 
   // Quote and call-to-action slides take a treatment from the post's layout,
   // so they change from post to post too. They used to be one centred look
@@ -1156,6 +1229,17 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
     };
   };
 
+  /** The big step number that opens an inside slide. */
+  const stepBlock = (num: string, gap: number, x: number, middle: boolean): Block => {
+    const fs = 120;
+    return {
+      h: fs * headCap,
+      gap,
+      render: (y) =>
+        `<text x="${x}" y="${y + fs * headCap}"${middle ? ' text-anchor="middle"' : ''} font-family="${t.head}" font-size="${fs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.accent}">${num}</text>`,
+    };
+  };
+
   /**
    * Builds the slide's blocks at a given type scale. Called repeatedly by the
    * auto-fit loop below: measure, and if the content is taller than its zone
@@ -1179,44 +1263,42 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
     const isTitle = spec.kind === 'title';
 
     if (spec.kind === 'quote') {
-      const qFs = Math.round(78 * scale);
-      const qLines = clampLines(
-        wrap(spec.headline, qFs, maxW, 0.5, { family: t.quote, weight: 500 }, true),
-        5,
-      );
-      const qLH = qFs * 1.28;
       const side = endLook === 'side';
+      // The side look is a magazine pull quote: upright, in the headline face,
+      // big. The centred looks keep the italic quote face.
+      const qFace: Face = side
+        ? headFace
+        : { family: t.quote, weight: 500 };
+      const qFs = Math.round((side ? 84 : 80) * scale);
+      const qText = side ? head(spec.headline) : spec.headline;
+      const qLines = clampLines(wrap(qText, qFs, maxW, 0.5, qFace, true), 6);
+      const qLH = qFs * (side ? 1.14 : 1.28);
       const qx = side ? pad : cx;
       const qAnchor = side ? '' : ' text-anchor="middle"';
       if (layout !== 'card') {
-        // The side look sets the mark big and solid, like a pull quote in a
-        // magazine; the centred looks keep it large and faint behind.
-        const mFs = Math.round((side ? 360 : 300) * scale);
+        // The mark is drawn solid in the accent, a graphic in its own right;
+        // faint, it read as a smudge behind the words.
+        const mFs = Math.round((side ? 380 : 320) * scale);
         blocks.push({
           h: mFs * 0.42,
-          gap: g(side ? 0 : 4),
+          gap: g(side ? 6 : 10),
           render: (y) =>
-            `<text x="${side ? pad - mFs * 0.04 : cx}" y="${y + mFs * 0.72}"${qAnchor} font-family="${t.quote}" font-size="${mFs}" font-weight="700" fill="${p.accent}" opacity="${side || endLook === 'block' ? 0.9 : 0.35}">&#8220;</text>`,
+            `<text x="${side ? pad - mFs * 0.04 : cx}" y="${y + mFs * 0.72}"${qAnchor} font-family="${t.quote}" font-size="${mFs}" font-weight="700" fill="${p.accent}">&#8220;</text>`,
         });
       }
+      const qWeight = side ? t.headWeight : 500;
+      const qFamily = side ? t.head : t.quote;
       blocks.push({
         h: qLines.length * qLH,
-        gap: g(54),
+        gap: footer ? g(60) : 0,
         render: (y) =>
-          `<text${qAnchor} font-family="${t.quote}" font-size="${qFs}"${t.quoteItalic ? ' font-style="italic"' : ''} font-weight="500" fill="${p.fg}" xml:space="preserve">${side ? tspansLeft(qLines, qx, y + qFs * 0.8, qLH) : tspansCentered(qLines, cx, y + qFs * 0.8, qLH)}</text>`,
-      });
-      blocks.push({
-        h: 5,
-        gap: footer ? g(48) : 0,
-        render: (y) =>
-          `<rect x="${side ? pad : cx - 60}" y="${y}" width="120" height="5" rx="2.5" fill="${p.accent}"/>`,
+          `<text${qAnchor} font-family="${qFamily}" font-size="${qFs}"${!side && t.quoteItalic ? ' font-style="italic"' : ''} font-weight="${qWeight}"${side ? ` letter-spacing="${t.headTracking}"` : ''} fill="${p.fg}" xml:space="preserve">${side ? tspansLeft(qLines, qx, y + qFs * 0.8, qLH) : tspansCentered(qLines, cx, y + qFs * 0.8, qLH)}</text>`,
       });
       if (footer) {
         blocks.push({
-          h: 34,
-          gap: g(0),
-          render: (y) =>
-            `<text x="${qx}" y="${y + 28}"${qAnchor} font-family="${t.body}" font-size="34" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(footer)}</text>`,
+          h: 68,
+          gap: 0,
+          render: (y) => attribution(footer, qx, y, !side, p, t),
         });
       }
       if (side) return { blocks, anchor: 'bottom', zone: [170, CANVAS_H - 150] };
@@ -1238,13 +1320,13 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
       const label = spec.ctaLabel ?? 'Visit us';
       // The side look is the poster's ending: a big headline low on the left,
       // the button under it on the same edge.
-      const hFs = Math.round((side ? 120 : 88) * scale);
-      blocks.push(headline(spec.headline, hFs, side ? 1.02 : 1.08, headMax, spec.body ? g(44) : g(66)));
-      if (spec.body) blocks.push(paragraph(spec.body, Math.round(44 * scale), 1.3, bodyMax, g(66)));
+      const hFs = Math.round((side ? 128 : 112) * scale);
+      blocks.push(headline(spec.headline, hFs, side ? 1.02 : 1.06, headMax, spec.body ? g(40) : g(72)));
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(48 * scale), 1.3, bodyMax, g(72)));
       blocks.push({
-        h: 66,
+        h: CTA_H,
         gap: g(0),
-        render: (y) => ctaButton(side ? pad + ctaButtonWidth(label) / 2 : cx, y + 33, label, p, t),
+        render: (y) => ctaButton(side ? pad + ctaButtonWidth(label) / 2 : cx, y + CTA_H / 2, label, p, t),
       });
       if (side) {
         const over = `<text x="${pad}" y="124" font-family="${t.body}" font-size="28" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`;
@@ -1257,13 +1339,14 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
       // All-caps faces can sit tight; lowercase needs room for descenders
       // ("get" over "this" collided at 0.98).
       const tight = !!t.headUpper;
+      if (insideNo) blocks.push(stepBlock(insideNo, g(36), pad, false));
       blocks.push(headline(spec.headline, hFs, tight ? 0.98 : 1.05, headMax, g(44)));
       blocks.push({
         h: 6,
         gap: spec.body ? g(40) : 0,
         render: (y) => `<rect x="${pad}" y="${y}" width="120" height="6" rx="3" fill="${p.accent}"/>`,
       });
-      if (spec.body) blocks.push(paragraph(spec.body, Math.round(42 * scale), 1.36, bodyMax, 0));
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(bodyFs * scale), 1.36, bodyMax, 0));
       const over = `<text x="${pad}" y="124" font-family="${t.body}" font-size="28" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`;
       return {
         blocks,
@@ -1279,12 +1362,16 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
       const barH = Math.round(hFs * 1.18);
       const step = barH + Math.round(hFs * 0.14);
       const lines = clampLines(wrap(head(spec.headline), hFs, maxW - padX * 2, 0.58, headFace, true), headMax);
-      blocks.push({
-        h: 30,
-        gap: g(46),
-        render: (y) =>
-          `<text x="${cx}" y="${y + 26}" text-anchor="middle" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`,
-      });
+      blocks.push(
+        insideNo
+          ? stepBlock(insideNo, g(40), cx, true)
+          : {
+              h: 30,
+              gap: g(46),
+              render: (y) =>
+                `<text x="${cx}" y="${y + 26}" text-anchor="middle" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`,
+            },
+      );
       blocks.push({
         h: lines.length * step - (step - barH),
         gap: spec.body ? g(54) : 0,
@@ -1301,7 +1388,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
             })
             .join(''),
       });
-      if (spec.body) blocks.push(paragraph(spec.body, Math.round(42 * scale), 1.36, bodyMax, 0));
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(bodyFs * scale), 1.36, bodyMax, 0));
     } else if (tl === 'numeral') {
       // A giant number leads: the price, the count, or the step.
       const num = stepNo ?? lead!.num;
@@ -1331,13 +1418,17 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
       const hLines = clampLines(wrap(head(spec.headline), hFs, maxW, 0.58, headFace, true), headMax);
       const headH = hLines.length * lh;
       const want = 230 + headH + 80;
-      const blockH = Math.round(Math.min(Math.max(want, CANVAS_H * 0.44), CANVAS_H * 0.64));
+      // At least just over half the slide: a short headline in a thin block
+      // left the bottom half of the slide empty under one line of text.
+      const blockH = Math.round(Math.min(Math.max(want, CANVAS_H * 0.56), CANVAS_H * 0.64));
       const firstBase = blockH - 80 - headH + hFs * 0.8;
       const under =
         `<rect width="${CANVAS}" height="${blockH}" fill="${p.accent}"/>` +
-        `<text x="${pad}" y="124" font-family="${t.body}" font-size="28" font-weight="600" letter-spacing="4" fill="${p.onAccent}" opacity="0.8">${esc(brandLine)}</text>` +
+        (insideNo
+          ? `<text x="${pad}" y="${90 + 120 * headCap}" font-family="${t.head}" font-size="120" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.onAccent}" opacity="0.55">${insideNo}</text>`
+          : `<text x="${pad}" y="124" font-family="${t.body}" font-size="28" font-weight="600" letter-spacing="4" fill="${p.onAccent}" opacity="0.8">${esc(brandLine)}</text>`) +
         `<text font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.onAccent}" xml:space="preserve">${tspansLeft(hLines, pad, firstBase, lh)}</text>`;
-      if (spec.body) blocks.push(paragraph(spec.body, Math.round(50 * scale), 1.36, bodyMax, 0, 500));
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round((bodyFs + 6) * scale), 1.36, bodyMax, 0, 500));
       return {
         blocks,
         anchor: 'top',
@@ -1346,13 +1437,18 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
         overflow: want > CANVAS_H * 0.64,
       };
     } else {
-      // stack — the classic: eyebrow, headline, rule, paragraph.
-      blocks.push({
-        h: 30,
-        gap: g(50),
-        render: (y) =>
-          `<text x="${centered ? cx : pad}"${anchor} y="${y + 26}" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`,
-      });
+      // stack — the classic: eyebrow, headline, rule, paragraph. An inside
+      // slide leads with its number instead of the brand line.
+      blocks.push(
+        insideNo
+          ? stepBlock(insideNo, g(40), centered ? cx : pad, centered)
+          : {
+              h: 30,
+              gap: g(50),
+              render: (y) =>
+                `<text x="${centered ? cx : pad}"${anchor} y="${y + 26}" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`,
+            },
+      );
       // The title slide is the hook — its headline should dominate the canvas
       // the way the reference decks' hooks do, not match the body slides.
       const hFs = Math.round((isTitle ? 124 : 84) * scale);
@@ -1363,7 +1459,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
         render: (y) =>
           `<rect x="${centered ? cx - 70 : pad}" y="${y}" width="140" height="7" rx="3.5" fill="${p.accent}"/>`,
       });
-      if (spec.body) blocks.push(paragraph(spec.body, Math.round(44 * scale), 1.35, bodyMax, 0));
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round((bodyFs + 2) * scale), 1.35, bodyMax, 0));
     }
 
     if (footerInStack && footer && !eyebrowIsBrand) {
@@ -1379,6 +1475,8 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
     // On a full-bleed photo the words sit at the bottom, where the scrim is
     // darkest; at the top they fought the busiest part of the picture.
     if (layout === 'full') return { blocks, anchor: 'bottom', zone: [190, CANVAS_H - 130] };
+    // Words up top, kept inside the dark part of the wash.
+    if (layout === 'top') return { blocks, anchor: 'top', zone: [130, 700] };
     return { blocks, anchor: 'center' };
   };
 
@@ -1448,11 +1546,16 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   // "n / N" progress tag, top-right. Numbered progress tells the reader how
   // long the tunnel is and measurably lifts swipe-through — same principle
   // as the numbered onboarding questions.
-  if (spec.total && spec.total > 1 && spec.variant !== undefined) {
+  // An inside slide that shows its step number has said where it is.
+  if (spec.total && spec.total > 1 && spec.variant !== undefined && !insideNo && !stepNo) {
     const tagFill = tl === 'split' ? p.onAccent : p.fgSoft;
     parts.push(
       `<text x="${CANVAS - 96}" y="112" text-anchor="end" font-family="${t.body}" font-size="27" font-weight="600" letter-spacing="2" fill="${tagFill}" opacity="0.9">${spec.variant + 1} / ${spec.total}</text>`,
     );
+  }
+
+  if (spec.kind === 'title' && spec.variant === 0 && (spec.total ?? 0) > 1 && (!layout || layout === 'full')) {
+    parts.push(swipeCue(p, t));
   }
 
   // Footer. A real logo, when we have one, is composited as a badge on word

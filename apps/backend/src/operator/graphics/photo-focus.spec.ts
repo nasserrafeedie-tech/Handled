@@ -25,14 +25,22 @@ describe('photo review: keep the words off the subject', () => {
     assert.ok(high && high.focusY < 0.3 && high.underWords < 0.1, `high subject read as ${JSON.stringify(high)}`);
   });
 
-  it('moves a card or full-bleed slide to the framed layout when the subject is low', () => {
-    const low = { focusY: 0.7, underWords: 0.8 };
-    const high = { focusY: 0.3, underWords: 0.2 };
-    assert.equal(reviewPhotoLayout('card', low), 'frame');
-    assert.equal(reviewPhotoLayout('full', low), 'frame');
+  it('moves the words above a low subject, or frames a subject that fills the photo', () => {
+    const low = { focusY: 0.7, underWords: 0.8, overTop: 0.1 };
+    const tall = { focusY: 0.5, underWords: 0.6, overTop: 0.5 };
+    const high = { focusY: 0.3, underWords: 0.2, overTop: 0.8 };
+    assert.equal(reviewPhotoLayout('card', low), 'top');
+    assert.equal(reviewPhotoLayout('full', low), 'top');
+    assert.equal(reviewPhotoLayout('card', tall), 'frame');
     assert.equal(reviewPhotoLayout('card', high), 'card');
     assert.equal(reviewPhotoLayout('band', low), 'band');
     assert.equal(reviewPhotoLayout('card', null), 'card', 'an unreadable photo keeps its layout');
+  });
+
+  it('reads a low subject as leaving the top clear', async () => {
+    const low = await readPhoto(await photoWithDetail(0.6, 0.85));
+    assert.ok(low && low.overTop < 0.05, JSON.stringify(low));
+    assert.equal(reviewPhotoLayout('card', low), 'top');
   });
 
   it('crops toward the subject', () => {

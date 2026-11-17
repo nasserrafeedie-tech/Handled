@@ -20,6 +20,11 @@ export interface PhotoRead {
    * about half there.
    */
   underWords: number;
+  /**
+   * How much of the subject sits in the top band (above 45% of the height),
+   * where words can go instead when the bottom is taken.
+   */
+  overTop: number;
 }
 
 const GRID_W = 32;
@@ -28,6 +33,7 @@ const GRID_H = 40;
 const SUBJECT_SHARE = 0.15;
 const WORDS_TOP = 0.4;
 const WORDS_BOTTOM = 0.92;
+const TOP_BAND = 0.45;
 
 export async function readPhoto(photo: string | Buffer): Promise<PhotoRead | null> {
   try {
@@ -64,15 +70,17 @@ export async function readPhoto(photo: string | Buffer): Promise<PhotoRead | nul
     let total = 0;
     let weightedY = 0;
     let under = 0;
+    let above = 0;
     top.forEach(({ v, i }) => {
       if (v <= 0) return;
       const y = Math.floor(i / GRID_W) / (GRID_H - 1);
       total += v;
       weightedY += v * y;
       if (y > WORDS_TOP && y < WORDS_BOTTOM) under += v;
+      if (y < TOP_BAND) above += v;
     });
     if (total <= 0) return null; // a flat photo has no subject to protect
-    return { focusY: weightedY / total, underWords: under / total };
+    return { focusY: weightedY / total, underWords: under / total, overTop: above / total };
   } catch {
     return null;
   }
@@ -81,15 +89,22 @@ export async function readPhoto(photo: string | Buffer): Promise<PhotoRead | nul
 /**
  * The review step for a photo slide. 'full' and 'card' put the words over the
  * lower part of the photo. When more of the subject sits there than an even
- * spread would put there (about half), the words would cover it, so the slide moves to
- * 'frame', where the photo has its own inset above the words. Other layouts
- * already keep the words off the photo.
+ * spread would put there (about half), the words would cover it. If the top of
+ * the photo is mostly clear, the words move up there ('top') and the photo
+ * keeps the whole frame; only when the subject fills both halves does the
+ * slide fall back to 'frame', where the photo gets its own inset above the
+ * words. Other layouts already keep the words off the photo.
  */
 export function reviewPhotoLayout(layout: PhotoLayout, read: PhotoRead | null): PhotoLayout {
   if (!read) return layout;
-  if ((layout === 'full' || layout === 'card') && read.underWords > COVERED_ABOVE) return 'frame';
+  if ((layout === 'full' || layout === 'card') && read.underWords > COVERED_ABOVE) {
+    return read.overTop < TOP_CLEAR_BELOW ? 'top' : 'frame';
+  }
   return layout;
 }
+
+/** Below this share of the subject in the top band, words can sit there. */
+export const TOP_CLEAR_BELOW = 0.35;
 
 /** Above this share of the subject in the words' band, the words would cover it. */
 export const COVERED_ABOVE = 0.5;

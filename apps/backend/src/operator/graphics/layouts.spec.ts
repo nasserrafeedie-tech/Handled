@@ -148,7 +148,7 @@ describe('no layout lets text leave the frame', () => {
 
   it('a photo slide in every photo layout keeps its words inside the frame', () => {
     const photo = 'data:image/png;base64,iVBORw0KGgo=';
-    for (const photoLayout of ['full', 'card', 'band', 'frame'] as const) {
+    for (const photoLayout of ['full', 'card', 'band', 'frame', 'top'] as const) {
       for (const headline of [SHORT, LONG, WORD]) {
         const svg = renderSlideSvg(
           { kind: 'title', headline, body: LONG, photo, photoLayout, seed: 0 },
@@ -199,6 +199,41 @@ describe('the layouts actually look different', () => {
       renderSlideSvg({ kind: 'cta', headline: 'Book this week', ctaLabel: 'Book now', seed: 0, textLayout: tl }, theme('modern'));
     assert.match(c('poster'), /<text x="110" y="124"[^>]*>SHARP &amp; CO</);
     assert.doesNotMatch(c('stack'), /y="124"[^>]*>SHARP/);
+  });
+
+  it('inside slides are numbered in every layout, and only the cover says swipe', () => {
+    for (const tl of ['stack', 'poster', 'highlight', 'split'] as TextLayout[]) {
+      const inside = renderSlideSvg(
+        { kind: 'body', headline: 'Floss first', body: 'It loosens what is stuck.', seed: 0, variant: 2, total: 5, textLayout: tl },
+        theme('modern'),
+      );
+      assert.match(inside, />02<\/text>/, `${tl} inside slide shows its number`);
+      assert.doesNotMatch(inside, /3 \/ 5/, `${tl} inside slide does not also show "3 / 5"`);
+      assert.doesNotMatch(inside, />SWIPE</);
+    }
+    const cover = renderSlideSvg({ kind: 'title', headline: 'Floss before or after?', seed: 0, variant: 0, total: 5 }, theme('modern'));
+    assert.match(cover, />SWIPE</);
+    assert.match(cover, /1 \/ 5/);
+  });
+
+  it('a quote carries its attribution with the initial in a circle', () => {
+    const q = renderSlideSvg({ kind: 'quote', headline: 'Best fade in town.', footer: 'Dev, regular', seed: 0, textLayout: 'stack' }, theme('modern'));
+    assert.match(q, /<circle[^>]*\/>\s*<text[^>]*>D<\/text>/);
+    assert.match(q, />Dev, regular</);
+  });
+
+  it('a light accent puts the CTA on a dark brand surface, with the accent on the button', () => {
+    const light: BrandTheme = { primary: '#0E7C86', secondary: '#F4B860', brandName: 'Bright Smile', style: 'modern' };
+    for (let seed = 0; seed < 6; seed++) {
+      const svg = renderSlideSvg({ kind: 'cta', headline: 'Book a cleaning', ctaLabel: 'Book online', seed }, light);
+      assert.match(svg, /<rect x="[\d.-]+" y="[\d.-]+" width="[\d.]+" height="92" rx="46" fill="#F4B860"\/>/, `seed ${seed}`);
+    }
+  });
+
+  it('a "top" photo slide keeps its words in the upper half', () => {
+    const photo = 'data:image/png;base64,iVBORw0KGgo=';
+    const svg = renderSlideSvg({ kind: 'title', headline: 'Big dogs welcome', body: 'Double coats, done gently', photo, photoLayout: 'top', seed: 0 }, theme('luxe'));
+    for (const r of textRuns(svg)) assert.ok(r.y < CANVAS_H * 0.55, `"${r.text}" at y=${r.y}`);
   });
 
   it('inside slides of a numeral deck are numbered steps', () => {
