@@ -52,13 +52,15 @@ Last re-ranked: 2026-11-17.
 - [x] Reel hooks and captions wrap to fit, readable colours, the end card no longer squashed (`ffb7539`)
 - [x] Captions moved off faces, bigger hooks, an end card that names the next step (`6c65f22`)
 - [x] The homepage demo reel is re-cut through the real pipeline (`e404a00`)
+- [x] Cancelling: a plan-cancel ask gets the billing link, and an ended plan no longer reads as a failed card (`26b084d`)
+- [x] A yes to a draft whose slot has passed schedules it ahead, not in the past (`b0eaa58`)
+- [x] The email sign-up on `/start` is hidden, and refused by the backend, until Postmark works both ways. The page offers "email us" instead, so the no-phone path stays.
 
 ## Only Nasser can do these
 
 - Merge the PR and run `prisma migrate deploy` on the production database (two new migrations).
 - Turn on the Stripe customer portal, so the "update your card" link works.
 - Set the Post for Me redirect URL and run one live account-linking test.
-- Sign in to Postmark and finish setting it up.
+- Sign in to Postmark and finish setting it up (sending and the inbound webhook), then set `NEXT_PUBLIC_EMAIL_SIGNUP=1` on the web app to show the email sign-up form again.
 - Check the Twilio opt-out wording.
 - Clean up the stray Vercel projects.
-- Decide what happens to the `/start` form.

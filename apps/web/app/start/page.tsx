@@ -24,6 +24,12 @@ import { EmailSignup } from '../_components/email-signup';
 const SMS_KEYWORD = 'HANDLED';
 const SMS_NUMBER = process.env.NEXT_PUBLIC_SMS_NUMBER; // e.g. "+1 (866) 747-7513"
 const SUPPORT_EMAIL = 'nasser@texthandled.com';
+// The email sign-up form stays hidden until email works both ways (Postmark
+// sending and the inbound webhook), so nobody signs up into emails that never
+// arrive. Set NEXT_PUBLIC_EMAIL_SIGNUP=1 once it's set up; the backend refuses
+// sign-ups on its own until then too. With the form hidden, the no-phone path
+// the carrier reviewer required is still here: email us directly.
+const EMAIL_SIGNUP = process.env.NEXT_PUBLIC_EMAIL_SIGNUP === '1';
 
 export const metadata: Metadata = {
   title: 'Start with Handled — text to begin',
@@ -99,17 +105,27 @@ export default function StartPage() {
         </h2>
         <p className="text-sm text-ink/70">
           Texting is entirely optional — you never have to give a phone number
-          or opt in to messaging to use Handled. Sign up with your email instead
-          and we&rsquo;ll run the whole thing over email.
+          or opt in to messaging to use Handled.{' '}
+          {EMAIL_SIGNUP
+            ? 'Sign up with your email instead and we\u2019ll run the whole thing over email.'
+            : 'Email us instead and we\u2019ll get you set up over email.'}
         </p>
-        <EmailSignup />
-        <p className="text-xs text-ink/50">
-          Or just email us at{' '}
-          <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>
-            {SUPPORT_EMAIL}
+        {EMAIL_SIGNUP ? (
+          <>
+            <EmailSignup />
+            <p className="text-xs text-ink/50">
+              Or just email us at{' '}
+              <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>
+                {SUPPORT_EMAIL}
+              </a>
+              .
+            </p>
+          </>
+        ) : (
+          <a className="btn-clay justify-center" href={`mailto:${SUPPORT_EMAIL}?subject=Getting%20started%20with%20Handled`}>
+            Email {SUPPORT_EMAIL}
           </a>
-          .
-        </p>
+        )}
       </section>
 
       <p className="text-xs text-ink/50">
