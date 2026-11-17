@@ -1,5 +1,5 @@
 import { PublishGateService } from '../guardrails/publish-gate.service';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { type Task, type Result } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -12,6 +12,7 @@ import { readPhoto, reviewPhotoLayout } from '../graphics/photo-focus';
 import { resolveBrandColors } from '../graphics/brand-palette';
 import { logoDataUri } from '../graphics/logo-colors';
 import { ImageGenService } from '../graphics/image-gen.service';
+import { DesignerService } from '../graphics/designer.service';
 import { ImageSafetyService } from '../graphics/image-safety.service';
 import {
   buildImagePrompt,
@@ -61,7 +62,51 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     private readonly images: ImageGenService,
     private readonly safety: ImageSafetyService,
     private readonly moderation: ModerationService,
+    @Optional() private readonly designer?: DesignerService,
   ) {}
+
+  /**
+   * A designed cover, or null to keep the template's. Whatever the design
+   * draws beyond the slide copy runs through the same guardrails as the
+   * slides did, and a cover that would raise the deck's risk is dropped.
+   */
+  private async designCover(
+    customerId: string,
+    post: { id: string; archetype: string | null; riskLevel: string | null },
+    slidesCopy: Array<{ headline: string; body?: string; cta_label?: string }>,
+    specs: SlideSpec[],
+    theme: BrandTheme,
+    profile: { businessType?: string | null; blackoutTopics?: string[] } | null,
+    customer: { businessName?: string | null } | null,
+  ): Promise<Buffer | null> {
+    if (!this.designer?.live() || !slidesCopy.length) return null;
+    const first = slidesCopy[0];
+    const designed = await this.designer.design({
+      customerId,
+      role: 'carousel_cover',
+      copy: { headline: first.headline, body: first.body, cta: first.cta_label, brandName: customer?.businessName ?? undefined },
+      theme,
+      photo: specs[0].photo,
+      businessType: profile?.businessType ?? undefined,
+      archetype: post.archetype ?? undefined,
+      slides: slidesCopy.length,
+    });
+    if (!designed) return null;
+    const faked = detectFabrication(designed.drawnText);
+    const verdict = await this.moderation.screen({
+      caption: designed.drawnText,
+      hashtags: [],
+      blackoutTopics: profile?.blackoutTopics ?? [],
+    });
+    const risk = SLIDE_GATE.classifyRisk(designed.drawnText);
+    const before = SLIDE_GATE.classifyRisk([first.headline, first.body, first.cta_label].filter(Boolean).join(' '));
+    if (faked.length || !verdict.passed || (risk === 'high' && before !== 'high')) {
+      this.log.warn(`designed cover for ${post.id} flagged by the copy checks; keeping the template cover`);
+      return null;
+    }
+    this.log.log(`designed cover for ${post.id}: ${designed.concept}`);
+    return designed.png;
+  }
 
   /**
    * A generated photo for one slide — the same guarded pipeline the standalone
@@ -459,6 +504,12 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
         "I couldn't build that carousel — I'll keep it as a plain post.",
         'render_failed', String(e), true);
     }
+
+    // The cover is what shows in the feed, so it gets a design of its own when
+    // the designer is on. The template cover stays as the fallback, and the
+    // rest of the deck keeps the template set in the same colours and fonts.
+    const cover = await this.designCover(task.customer_id, post, slidesCopy, specs, theme, profile, customer);
+    if (cover) pngs[0] = cover;
 
     const batch = randomUUID();
     const refs: string[] = [];

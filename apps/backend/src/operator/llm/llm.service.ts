@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { parseLlmJson, LlmJsonError } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export type LlmTier = 'bulk' | 'voice';
+export type LlmTier = 'bulk' | 'voice' | 'design';
 
 /**
  * A retryable Anthropic failure — an overloaded response (429/5xx) or an empty
@@ -16,7 +16,8 @@ class TransientLlmError extends Error {}
 export interface LlmJsonRequest {
   /** Which model tier (§2 routing): bulk = Haiku 4.5 (invisible plumbing —
    *  classification, extraction, media routing), voice = Opus 5 (anything a
-   *  customer reads — captions, plans, replies, the free taste). */
+   *  customer reads — captions, plans, replies, the free taste), design =
+   *  Fable 5.2 (drawing a post's graphic as SVG, one post at a time). */
   tier: LlmTier;
   /** Stable per-customer context (the brand_profile) — sent as a cacheable
    *  system block so repeated calls hit the prompt cache (§2, §12). */
@@ -51,6 +52,11 @@ export class LlmService {
     // Voice = Opus 5: measured on real usage, all customer-facing copy on Opus
     // costs ~$3-4/mo per active customer (~1% of Growth revenue) and writes
     // visibly better captions — the model cost is noise next to the quality.
+    // Design = Fable 5.2: drawing a whole poster as SVG is the hardest
+    // visual-reasoning call the service makes, and the post graphic is the
+    // first thing a follower sees. A design costs roughly a quarter to a third
+    // of a dollar, a few dollars a month on the busiest plan.
+    if (tier === 'design') return process.env.LLM_MODEL_DESIGN ?? 'claude-fable-5-2';
     return tier === 'voice'
       ? process.env.LLM_MODEL_VOICE ?? 'claude-opus-5'
       : process.env.LLM_MODEL_BULK ?? 'claude-haiku-4-5';
@@ -141,10 +147,13 @@ export class LlmService {
         // generated, not the cap, and thinking is adaptive (a high cap doesn't
         // make it think more), so latency is unchanged too. Bulk (Haiku) has no
         // such behaviour and keeps the small default.
+        // Design writes a whole SVG after thinking, so it gets a bigger floor.
         max_tokens:
-          req.tier === 'voice'
-            ? Math.max(req.maxTokens ?? 0, 8000)
-            : req.maxTokens ?? 1024,
+          req.tier === 'design'
+            ? Math.max(req.maxTokens ?? 0, 24000)
+            : req.tier === 'voice'
+              ? Math.max(req.maxTokens ?? 0, 8000)
+              : req.maxTokens ?? 1024,
         // Only send a system block when there is context to cache. The API
         // rejects cache_control on an empty text block (400), so a caller with
         // no per-customer context — the preference extractor, the image

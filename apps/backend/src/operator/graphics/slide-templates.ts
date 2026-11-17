@@ -208,7 +208,7 @@ const SERIF = "'Playfair Display'";
 const DISPLAY = 'Anton';
 const LUXE = 'Marcellus';
 
-interface TypeSet {
+export interface TypeSet {
   /** Face for big headlines. */
   head: string;
   headWeight: number;
@@ -223,7 +223,7 @@ interface TypeSet {
   headUpper: boolean;
 }
 
-function typeSet(style: BrandStyle | undefined): TypeSet {
+export function typeSet(style: BrandStyle | undefined): TypeSet {
   switch (style) {
     case 'editorial':
       // 800 resolves to the STATIC PlayfairDisplay-ExtraBold.ttf in fonts/.

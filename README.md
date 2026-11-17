@@ -86,6 +86,7 @@ Point a Twilio Messaging Service inbound webhook at
 
 - Bulk (Concierge chat, captions, hashtags): `LLM_MODEL_BULK`, default `claude-haiku-4-5`
 - Voice-critical (final brand voice, weekly planning): `LLM_MODEL_VOICE`, default `claude-opus-5`
+- Post design (carousel covers and graphics drawn as SVG, checked before use, templates as the fallback): `LLM_MODEL_DESIGN`, default `claude-fable-5-2`. `DESIGN_POSTS=0` turns it off.
 - Each customer's `brand_profile` is sent as a cached system block → ~10x cheaper input.
 
 ## What each key turns on
