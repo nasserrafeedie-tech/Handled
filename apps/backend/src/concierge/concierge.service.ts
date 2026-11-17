@@ -1358,15 +1358,18 @@ export class ConciergeService {
     if (!postId || result.error) {
       return this.reply(phone, conversationId, result.summary_for_owner, mediaOf(result));
     }
-    const waiting = await this.prisma.post.findFirst({
+    // Drafts are shown oldest first, so this one comes after every draft
+    // already waiting. "Next in line" was wrong with three ahead of it (QA
+    // round 5), so say how many.
+    const waiting = await this.prisma.post.count({
       where: { customerId, status: 'pending_approval', id: { not: postId } },
-      select: { id: true },
     });
     if (waiting) {
+      const ahead = waiting === 1 ? 'the draft already waiting on you' : `the ${waiting} drafts already waiting on you`;
       return this.reply(
         phone,
         conversationId,
-        "Made it ✳ It's a post now, next in line after the draft that's waiting on you.",
+        `Made it ✳ It's a post now, and I'll bring it back for your yes right after ${ahead}.`,
         mediaOf(result),
       );
     }
@@ -2244,8 +2247,8 @@ export class ConciergeService {
         phone,
         conversationId,
         pending
-          ? 'Good question — I\'ll get you an answer. Meanwhile that draft is ready whenever you are: reply "yes" to send it.'
-          : "Good question — I'll check and get back to you. Anything you text me can also just become a post.",
+          ? 'I couldn\'t look that up just now, so try me again in a bit. That draft is still ready whenever you are: reply "yes" to send it.'
+          : "I couldn't look that up just now, so try me again in a bit. Anything you text me can also just become a post.",
       );
     }
   }

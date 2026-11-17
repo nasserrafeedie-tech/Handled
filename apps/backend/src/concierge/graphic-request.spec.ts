@@ -68,6 +68,7 @@ describe('a requested graphic becomes a post', () => {
       post: {
         findUnique: async () => ({ status: 'approved' }),
         findFirst: async () => (opts.waiting ? { id: 'older' } : null),
+        count: async () => (opts.waiting ? 3 : 0),
         update: async ({ data }: { data: Record<string, unknown> }) => void postUpdates.push(data),
       },
     };
@@ -101,7 +102,7 @@ describe('a requested graphic becomes a post', () => {
   it('lines it up behind a draft that is already waiting', async () => {
     const w = world({ waiting: true });
     await w.ask('make a graphic for our birthday party packages');
-    assert.match(w.replies[0].body, /next in line/);
+    assert.match(w.replies[0].body, /right after the 3 drafts already waiting/);
     assert.deepEqual(w.replies[0].media, ['https://cdn.test/k/slide-1.png']);
     assert.equal(w.shown.length, 0);
   });
