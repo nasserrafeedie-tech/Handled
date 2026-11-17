@@ -750,6 +750,19 @@ export class ConciergeService {
   }
 
   /**
+   * Was the last thing we sent the draft itself (or a nudge about it)? A bare
+   * "ok" only approves what the owner was just shown.
+   */
+  private async lastOutboundShowsDraft(conversationId: string, caption: string | null): Promise<boolean> {
+    const last = await this.prisma.message.findFirst({
+      where: { conversationId, direction: 'outbound' },
+      orderBy: { createdAt: 'desc' },
+      select: { body: true },
+    });
+    return lastMessageShowsDraft(last?.body ?? null, caption);
+  }
+
+  /**
    * The everyday conversation. Almost always the owner is reacting to a draft
    * we texted them, so we resolve "the post they mean" first — the one still
    * waiting on their OK — then act on what they said.
@@ -835,6 +848,27 @@ export class ConciergeService {
           "No problem — I've left everything as it is. What would you like to do?",
         );
       }
+    }
+
+    // A bare "ok" answers the last thing we said. When that was a notice (a
+    // declined card, an upgrade, a heads-up) and not the draft, "ok will do"
+    // used to approve and schedule a post the owner wasn't looking at.
+    if (
+      !justConfirmed &&
+      intent === 'approve' &&
+      pending &&
+      !STRONG_APPROVE_RE.test(body) &&
+      !(await this.lastOutboundShowsDraft(conversationId, pending.caption))
+    ) {
+      const tz =
+        (await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }))
+          ?.timezone ?? 'America/Los_Angeles';
+      const when = pending.scheduledTime ? ` for ${formatInZone(pending.scheduledTime, tz)}` : '';
+      return this.reply(
+        phone,
+        conversationId,
+        `Got it. Your draft${when} is still waiting, by the way. Reply “post it” and I'll schedule it, or tell me what to change.`,
+      );
     }
 
     // Interpretation is less certain than a keyword, so ask when the reading
@@ -2614,4 +2648,20 @@ const EMAIL_WORDING: [RegExp, string][] = [
 
 export function forEmail(body: string): string {
   return EMAIL_WORDING.reduce((b, [re, to]) => b.replace(re, to), body);
+}
+
+/** Approvals that name the post, so they hold whatever we said last. */
+export const STRONG_APPROVE_RE =
+  /\b(?:post|send|ship|publish|schedule)\s+(?:it|that|this)\b|\bapproved?\b|\blooks? (?:good|great|perfect|awesome|amazing)\b|\blgtm\b|\blove (?:it|this)\b/i;
+
+/**
+ * Does this outbound message put the draft in front of the owner? True when it
+ * quotes the caption or asks for the reply that approves a draft. With nothing
+ * sent yet there is nothing to answer, so the draft is the only reading.
+ */
+export function lastMessageShowsDraft(body: string | null, caption: string | null): boolean {
+  if (!body) return true;
+  const snippet = caption?.trim().slice(0, 20);
+  if (snippet && body.includes(snippet)) return true;
+  return /\bdraft\b|reply\s*[“"']?(?:yes|post it)/i.test(body);
 }

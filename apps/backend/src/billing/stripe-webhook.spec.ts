@@ -268,6 +268,13 @@ describe('Stripe subscription updated → plan tier', () => {
     assert.match(text, /3 more accounts/);
   });
 
+  it('a Pro upgrade says where to send clips, with the real upload link', () => {
+    const text = upgradeText('growth', 'pro', 'cust-123');
+    assert.match(text, /\/upload\?c=cust-123$/);
+    assert.doesNotMatch(text, /your upload link/, 'never point at a link they were not given');
+    assert.doesNotMatch(upgradeText('starter', 'growth', 'cust-123'), /upload/);
+  });
+
   it('Starter → Growth gives the real cadence change', () => {
     assert.match(upgradeText('starter', 'growth'), /5 posts a week instead of 3/);
     assert.match(upgradeText('starter', 'growth'), /one more account/);

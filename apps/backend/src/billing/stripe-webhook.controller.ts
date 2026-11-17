@@ -234,7 +234,7 @@ export class StripeWebhookController {
     // Only speak up on an upgrade. A downgrade is a decision they already made
     // and being congratulated on losing features reads as tone-deaf.
     if (RANK[plan] > RANK[from]) {
-      await this.concierge.notify(customer.id, upgradeText(from, plan));
+      await this.concierge.notify(customer.id, upgradeText(from, plan, customer.id));
     }
   }
 
@@ -528,11 +528,17 @@ export class StripeWebhookController {
  * they came from. A flat "carousels are switched on" was wrong for anyone
  * moving Growth → Pro: they already had carousels and paid for reels.
  */
-export function upgradeText(from: string, to: PlanId): string {
+/**
+ * The upgrade text names what the new plan adds. Reels need clips through the
+ * upload page, so a Pro upgrade carries that link: "your upload link" alone
+ * sent people looking for a link they had never been given.
+ */
+export function upgradeText(from: string, to: PlanId, customerId?: string): string {
   const rank = (t: string) => RANK[t as PlanId] ?? 0;
   const parts: string[] = [];
   if (rank(from) < RANK.growth && rank(to) >= RANK.growth) parts.push('carousels are switched on');
-  if (rank(to) >= RANK.pro) parts.push("I'll cut reels from short clips you send through your upload link");
+  const reels = rank(to) >= RANK.pro && rank(from) < RANK.pro;
+  if (reels) parts.push("I'll cut reels from short clips you send me");
   const before = postsPerWeek(from);
   const after = postsPerWeek(to);
   if (after > before) parts.push(after >= 7 ? "you'll get a post every day" : `you'll get ${after} posts a week instead of ${before}`);
@@ -540,5 +546,8 @@ export function upgradeText(from: string, to: PlanId): string {
   if (accounts > 0) parts.push(`you can link ${accounts === 1 ? 'one more account' : `${accounts} more accounts`}`);
   const name = to === 'pro' ? 'Pro' : 'Growth';
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] ?? 'nothing else changes';
-  return `You're on ${name} now: ${list}. It starts with your next weekly plan.`;
+  const text = `You're on ${name} now: ${list}. It starts with your next weekly plan.`;
+  if (!reels || !customerId) return text;
+  const site = (process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com').replace(/\/+$/, '');
+  return `${text} Send clips here, 5 to 10 seconds each: ${site}/upload?c=${customerId}`;
 }

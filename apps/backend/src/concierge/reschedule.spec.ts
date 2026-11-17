@@ -18,6 +18,8 @@ function makeWorld(opts: {
   body: string;
   parse?: { when: string; scope?: 'post' | 'week' };
   pending?: boolean;
+  /** The last thing we texted them. Defaults to the draft itself. */
+  lastOutbound?: string;
   upcoming?: Array<{ id: string; status: string; hoursFromNow: number }>;
 }) {
   const emitted: Array<{ type: string; payload: Row }> = [];
@@ -59,7 +61,12 @@ function makeWorld(opts: {
     },
     customer: { findUnique: async () => ({ timezone: 'America/Los_Angeles' }) },
     conversation: { findUnique: async () => ({ id: 'conv1', pendingIntent: null }), update: async () => ({}) },
-    message: { create: async () => ({}) },
+    message: {
+      create: async () => ({}),
+      findFirst: async () => ({
+        body: opts.lastOutbound ?? 'Draft for Thu 9:00 AM:\n\n“A caption.”\n\nReply “yes” to schedule it, or tell me what to change.',
+      }),
+    },
     mediaAsset: { findFirst: async () => null },
   };
   const bus = {
@@ -182,5 +189,30 @@ describe('reschedule keyword routing (offline classifier)', () => {
   it('plain approvals and revisions keep their lanes', () => {
     assert.equal(offline('yes looks great').intent, 'approve');
     assert.equal(offline('make it shorter').intent, 'revise');
+  });
+
+  it('a bare "ok" to a billing notice does not approve the draft it never saw', async () => {
+    const w = makeWorld({
+      intent: 'approve',
+      body: 'ok will do',
+      pending: true,
+      lastOutbound:
+        "Heads up, your card was declined, so this month's payment didn't go through. I'll keep posting as normal.",
+    });
+    await w.run();
+    assert.equal(w.emitted.find((e) => e.type === 'SCHEDULE_POST'), undefined, 'nothing scheduled');
+    assert.match(w.replied[0], /still waiting/);
+    assert.match(w.replied[0], /post it/);
+  });
+
+  it('"post it" still approves after a notice, because it names the post', async () => {
+    const w = makeWorld({
+      intent: 'approve',
+      body: 'post it',
+      pending: true,
+      lastOutbound: "You're on Pro now: you'll get a post every day.",
+    });
+    await w.run();
+    assert.ok(w.emitted.find((e) => e.type === 'SCHEDULE_POST'));
   });
 });
