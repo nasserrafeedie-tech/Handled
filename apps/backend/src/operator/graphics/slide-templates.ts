@@ -22,6 +22,7 @@
  * Instagram 4:5 portrait canvas.
  */
 
+import { cropAlign } from './photo-focus';
 import { capHeight, textWidth } from './text-metrics';
 
 export const CANVAS = 1080;
@@ -154,6 +155,11 @@ export interface SlideSpec {
   photo?: string;
   /** How the photo is composed with the type. Defaults to 'full'. */
   photoLayout?: PhotoLayout;
+  /**
+   * Where the photo's subject sits, 0 (top) to 1 (bottom), from photoFocusY().
+   * Steers the crop so a cut-down photo keeps its subject in view.
+   */
+  photoFocusY?: number;
   /**
    * How the words are arranged on a designed slide. Normally left unset: it is
    * derived from `seed` (see textLayoutFor) so a carousel shares one layout
@@ -792,7 +798,8 @@ function pickLook(
 /** Where the 'frame' photo layout puts its inset print. */
 const FRAME = { x: 64, y: 64, w: CANVAS - 128, h: 760, r: 30 };
 
-function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
+function photoFrame(p: Palette, photo: string, layout: PhotoLayout, focusY?: number): string {
+  const align = cropAlign(focusY);
   const bandH = Math.round(CANVAS_H * 0.5);
   const defs = `
     <defs>
@@ -813,7 +820,7 @@ function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
 
   // preserveAspectRatio "slice" = cover: fills the square, crops the overflow.
   const img = (y: number, h: number) =>
-    `<image href="${photo}" x="0" y="${y}" width="${CANVAS}" height="${h}" preserveAspectRatio="xMidYMid slice"/>`;
+    `<image href="${photo}" x="0" y="${y}" width="${CANVAS}" height="${h}" preserveAspectRatio="${align} slice"/>`;
 
   if (layout === 'band') {
     return `${defs}
@@ -831,7 +838,7 @@ function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
     return `${defs}
       <rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#bg)"/>
       <clipPath id="frameClip"><rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="${f.r}"/></clipPath>
-      <image href="${photo}" x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#frameClip)"/>
+      <image href="${photo}" x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" preserveAspectRatio="${align} slice" clip-path="url(#frameClip)"/>
       <rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="${f.r}" fill="none" stroke="${p.fg}" stroke-opacity="0.18" stroke-width="2"/>`;
   }
 
@@ -1431,7 +1438,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
 
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS_H}" viewBox="0 0 ${CANVAS} ${CANVAS_H}">`,
-    spec.photo ? photoFrame(p, spec.photo, layout!) : surface!.bg + (blockBg ?? ''),
+    spec.photo ? photoFrame(p, spec.photo, layout!, spec.photoFocusY) : surface!.bg + (blockBg ?? ''),
   ];
   if (built.under) parts.push(built.under);
   if (cardBox) parts.push(cardPanel(p, cardBox.y, cardBox.h));

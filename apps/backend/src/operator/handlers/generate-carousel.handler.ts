@@ -8,6 +8,7 @@ import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
 import { GraphicsService } from '../graphics/graphics.service';
 import { CANVAS, CANVAS_H, photoLayoutFor, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
+import { readPhoto, reviewPhotoLayout } from '../graphics/photo-focus';
 import { resolveBrandColors } from '../graphics/brand-palette';
 import { logoDataUri } from '../graphics/logo-colors';
 import { ImageGenService } from '../graphics/image-gen.service';
@@ -434,6 +435,21 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
         });
       }
     }
+
+    // Review each photo slide before it is drawn: find where the photo's
+    // subject is, crop toward it, and keep a card or caption off it.
+    await Promise.all(
+      specs.map(async (spec, i) => {
+        if (!spec.photo) return;
+        const read = await readPhoto(spec.photo);
+        if (!read) return;
+        specs[i] = {
+          ...spec,
+          photoFocusY: read.focusY,
+          photoLayout: reviewPhotoLayout(spec.photoLayout ?? 'full', read),
+        };
+      }),
+    );
 
     let pngs: Buffer[];
     try {
