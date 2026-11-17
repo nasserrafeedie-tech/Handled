@@ -1025,7 +1025,7 @@ export class ConciergeService {
           : null;
         const when =
           (timed ? new Date(Math.max(timed.when.getTime(), Date.now() + 60_000)) : null) ??
-          pending!.scheduledTime ??
+          rollForward(pending!.scheduledTime) ??
           tomorrowMorningInZone(tz);
         const result = await this.bus.emit(
           this.task(customerId, 'SCHEDULE_POST', {
@@ -2689,3 +2689,17 @@ export function lastMessageShowsDraft(body: string | null, caption: string | nul
 /** Asking to end the plan itself, not to skip a post. */
 export const CANCEL_PLAN_RE =
   /\b(?:cancel|end|stop|quit|terminate)\s+(?:my\s+|the\s+|our\s+)?(?:subscription|membership|plan|account|service|handled)\b|\bhow (?:do|can) i cancel\b(?!\s+(?:a|the|this|that|my)\s+post)/i;
+
+/**
+ * A draft can sit unanswered past its own slot (a pause, a busy week). A "yes"
+ * then used to schedule it in the past, so it went out the moment it was
+ * approved under a "Scheduled for" date that had already gone. Keep the
+ * planned time of day and move it to the next day it's still ahead.
+ */
+export function rollForward(planned: Date | null | undefined, now = Date.now()): Date | null {
+  if (!planned) return null;
+  let t = planned.getTime();
+  const DAY = 86_400_000;
+  if (t <= now + 60_000) t += Math.ceil((now + 60_000 - t) / DAY) * DAY;
+  return new Date(t);
+}

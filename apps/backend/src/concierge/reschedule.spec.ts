@@ -18,6 +18,8 @@ function makeWorld(opts: {
   body: string;
   parse?: { when: string; scope?: 'post' | 'week' };
   pending?: boolean;
+  /** Where the pending draft's planned slot sits. Defaults to 3 days ahead. */
+  pendingHoursFromNow?: number;
   /** The last thing we texted them. Defaults to the draft itself. */
   lastOutbound?: string;
   upcoming?: Array<{ id: string; status: string; hoursFromNow: number }>;
@@ -34,7 +36,7 @@ function makeWorld(opts: {
         status: 'pending_approval',
         caption: 'A caption.',
         mediaRefs: [],
-        scheduledTime: new Date(now + 3 * 86_400_000),
+        scheduledTime: new Date(now + (opts.pendingHoursFromNow ?? 72) * 3_600_000),
         presentedAt: new Date(),
       }
     : null;
@@ -124,6 +126,16 @@ describe('timing in approvals and reschedules', () => {
     const sched = w.emitted.find((e) => e.type === 'SCHEDULE_POST');
     const when = new Date(sched!.payload.scheduled_time as string).getTime();
     assert.ok(Math.abs(when - (w.now + 3 * 86_400_000)) < 60_000, 'planned time kept');
+  });
+
+  it('a "yes" to a draft whose slot has passed moves it to the next day, same time', async () => {
+    const w = makeWorld({ intent: 'approve', body: 'yes', pending: true, pendingHoursFromNow: -50 });
+    await w.run();
+    const sched = w.emitted.find((e) => e.type === 'SCHEDULE_POST');
+    const when = new Date(sched!.payload.scheduled_time as string).getTime();
+    assert.ok(when > w.now, 'never scheduled in the past');
+    assert.ok(when - w.now <= 86_400_000, 'within a day');
+    assert.equal(((when - (w.now - 50 * 3_600_000)) % 86_400_000), 0, 'same time of day');
   });
 
   it('"shift the schedule to start today" moves the whole week, day-shifted', async () => {
