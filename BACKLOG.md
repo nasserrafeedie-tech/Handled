@@ -16,7 +16,7 @@ Last re-ranked: 2026-11-17.
 - [x] **Unpaid price question (F3).** Fixed: it now gets the three prices and the link, and no longer spends the free draft on the question. Someone who hasn't paid asks "how much is it?" and gets the paywall text with no price in it. Give them the plan prices and the link.
 - [x] **Email signup re-asks the business name (F18).** Fixed: the first question and the free-draft intro use the name they gave instead of asking "what's it called". Someone who signs up on the web with a business name gets asked for it again over text.
 - [x] **"What's coming up" hides drafts (F17).** Fixed: drafts waiting on the owner are listed first and marked "waiting on your OK". The answer lists scheduled posts only. It leaves out drafts that are waiting on the owner, and those are the ones that need them.
-- [ ] **Duplicates and gibberish.** Twilio sends the same message twice, or the owner sends "asdfgh" or only an emoji. Make sure there's no double reply and no confused answer.
+- [x] **Duplicates and gibberish.** Fixed: a repeated Twilio webhook used to throw and get retried, and is now dropped quietly. Keyboard mash gets one short "didn't catch that" and never reaches the intent model. A lone emoji with nothing waiting gets no reply. Twilio sends the same message twice, or the owner sends "asdfgh" or only an emoji. Make sure there's no double reply and no confused answer.
 
 ## 2. Results the owner can see (keeps them paying)
 

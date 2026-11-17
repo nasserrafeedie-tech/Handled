@@ -150,6 +150,38 @@ const FREE_TASTE_INTRO =
   "want customers to know this week, and I'll write you a post on the spot. " +
   "Free, takes ten seconds — and that's the only question.";
 
+/**
+ * Text with nothing in it to act on, told apart before any LLM call:
+ *  - 'mash': one token with five keys in a row along a keyboard row ("asdfgh",
+ *    "qwerty") or four-plus different letters with no vowel ("sdfghj").
+ *  - 'emoji': only emoji or symbols, and not one of the yes emoji, which
+ *    the intent step reads as approval.
+ * Anything with a real word, a digit or a question mark is left alone.
+ */
+const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+const YES_EMOJI = /👍|👌|🔥|✅|💯|🙌|❤️|😍/u;
+export function inboundNoise(body: string): 'mash' | 'emoji' | null {
+  const t = body.trim();
+  if (!t || /[0-9?]/.test(t)) return null;
+  if (!/\p{L}/u.test(t)) {
+    return YES_EMOJI.test(t) || !/\p{Extended_Pictographic}/u.test(t) ? null : 'emoji';
+  }
+  const w = t.toLowerCase();
+  if (!/^[a-z]+[!.]*$/.test(w)) return null;
+  const letters = w.replace(/[!.]+$/, '');
+  if (letters.length < 4) return null;
+  const run = KEY_ROWS.some((row) => {
+    for (let i = 0; i + 5 <= row.length; i++) {
+      const seg = row.slice(i, i + 5);
+      if (letters.includes(seg) || letters.includes([...seg].reverse().join(''))) return true;
+    }
+    return false;
+  });
+  if (run) return 'mash';
+  if (!/[aeiouy]/.test(letters) && new Set(letters).size >= 4) return 'mash';
+  return null;
+}
+
 /** The intro, naming the business when the signup form already gave it. */
 function freeTasteIntro(businessName?: string | null): string {
   const name = businessName?.trim();
@@ -238,16 +270,28 @@ export class ConciergeService {
 
   async handleInbound(msg: InboundSms): Promise<void> {
     const { customer, conversation, created } = await this.resolveCustomer(msg.from);
-    await this.prisma.message.create({
-      data: {
-        conversationId: conversation.id,
-        direction: 'inbound',
-        channel: msg.from.includes('@') ? 'email' : 'sms',
-        body: msg.body,
-        mediaUrls: msg.mediaUrls,
-        twilioSid: msg.twilioSid,
-      },
-    });
+    try {
+      await this.prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          direction: 'inbound',
+          channel: msg.from.includes('@') ? 'email' : 'sms',
+          body: msg.body,
+          mediaUrls: msg.mediaUrls,
+          twilioSid: msg.twilioSid,
+        },
+      });
+    } catch (e) {
+      // Twilio retries a webhook it thinks failed (a slow reply counts), with
+      // the same MessageSid. The unique index on twilioSid catches the repeat;
+      // answering it would text the owner twice. Before this the repeat threw,
+      // so Twilio logged an error and retried again.
+      if (msg.twilioSid && (e as { code?: string }).code === 'P2002') {
+        this.log.warn(`duplicate inbound ${msg.twilioSid} ignored`);
+        return;
+      }
+      throw e;
+    }
 
     // 1. Kill switch (§8) — highest priority, dead simple.
     if (this.isStop(msg.body)) {
@@ -734,6 +778,28 @@ export class ConciergeService {
     ) {
       await this.clearPendingConfirmation(conversationId);
       return this.fixBrandColors(customerId, phone, conversationId, body, { reasked: true });
+    }
+
+    // Keyboard mash or a lone non-yes emoji: nothing to act on. Sent to the
+    // classifier it could come back as a low-confidence "revise" and rewrite a
+    // draft around "asdfgh", or reach the Q&A lane and get a confused answer.
+    const noise = inboundNoise(body);
+    if (noise === 'mash') {
+      return this.reply(
+        phone,
+        conversationId,
+        pending
+          ? "Didn't catch that one. Reply yes to post the draft, or tell me what to change."
+          : "Didn't catch that one. What can I do for you?",
+      );
+    }
+    if (noise === 'emoji') {
+      if (!pending) return; // a reaction to nothing in particular needs no answer
+      return this.reply(
+        phone,
+        conversationId,
+        'Want me to post the draft? Reply yes, or tell me what to change.',
+      );
     }
 
     let { intent, feedback, confidence } = await this.intent.classify(
