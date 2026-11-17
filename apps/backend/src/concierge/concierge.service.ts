@@ -452,36 +452,12 @@ export class ConciergeService {
       );
     }
 
-    // 2. Media in → ingest each attachment, and aim it at whatever is waiting:
-    //    the oldest open shot-list ask first, else the next upcoming post that
-    //    has no photo yet. Without this linkage every photo landed as an
+    // 2. Media in → ingest each attachment, and aim it at whatever is waiting
+    //    (photoTarget: the draft they were just shown, a newer shot-list ask,
+    //    else the next upcoming post that has no photo yet). Without this linkage every photo landed as an
     //    orphan record and the "I'll need 1 quick photo" ask was never closed.
     if (msg.mediaUrls.length > 0) {
-      let lastSummary = 'Got it — thanks for the photo! 📸';
-      for (let i = 0; i < msg.mediaUrls.length; i++) {
-        const openAsk = await this.prisma.shotListRequest.findFirst({
-          where: { customerId: customer.id, status: 'requested' },
-          orderBy: { askedAt: 'asc' },
-        });
-        const photolessPost = await this.prisma.post.findFirst({
-          where: {
-            customerId: customer.id,
-            status: { in: ['pending_approval', 'approved', 'scheduled'] },
-            mediaRefs: { isEmpty: true },
-          },
-          orderBy: { scheduledTime: 'asc' },
-        });
-        const result = await this.bus.emit(
-          this.task(customer.id, 'INGEST_MEDIA', {
-            source_url: msg.mediaUrls[i],
-            content_type: msg.mediaContentTypes[i] ?? 'image/jpeg',
-            shot_list_request_id: openAsk?.id,
-            post_id: openAsk?.postId ?? photolessPost?.id,
-          }),
-        );
-        lastSummary = result.summary_for_owner;
-      }
-      return this.reply(this.addressOf(customer), conversation.id, lastSummary);
+      return this.takePhotos(customer, conversation.id, msg);
     }
 
     // 3. Onboarding interview (§6) — resume at the next empty profile field.
@@ -1796,6 +1772,71 @@ export class ConciergeService {
    *
    * Returns false when the queue is empty.
    */
+  /** Photos texted in: each goes on the post it belongs to (photoTarget). */
+  async takePhotos(
+    customer: { id: string; phone: string | null; email: string | null; preferredChannel: string },
+    conversationId: string,
+    msg: InboundSms,
+  ): Promise<void> {
+    let lastSummary = 'Got it — thanks for the photo! 📸';
+    let reshow: string | null = null;
+    let target = null as { askId?: string; postId?: string; shownDraft: boolean } | null;
+    for (let i = 0; i < msg.mediaUrls.length; i++) {
+      // Several photos sent with the draft on screen all go on that draft;
+      // otherwise each one fills the next thing waiting on a photo.
+      target = target?.shownDraft ? { ...target, askId: undefined } : await this.photoTarget(customer.id);
+      const result = await this.bus.emit(
+        this.task(customer.id, 'INGEST_MEDIA', {
+          source_url: msg.mediaUrls[i],
+          content_type: msg.mediaContentTypes[i] ?? 'image/jpeg',
+          shot_list_request_id: target.askId,
+          post_id: target.postId,
+        }),
+      );
+      if (target.shownDraft && result.status !== 'failed') reshow = target.postId ?? null;
+      lastSummary = result.summary_for_owner;
+    }
+    // The photo went on the draft they're looking at: show it again with
+    // the photo in place, so the yes they give is to what will post.
+    if (reshow && (await this.presentNextDraft(customer.id, 'Added your photo ✳', { postId: reshow, promptedByOwner: true }).catch(() => false))) return;
+    return this.reply(this.addressOf(customer), conversationId, lastSummary);
+  }
+
+  /**
+   * Where a photo the owner just texted belongs. The draft we last showed
+   * them, if it has no picture, ends "text me a photo and I'll put it on this
+   * post", so a photo sent after it goes there. An open shot-list ask wins
+   * only when it was asked after that draft was shown. QA round 4: a photo
+   * sent right after the Tuesday draft landed on Monday's scheduled post,
+   * because Monday's shot-list ask was older.
+   */
+  async photoTarget(customerId: string): Promise<{ askId?: string; postId?: string; shownDraft: boolean }> {
+    const [openAsk, shown] = await Promise.all([
+      this.prisma.shotListRequest.findFirst({
+        where: { customerId, status: 'requested' },
+        orderBy: { askedAt: 'asc' },
+      }),
+      this.prisma.post.findFirst({
+        where: { customerId, status: 'pending_approval', mediaRefs: { isEmpty: true }, presentedAt: { not: null } },
+        orderBy: { presentedAt: 'desc' },
+      }),
+    ]);
+    const askFirst =
+      openAsk && (!shown || openAsk.postId === shown.id || !shown.presentedAt || openAsk.askedAt > shown.presentedAt);
+    if (openAsk && askFirst) return { askId: openAsk.id, postId: openAsk.postId ?? undefined, shownDraft: openAsk.postId === shown?.id };
+    if (shown) {
+      const askForIt = await this.prisma.shotListRequest.findFirst({
+        where: { customerId, status: 'requested', postId: shown.id },
+      });
+      return { askId: askForIt?.id, postId: shown.id, shownDraft: true };
+    }
+    const next = await this.prisma.post.findFirst({
+      where: { customerId, status: { in: ['pending_approval', 'approved', 'scheduled'] }, mediaRefs: { isEmpty: true } },
+      orderBy: { scheduledTime: 'asc' },
+    });
+    return { postId: next?.id, shownDraft: false };
+  }
+
   async presentNextDraft(
     customerId: string,
     lead?: string,
