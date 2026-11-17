@@ -6,6 +6,9 @@ below make the product better than "fine". Each item is meant to be one
 small, tested commit. Tick an item when it lands, and put its commit hash
 beside it.
 
+The bar for launch (Nasser, Nov 17): a product he'd happily use for his own
+business. Each QA round is judged against that, not only against "no bugs".
+
 Last re-ranked: 2026-11-17.
 
 ## 1. The core loop works end to end (blocks the first customer)
@@ -42,7 +45,19 @@ Last re-ranked: 2026-11-17.
 - [x] **Schema drift (F10).** Fixed in the schema, not the database: the three ids now declare the database's own uuid default, and the unique index keeps its existing name. `prisma migrate diff` is empty against both the migrations and a live database, so nothing needs deploying. An `archetype_performance` index name and three id defaults differ from what Prisma expects. Add a migration so `prisma migrate diff` comes back empty.
 - [x] **README is out of date.** Now names Handled, the real test commands, the real model defaults and what each key turns on. `.env.example` gained the R2, Postmark and admin variables the code reads. It still calls Anthropic, Post for Me, R2 and the crons "stubs". They are all wired now.
 - [x] **Admin overview journey.** Customers by status, MRR by tier, leads, the media mix and photo asks all matched the database. Fixed: the failed-post count stopped at 25. Check that every number on the admin page matches the database for a seeded customer.
-- [ ] **Two clean QA rounds in a row.** Rerun every journey after the fixes. It's done when two rounds in a row turn up nothing new.
+- [ ] **Two clean QA rounds in a row.** Rerun every journey after the fixes. It's done when two rounds in a row turn up nothing new. Round 2 found 6, round 3 found 4, round 4 found 3 so far (all fixed).
+
+## 5. Handled runs its own Instagram (dogfooding)
+
+Handled should post and promote itself through the product, as a customer
+would. Everything up to linking the account can be built now.
+
+- [ ] **A house account.** One customer row for Handled itself: Pro tier, owner phone set to Nasser's, marked paid without a Stripe charge (a `house` customer id) and left out of MRR and lead counts. Made by an admin-only setup route, so nobody signs up or pays.
+- [ ] **Its brand profile, pre-filled.** Business type, voice, audience (local service owners with no time for social), offers ($95/$249/$699 plans, the free taste), the brand colours and fonts from the site, and do's and don'ts (no fake testimonials, no invented numbers). Written from the site's own copy, so onboarding has nothing left to ask.
+- [ ] **Its content plan.** Posts that sell by showing: before/after of a real small-business feed, a "this post was planned, written and designed by text" carousel, the text thread itself as a screenshot-style graphic, pricing, the free-taste offer. Uses the four sample businesses as the "after".
+- [ ] **Approvals go to Nasser by text,** like any owner, so nothing posts without his yes.
+- [ ] **Nasser:** create the Instagram account (and a Facebook page if wanted), then link it through the normal connect link. That's the only step that needs him.
+- [ ] **Promotion** (boosting posts) is spending money, so it stays off until he says yes and names a budget.
 
 ## Done in this pass
 
@@ -55,11 +70,17 @@ Last re-ranked: 2026-11-17.
 - [x] Cancelling: a plan-cancel ask gets the billing link, and an ended plan no longer reads as a failed card (`26b084d`)
 - [x] A yes to a draft whose slot has passed schedules it ahead, not in the past (`b0eaa58`)
 - [x] Carousel covers and graphics are designed from scratch per post (Fable 5.2), checked for words, fit, colours, photo, contrast and hidden text, with the templates as the fallback (`87922b8`, `1ce57c2`). It only runs with a real Anthropic key.
+- [x] QA round 2: six fixes, including a dropped "make the next one about…" ask, a free-taste "how do I sign up" that got the paywall, and quiet-hours texts that outlived a STOP.
+- [x] QA round 3: four fixes, including "shift it to Friday" not moving the post and a paused account's posts never coming back.
+- [x] A texted photo goes on the draft the owner was just shown, and that draft comes back with the photo for a yes (`7ccf21f`).
+- [x] Times read "today", "tomorrow", a weekday within the week, or the date past that, so two different Tuesdays no longer look the same.
+- [x] Coming back (START, paying again, a fixed card) with nothing lined up plans the week right away instead of waiting for Monday.
 - [x] The email sign-up on `/start` is hidden, and refused by the backend, until Postmark works both ways. The page offers "email us" instead, so the no-phone path stays.
 
 ## Only Nasser can do these
 
-- Merge the PR and run `prisma migrate deploy` on the production database (two new migrations).
+- Merge the PR and run `prisma migrate deploy` on the production database (new migrations, including `20261117c_post_requests`).
+- Create Handled's own Instagram account and link it, once the house account is built (section 5).
 - Turn on the Stripe customer portal, so the "update your card" link works.
 - Set the Post for Me redirect URL and run one live account-linking test.
 - Add the Anthropic and OpenAI keys when you're ready for the all-out look (designed posts and top-quality photos).
