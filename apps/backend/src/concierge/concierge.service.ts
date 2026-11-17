@@ -9,6 +9,7 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
 import { EmailService } from './email.service';
 import { OnboardingService, NO_WEBSITE } from './onboarding.service';
+import { ownerRequestNote } from '../operator/handlers/plan-week.handler';
 import { photoWalkInvite, photoWalkReminder } from './photo-walk';
 import { BusinessResearchService } from './business-research.service';
 import { StorageService } from '../common/storage.service';
@@ -1056,6 +1057,13 @@ export class ConciergeService {
         return this.startOver(customerId, phone, conversationId);
     }
 
+    // Nothing waiting, and they asked for something ("can you do the next one
+    // about our $25 cuts"). That used to get "nothing's waiting on your OK"
+    // and the ask was dropped.
+    if (!pending && intent === 'revise' && looksLikePostRequest(feedback || body)) {
+      return this.takePostRequest(customerId, phone, conversationId, (feedback || body).trim().slice(0, 300));
+    }
+
     // Nothing waiting on them — don't pretend we changed something.
     if (!pending && (intent === 'approve' || intent === 'revise' || intent === 'cancel')) {
       return this.reply(
@@ -1345,6 +1353,77 @@ export class ConciergeService {
             : "Got it — I'll keep that in mind. Text me any time you want something posted.",
         );
     }
+  }
+
+  /**
+   * A post the owner asked for while nothing was waiting on them. "The next
+   * one" means the next post already scheduled: it's rewritten around the
+   * ask and shown again, since they haven't seen this version. With nothing
+   * scheduled in the coming week, the ask goes on the list the next week's
+   * plan works from, and the reply says so.
+   */
+  private async takePostRequest(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    ask: string,
+  ): Promise<void> {
+    const now = Date.now();
+    const next = await this.prisma.post.findFirst({
+      where: {
+        customerId,
+        status: 'scheduled',
+        scheduledTime: { gt: new Date(now + 30 * 60_000), lte: new Date(now + 7 * 24 * 3600_000) },
+      },
+      orderBy: { scheduledTime: 'asc' },
+    });
+    if (next) {
+      const result = await this.bus.emit(
+        this.task(customerId, 'REGENERATE_POST', {
+          post_id: next.id,
+          owner_feedback: `Make this post about what the owner asked for: ${ask}`,
+          regenerate_caption: true,
+        }),
+      );
+      if (result.error) return this.reply(phone, conversationId, result.summary_for_owner);
+      // They haven't seen this version, so it waits for their yes.
+      await this.prisma.post.update({
+        where: { id: next.id },
+        data: { status: 'pending_approval', approvalState: 'awaiting_owner' },
+      });
+      const deck =
+        next.mediaRefs.length > 0 &&
+        (await this.prisma.mediaAsset.findFirst({
+          where: { postId: next.id, source: 'assembled', kind: 'image' },
+          select: { id: true },
+        })) !== null &&
+        (await this.prisma.mediaAsset.findFirst({
+          where: { postId: next.id, source: 'owner_upload' },
+          select: { id: true },
+        })) === null;
+      if (deck) {
+        const rebuilt = await this.bus.emit(
+          this.task(customerId, 'GENERATE_CAROUSEL', { post_id: next.id, replace_existing: true, owner_feedback: ask }),
+        );
+        if (rebuilt.error) this.log.warn(`deck rebuild after a post request failed for ${next.id}`);
+      }
+      await this.presentNextDraft(customerId, 'Reworked your next post around that ✳', {
+        promptedByOwner: true,
+        postId: next.id,
+      });
+      return;
+    }
+    const profile = await this.prisma.brandProfile.findUnique({
+      where: { customerId },
+      select: { postRequests: true },
+    });
+    const list = [...(profile?.postRequests ?? []), ask].slice(-5);
+    await this.prisma.brandProfile.update({ where: { customerId }, data: { postRequests: list } });
+    return this.reply(
+      phone,
+      conversationId,
+      "Got it. I'll build one of the posts in your next plan around that, and you'll see it before it goes out.",
+    );
   }
 
   /**
@@ -2440,6 +2519,7 @@ export class ConciergeService {
               scheduled_time: zonedToUtc(slot.date, slot.best_time, tz).toISOString(),
               needs_asset: slot.needs_asset,
               shot_list_hint: slot.shot_list,
+              prompt_notes: ownerRequestNote(slot.owner_request),
             },
             'concierge',
           ),
@@ -2767,6 +2847,17 @@ export function lastMessageShowsDraft(body: string | null, caption: string | nul
   const snippet = caption?.trim().slice(0, 20);
   if (snippet && body.includes(snippet)) return true;
   return /\bdraft\b|reply\s*[“"']?(?:yes|post it)/i.test(body);
+}
+
+/**
+ * A "revise" with nothing waiting is a post request when it names something to
+ * post about, not just a tweak to a draft that isn't there ("shorter", "less
+ * emojis"). Kept loose: the cost of a miss is the old "nothing's waiting" reply.
+ */
+export function looksLikePostRequest(text: string): boolean {
+  const t = text.trim();
+  if (t.split(/\s+/).length < 3) return false;
+  return /\b(about|post|posts|feature|highlight|promote|show(?:case)?|mention|announce|shout ?out|next one|one on|do one)\b/i.test(t);
 }
 
 /** Asking to end the plan itself, not to skip a post. */

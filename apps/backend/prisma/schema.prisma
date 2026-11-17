@@ -388,6 +388,10 @@ model BrandProfile {
   // of the core interview: { pending: string[] }. Null = not yet generated;
   // empty pending = interview truly done.
   followUps          Json?
+  // Posts the owner asked for by text while nothing was waiting on them
+  // ("can you do one about our $25 cuts"), oldest first. The next week's plan
+  // gives each its own slot and takes it off this list.
+  postRequests       String[] @default([])
   logoRef            String?
   referencePhotoRefs String[]
   // Onboarding progress is tracked as which fields are filled, not a step

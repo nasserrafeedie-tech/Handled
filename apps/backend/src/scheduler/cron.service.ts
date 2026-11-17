@@ -18,6 +18,7 @@ import { photoWalkReminder } from '../concierge/photo-walk';
 import { ArchetypePerformanceService } from '../playbook/archetype-performance.service';
 import { zonedToUtc } from '../common/time';
 import { resolveStrategy, reelClipsFor } from '../operator/llm/vertical-playbook';
+import { ownerRequestNote } from '../operator/handlers/plan-week.handler';
 
 /** Shape of the PLAN_WEEK Result we care about. */
 type PlanResult = { data?: { slots?: CalendarSlot[] } };
@@ -142,6 +143,7 @@ export class CronService {
           scheduled_time: scheduledTimeIso,
           needs_asset: slot.needs_asset,
           shot_list_hint: slot.shot_list,
+              prompt_notes: ownerRequestNote(slot.owner_request),
         });
         drafted++;
 
