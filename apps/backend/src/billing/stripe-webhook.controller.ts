@@ -15,6 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import type { PlanId } from './billing.service';
+import { ReferralCreditService } from './referral-credit.service';
 import { normalizePhone } from '../common/phone';
 import { socialLimit, isGoogleBusiness } from '../operator/tier-entitlements';
 
@@ -61,6 +62,7 @@ export class StripeWebhookController {
     private readonly prisma: PrismaService,
     private readonly bus: TaskBus,
     private readonly concierge: ConciergeService,
+    private readonly referrals: ReferralCreditService,
   ) {}
 
   @Post()
@@ -344,9 +346,12 @@ export class StripeWebhookController {
     });
     this.log.log(`checkout complete: ${customer.id} on ${plan}`);
 
-    // Referral credit: thank the referrer, remember who sent them. The actual
-    // billing credit is applied manually in Stripe for now — the important
-    // part is that neither side's goodwill falls on the floor.
+    // Referral credit: remember who sent them, put a free month on the
+    // referrer's Stripe balance, and thank them. Once per referred customer —
+    // a cancel-and-come-back checkout doesn't pay out (or thank) twice. If
+    // Stripe can't take the credit right now it stays pending for the daily
+    // sweep; it never fails this webhook, because onboarding the customer who
+    // just paid matters more than the credit landing this second.
     const ref = obj.metadata?.ref;
     if (ref) {
       const referrer = await this.prisma.customer.findUnique({
@@ -357,10 +362,14 @@ export class StripeWebhookController {
           where: { id: customer.id },
           data: { referredByCode: ref },
         });
-        await this.concierge.notify(
-          referrer.id,
-          'Your referral just joined 🎉 A free month is coming off your next bill — thank you for spreading the word!',
-        );
+        const { isNew, creditId } = await this.referrals.record(referrer, customer.id, ref);
+        if (isNew && creditId) {
+          await this.referrals.apply(creditId);
+          await this.concierge.notify(
+            referrer.id,
+            'Your referral just joined 🎉 A free month is coming off your next bill — thank you for spreading the word!',
+          );
+        }
       }
     }
 

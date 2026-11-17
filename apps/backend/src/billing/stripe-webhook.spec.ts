@@ -67,10 +67,15 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
     notify: async (id: string, msg: string) => calls.notified.push(msg),
   };
   const bus = { emit: async (t: any) => calls.paused.push(t.customer_id) };
+  const referrals = {
+    record: async () => ({ isNew: false, creditId: null }),
+    apply: async () => ({ status: 'pending' }),
+  };
   const ctrl = new StripeWebhookController(
     prisma as any,
     bus as any,
     concierge as any,
+    referrals as any,
   );
   return { ctrl, rows, calls };
 }
@@ -379,5 +384,82 @@ describe('Stripe webhook idempotency', () => {
     );
     // The claim must have been released — otherwise the id is still in `seen`.
     assert.equal(seen.has('evt_retry'), false, 'claim must be released on failure');
+  });
+});
+
+describe('Stripe checkout → referral credit', () => {
+  /**
+   * A checkout through someone's ?ref= link puts a free month on the
+   * referrer's Stripe balance and thanks them — once. A referred customer who
+   * cancels and checks out again must not pay the referrer (or text them) a
+   * second time.
+   */
+  function setup(referrer: any) {
+    const rows: Record<string, any> = {};
+    const { ctrl, calls } = makeController(rows);
+    const credited = new Set<string>();
+    const log = { recorded: 0, applied: [] as string[] };
+    (ctrl as any).prisma.customer.findUnique = async ({ where }: any) =>
+      where.referralCode === referrer.referralCode ? referrer : null;
+    (ctrl as any).referrals = {
+      record: async (_ref: any, referredId: string) => {
+        log.recorded += 1;
+        if (credited.has(referredId)) return { isNew: false, creditId: null };
+        credited.add(referredId);
+        return { isNew: true, creditId: `rc_${referredId}` };
+      },
+      apply: async (id: string) => {
+        log.applied.push(id);
+        return { status: 'applied' };
+      },
+    };
+    const pay = (phone: string) =>
+      (ctrl as any).onCheckoutCompleted({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            customer: `cus_${phone}`,
+            metadata: { plan: 'growth', ref: referrer.referralCode },
+            customer_details: { phone },
+          },
+        },
+      });
+    return { ctrl, calls, log, rows, pay };
+  }
+
+  it('credits the referrer and thanks them, once per referred customer', async () => {
+    const { calls, log, rows, pay } = setup({ id: 'referrer', referralCode: 'ABC123', planTier: 'pro' });
+
+    await pay('424-409-8341');
+    assert.equal(log.applied.length, 1);
+    assert.equal(calls.notified.filter((m) => /referral just joined/.test(m)).length, 1);
+    assert.equal(rows['+14244098341'].referredByCode, 'ABC123');
+
+    // They cancel and come back through the same link.
+    await pay('424-409-8341');
+    assert.equal(log.recorded, 2);
+    assert.equal(log.applied.length, 1, 'no second credit');
+    assert.equal(
+      calls.notified.filter((m) => /referral just joined/.test(m)).length,
+      1,
+      'no second thank-you',
+    );
+  });
+
+  it('a second, different referral earns a second credit', async () => {
+    const { log, pay } = setup({ id: 'referrer', referralCode: 'ABC123', planTier: 'pro' });
+    await pay('424-409-8341');
+    await pay('310-555-0101');
+    assert.equal(log.applied.length, 2);
+  });
+
+  it('an unknown code credits nobody but still onboards the payer', async () => {
+    const { calls, log, ctrl } = setup({ id: 'referrer', referralCode: 'ABC123', planTier: 'pro' });
+    await (ctrl as any).onCheckoutCompleted({
+      type: 'checkout.session.completed',
+      data: { object: { customer: 'cus_x', metadata: { plan: 'growth', ref: 'NOPE' }, customer_details: { phone: '424-409-8341' } } },
+    });
+    assert.equal(log.recorded, 0);
+    assert.equal(calls.onboarded.length, 1);
   });
 });

@@ -625,6 +625,35 @@ model StripeWebhookEvent {
   @@map("stripe_webhook_events")
 }
 
+/// A "free month" owed to a customer whose referral code brought in a new
+/// paying customer. One row per referred customer — the unique key is what
+/// stops a re-checkout (cancel, come back) from paying the referrer twice.
+/// Applied as a negative Stripe customer balance, which Stripe draws down on
+/// the referrer's next invoice. Rows that can't be applied yet (Stripe
+/// offline, referrer has no Stripe customer, a Stripe error) stay pending and
+/// the daily sweep retries them; after MAX_ATTEMPTS they turn failed and show
+/// in the admin view for a human to settle.
+model ReferralCredit {
+  id                 String    @id @default(uuid()) @db.Uuid
+  referrerId         String    @db.Uuid
+  referredCustomerId String    @unique @db.Uuid
+  code               String
+  /// Frozen when the referral lands: a month of the referrer's plan then.
+  amountCents        Int
+  /// pending | applied | failed
+  status             String    @default("pending")
+  attempts           Int       @default(0)
+  lastError          String?
+  stripeBalanceTxnId String?
+  appliedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([status])
+  @@index([referrerId])
+  @@map("referral_credits")
+}
+
 model Lead {
   id             String    @id @default(uuid()) @db.Uuid
   phone          String    @unique

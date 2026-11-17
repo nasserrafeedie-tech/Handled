@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { costOf, formatCost } from '../operator/llm/pricing';
+import { PLAN_MONTHLY_USD } from '../billing/plan-prices';
 
 /**
  * The two numbers that decide whether this business works.
@@ -59,12 +60,8 @@ export interface BusinessMetrics {
   };
 }
 
-/** What each tier bills monthly. */
-const TIER_PRICE: Record<string, number> = {
-  starter: 95,
-  growth: 349,
-  pro: 699,
-};
+/** What each tier bills monthly (shared with the referral credit). */
+const TIER_PRICE = PLAN_MONTHLY_USD;
 
 /** Above this monthly churn, the business does not compound. */
 const FIRE_ABOVE_PCT = 5;

@@ -12,6 +12,7 @@ import { ConnectService } from '../connect/connect.service';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
 import { ReconcileService } from './reconcile.service';
 import { RecapService } from '../concierge/recap.service';
+import { ReferralCreditService } from '../billing/referral-credit.service';
 import { photoWalkReminder } from '../concierge/photo-walk';
 import { ArchetypePerformanceService } from '../playbook/archetype-performance.service';
 import { zonedToUtc } from '../common/time';
@@ -54,6 +55,7 @@ export class CronService {
     private readonly reconcile: ReconcileService,
     private readonly performance: ArchetypePerformanceService,
     private readonly recap: RecapService,
+    private readonly referrals: ReferralCreditService,
   ) {}
 
   private get enabled(): boolean {
@@ -388,6 +390,25 @@ export class CronService {
     await this.reconcile
       .sweep()
       .catch((e) => this.log.warn(`reconciliation failed: ${e.message}`));
+  }
+
+  /**
+   * Daily (11:00): land any referral credit that couldn't go on Stripe at
+   * checkout time — Stripe was down, the referrer hadn't paid yet, a timeout.
+   * The Idempotency-Key per credit makes a retry safe even when the first try
+   * actually reached Stripe. See ReferralCreditService.
+   */
+  @Cron('0 11 * * *', { timeZone: CRON_TZ })
+  async applyReferralCredits(): Promise<void> {
+    if (!this.enabled) return;
+    await this.referrals
+      .retryPending()
+      .then((t) => {
+        if (t.applied || t.failed) {
+          this.log.log(`referral credits: ${t.applied} applied, ${t.pending} waiting, ${t.failed} gave up`);
+        }
+      })
+      .catch((e) => this.log.warn(`referral credit sweep failed: ${e.message}`));
   }
 
   /** Dev-endpoint passthrough: run reconciliation regardless of ENABLE_CRON. */

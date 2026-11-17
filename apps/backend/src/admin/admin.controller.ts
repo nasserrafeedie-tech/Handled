@@ -22,6 +22,7 @@ import { StorageService } from '../common/storage.service';
 import { ReelQueueService } from '../scheduler/reel-queue.service';
 import { ADMIN_PAGE_HTML } from './admin-page';
 import { assertAdmin } from './admin-auth';
+import { ReferralCreditService } from '../billing/referral-credit.service';
 
 const PublishNowBody = z.object({ postId: z.string().uuid() });
 
@@ -131,6 +132,7 @@ export class AdminController {
     private readonly pfm: PostForMeService,
     private readonly storage: StorageService,
     private readonly reelQueue: ReelQueueService,
+    private readonly referrals?: ReferralCreditService,
   ) {}
 
   /**
@@ -713,11 +715,23 @@ export class AdminController {
     return { published: true, result };
   }
 
+  /**
+   * Retry every pending referral credit now, instead of waiting for the daily
+   * sweep — e.g. right after STRIPE_SECRET_KEY goes live, so credits earned
+   * while Stripe was offline land the same minute.
+   */
+  @HttpPost('referral-credits/retry')
+  async retryReferralCredits(@Headers('x-admin-token') token: string | undefined) {
+    assertAdmin(token);
+    if (!this.referrals) return { error: 'unavailable' };
+    return this.referrals.retryPending();
+  }
+
   @Get('overview')
   async overview(@Headers('x-admin-token') token: string | undefined) {
     assertAdmin(token);
 
-    const [leads, customers, recentPosts, failedPosts, archetypes] = await Promise.all([
+    const [leads, customers, recentPosts, failedPosts, archetypes, referralCredits] = await Promise.all([
       this.prisma.lead.findMany({ orderBy: { createdAt: 'desc' }, take: 100 }),
       this.prisma.customer.findMany({
         orderBy: { createdAt: 'desc' },
@@ -748,6 +762,13 @@ export class AdminController {
           researchedAt: true,
         },
       }),
+      // Free months owed to referrers. Anything not 'applied' is a promise
+      // that still needs keeping — 'failed' means the sweep gave up and a
+      // human should settle it in Stripe.
+      this.prisma.referralCredit.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
     ]);
 
     return {
@@ -771,6 +792,18 @@ export class AdminController {
         created: c.createdAt,
       })),
       recentPosts, failedPosts, archetypes,
+      referralCredits: referralCredits.map((r) => ({
+        id: r.id,
+        referrerId: r.referrerId,
+        referredCustomerId: r.referredCustomerId,
+        code: r.code,
+        amountUsd: r.amountCents / 100,
+        status: r.status,
+        attempts: r.attempts,
+        lastError: r.lastError,
+        appliedAt: r.appliedAt,
+        created: r.createdAt,
+      })),
     };
   }
 }
