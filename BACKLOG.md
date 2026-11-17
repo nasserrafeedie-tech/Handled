@@ -54,6 +54,7 @@ Last re-ranked: 2026-11-17.
 - [x] The homepage demo reel is re-cut through the real pipeline (`e404a00`)
 - [x] Cancelling: a plan-cancel ask gets the billing link, and an ended plan no longer reads as a failed card (`26b084d`)
 - [x] A yes to a draft whose slot has passed schedules it ahead, not in the past (`b0eaa58`)
+- [x] Carousel covers and graphics are designed from scratch per post (Fable 5.2), checked for words, fit, colours, photo, contrast and hidden text, with the templates as the fallback (`87922b8`, `1ce57c2`). It only runs with a real Anthropic key.
 - [x] The email sign-up on `/start` is hidden, and refused by the backend, until Postmark works both ways. The page offers "email us" instead, so the no-phone path stays.
 
 ## Only Nasser can do these
@@ -61,6 +62,7 @@ Last re-ranked: 2026-11-17.
 - Merge the PR and run `prisma migrate deploy` on the production database (two new migrations).
 - Turn on the Stripe customer portal, so the "update your card" link works.
 - Set the Post for Me redirect URL and run one live account-linking test.
+- Add the Anthropic and OpenAI keys when you're ready for the all-out look (designed posts and top-quality photos).
 - Sign in to Postmark and finish setting it up (sending and the inbound webhook), then set `NEXT_PUBLIC_EMAIL_SIGNUP=1` on the web app to show the email sign-up form again.
 - Check the Twilio opt-out wording.
 - Clean up the stray Vercel projects.
