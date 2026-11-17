@@ -184,6 +184,23 @@ describe('the layouts actually look different', () => {
     assert.match(svg, /FRESH FADE/);
   });
 
+  it('quote slides take a look from the post: centred, side or on the accent', () => {
+    const q = (tl: TextLayout) =>
+      renderSlideSvg({ kind: 'quote', headline: 'Best fade in town.', footer: 'Dev', seed: 0, textLayout: tl }, theme('modern'));
+    const quoteText = (svg: string) => /<text([^>]*)font-style="italic"|<text([^>]*font-size="7\d")/.exec(svg)?.[0] ?? '';
+    assert.match(quoteText(q('stack')), /text-anchor="middle"/);
+    assert.doesNotMatch(quoteText(q('poster')), /text-anchor="middle"/, 'the side look is left-aligned');
+    assert.match(q('split'), /<rect width="1080" height="1350" fill="#[0-9A-Fa-f]{6}"\/>/, 'the block look sets the quote on the accent');
+    assert.doesNotMatch(q('stack'), /<rect width="1080" height="1350" fill="#/);
+  });
+
+  it('a CTA on a poster post sits on the left with the brand line above', () => {
+    const c = (tl: TextLayout) =>
+      renderSlideSvg({ kind: 'cta', headline: 'Book this week', ctaLabel: 'Book now', seed: 0, textLayout: tl }, theme('modern'));
+    assert.match(c('poster'), /<text x="110" y="124"[^>]*>SHARP &amp; CO</);
+    assert.doesNotMatch(c('stack'), /y="124"[^>]*>SHARP/);
+  });
+
   it('inside slides of a numeral deck are numbered steps', () => {
     const svg = renderSlideSvg({ kind: 'body', headline: 'Warm the oil first', seed: 0, variant: 2, textLayout: 'numeral' }, theme('modern'));
     assert.match(svg, />02<\/text>/);

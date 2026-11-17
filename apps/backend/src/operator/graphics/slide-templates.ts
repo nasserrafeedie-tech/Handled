@@ -925,12 +925,34 @@ function logoBadge(dataUri: string, centered: boolean, pad: number): string {
     </g>`;
 }
 
+/** How wide ctaButton draws a label, so a left-aligned button can sit on the margin. */
+function ctaButtonWidth(label: string): number {
+  return Math.round(label.toUpperCase().length * 30 * 0.7) + 96 + 46;
+}
+
+/**
+ * Which treatment a quote or call-to-action slide takes, from its post's
+ * layout. Photo slides and other kinds keep their own compositions.
+ */
+function endLookFor(
+  spec: SlideSpec,
+  layout: PhotoLayout | undefined,
+  seed: number,
+): 'center' | 'side' | 'block' {
+  if (layout || (spec.kind !== 'quote' && spec.kind !== 'cta')) return 'center';
+  const deck = spec.textLayout ?? textLayoutFor(seed, spec.coverHeadline);
+  if (deck === 'poster' || deck === 'numeral') return 'side';
+  // The CTA's surface already floods in the accent (pickLook), so only the
+  // quote has a block look to add.
+  return deck === 'split' && spec.kind === 'quote' ? 'block' : 'center';
+}
+
 /** A pill-shaped call-to-action button with a cleanly drawn arrow. */
 function ctaButton(cx: number, cy: number, label: string, p: Palette, t: TypeSet): string {
   const fs = 30;
   const upper = label.toUpperCase();
   const arrowW = 46;
-  const w = Math.round(upper.length * fs * 0.7) + 96 + arrowW;
+  const w = ctaButtonWidth(label);
   const h = 66;
   const x = cx - w / 2;
   const y = cy - h / 2;
@@ -1005,7 +1027,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   const surface = layout
     ? undefined
     : pickLook(theme, seed, spec.variant ?? 0, spec.kind);
-  const p = surface ? surface.p : photoPalette(theme);
+  let p = surface ? surface.p : photoPalette(theme);
   const t = typeSet(theme.style);
   const footer = spec.footer ?? theme.brandName ?? '';
   const wordSlide = spec.kind === 'title' || spec.kind === 'body';
@@ -1032,6 +1054,20 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
     tl = Math.floor(Math.abs(seed) / 5) % 2 === 0 ? 'highlight' : 'stack';
   }
 
+  // Quote and call-to-action slides take a treatment from the post's layout,
+  // so they change from post to post too. They used to be one centred look
+  // each, which made every deck end the same way.
+  //  - center: the centred stack (stack and highlight posts)
+  //  - side:   left-aligned and bottom-weighted (poster and numeral posts)
+  //  - block:  a quote set on the accent colour (split posts, whose covers
+  //            are colour-blocked; the CTA already floods in the accent)
+  const endLook = endLookFor(spec, layout, seed);
+  let blockBg: string | undefined;
+  if (endLook === 'block') {
+    blockBg = `<rect width="${CANVAS}" height="${CANVAS_H}" fill="${p.accent}"/>`;
+    p = { ...p, bgTop: p.accent, bgBottom: p.accent, fg: p.onAccent, fgSoft: p.onAccent, accent: p.onAccent, onAccent: p.accent };
+  }
+
   const BAND_H = Math.round(CANVAS_H * 0.5);
   const CARD_M = 96;
   const CARD_PAD = 70;
@@ -1053,9 +1089,8 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   const centered =
     layout === 'card' ||
     tl === 'highlight' ||
-    spec.kind === 'quote' ||
     spec.kind === 'promo' ||
-    spec.kind === 'cta';
+    ((spec.kind === 'quote' || spec.kind === 'cta') && endLook !== 'side');
   const maxW = CANVAS - pad * 2;
   const cx = CANVAS / 2;
   const anchor = centered ? ' text-anchor="middle"' : '';
@@ -1143,35 +1178,41 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
         5,
       );
       const qLH = qFs * 1.28;
+      const side = endLook === 'side';
+      const qx = side ? pad : cx;
+      const qAnchor = side ? '' : ' text-anchor="middle"';
       if (layout !== 'card') {
-        const mFs = Math.round(300 * scale);
+        // The side look sets the mark big and solid, like a pull quote in a
+        // magazine; the centred looks keep it large and faint behind.
+        const mFs = Math.round((side ? 360 : 300) * scale);
         blocks.push({
           h: mFs * 0.42,
-          gap: g(4),
+          gap: g(side ? 0 : 4),
           render: (y) =>
-            `<text x="${cx}" y="${y + mFs * 0.72}" text-anchor="middle" font-family="${t.quote}" font-size="${mFs}" font-weight="700" fill="${p.accent}" opacity="0.35">&#8220;</text>`,
+            `<text x="${side ? pad - mFs * 0.04 : cx}" y="${y + mFs * 0.72}"${qAnchor} font-family="${t.quote}" font-size="${mFs}" font-weight="700" fill="${p.accent}" opacity="${side || endLook === 'block' ? 0.9 : 0.35}">&#8220;</text>`,
         });
       }
       blocks.push({
         h: qLines.length * qLH,
         gap: g(54),
         render: (y) =>
-          `<text text-anchor="middle" font-family="${t.quote}" font-size="${qFs}"${t.quoteItalic ? ' font-style="italic"' : ''} font-weight="500" fill="${p.fg}" xml:space="preserve">${tspansCentered(qLines, cx, y + qFs * 0.8, qLH)}</text>`,
+          `<text${qAnchor} font-family="${t.quote}" font-size="${qFs}"${t.quoteItalic ? ' font-style="italic"' : ''} font-weight="500" fill="${p.fg}" xml:space="preserve">${side ? tspansLeft(qLines, qx, y + qFs * 0.8, qLH) : tspansCentered(qLines, cx, y + qFs * 0.8, qLH)}</text>`,
       });
       blocks.push({
         h: 5,
         gap: footer ? g(48) : 0,
         render: (y) =>
-          `<rect x="${cx - 60}" y="${y}" width="120" height="5" rx="2.5" fill="${p.accent}"/>`,
+          `<rect x="${side ? pad : cx - 60}" y="${y}" width="120" height="5" rx="2.5" fill="${p.accent}"/>`,
       });
       if (footer) {
         blocks.push({
           h: 34,
           gap: g(0),
           render: (y) =>
-            `<text x="${cx}" y="${y + 28}" text-anchor="middle" font-family="${t.body}" font-size="34" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(footer)}</text>`,
+            `<text x="${qx}" y="${y + 28}"${qAnchor} font-family="${t.body}" font-size="34" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(footer)}</text>`,
         });
       }
+      if (side) return { blocks, anchor: 'bottom', zone: [170, CANVAS_H - 150] };
       return { blocks, anchor: 'center' };
     }
 
@@ -1186,14 +1227,22 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
       blocks.push(headline(spec.headline, hFs, 1.04, headMax, spec.body ? g(56) : 0));
       if (spec.body) blocks.push(paragraph(spec.body, Math.round(46 * scale), 1.3, bodyMax, 0, 500));
     } else if (spec.kind === 'cta') {
-      const hFs = Math.round(88 * scale);
-      blocks.push(headline(spec.headline, hFs, 1.08, headMax, spec.body ? g(44) : g(66)));
+      const side = endLook === 'side';
+      const label = spec.ctaLabel ?? 'Visit us';
+      // The side look is the poster's ending: a big headline low on the left,
+      // the button under it on the same edge.
+      const hFs = Math.round((side ? 120 : 88) * scale);
+      blocks.push(headline(spec.headline, hFs, side ? 1.02 : 1.08, headMax, spec.body ? g(44) : g(66)));
       if (spec.body) blocks.push(paragraph(spec.body, Math.round(44 * scale), 1.3, bodyMax, g(66)));
       blocks.push({
         h: 66,
         gap: g(0),
-        render: (y) => ctaButton(cx, y + 33, spec.ctaLabel ?? 'Visit us', p, t),
+        render: (y) => ctaButton(side ? pad + ctaButtonWidth(label) / 2 : cx, y + 33, label, p, t),
       });
+      if (side) {
+        const over = `<text x="${pad}" y="124" font-family="${t.body}" font-size="28" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`;
+        return { blocks, anchor: 'bottom', over, zone: [200, CANVAS_H - 170] };
+      }
     } else if (tl === 'poster') {
       // A gig poster: the headline is the picture. Huge, tight, bottom-left,
       // with the brand line pinned top-left and a hairline before the body.
@@ -1382,7 +1431,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
 
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS_H}" viewBox="0 0 ${CANVAS} ${CANVAS_H}">`,
-    spec.photo ? photoFrame(p, spec.photo, layout!) : surface!.bg,
+    spec.photo ? photoFrame(p, spec.photo, layout!) : surface!.bg + (blockBg ?? ''),
   ];
   if (built.under) parts.push(built.under);
   if (cardBox) parts.push(cardPanel(p, cardBox.y, cardBox.h));

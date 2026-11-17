@@ -26,7 +26,7 @@ Last re-ranked: 2026-11-17.
 
 ## 3. Content that is worth paying for
 
-- [ ] **Quote and CTA slide variety.** The covers now rotate through five layouts. Quote and call-to-action slides still use one look each.
+- [x] **Quote and CTA slide variety.** Quotes now have three looks (centred, a left-aligned pull quote, or set on the accent) and CTAs two (centred, or poster-style on the left), picked by the post's layout. The covers now rotate through five layouts. Quote and call-to-action slides still use one look each.
 - [ ] **Real footage reel test.** The sample reels use still photos. Cut one from real phone clips and check the trims, captions and hook against it.
 - [ ] **Light review step for graphics.** Before a carousel goes to the owner, run a cheap automatic check that the photo isn't covered by the card in the spot where the subject is.
 - [x] **Unsourced claim in copy (F9).** Softened to "tend to get more response" in the text, the hint and the photo-walk page. The photo-walk nudge says photos get "roughly double the response". Drop the claim or soften it.
