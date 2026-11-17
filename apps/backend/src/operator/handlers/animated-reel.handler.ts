@@ -204,6 +204,7 @@ export class AnimatedReelHandler implements TaskHandler<'ANIMATED_REEL'> {
         copy_source: built.source,
         bytes: mp4.length,
         on_screen: screen,
+        waiting_ahead: waitingAhead,
       },
     );
   }

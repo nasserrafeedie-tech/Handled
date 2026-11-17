@@ -1,5 +1,5 @@
 import { bestPostLine } from './best-post';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomUUID } from 'node:crypto';
 import type { Task } from '@smm/contracts';
@@ -19,6 +19,10 @@ import { ArchetypePerformanceService } from '../playbook/archetype-performance.s
 import { zonedToUtc } from '../common/time';
 import { resolveStrategy, reelClipsFor } from '../operator/llm/vertical-playbook';
 import { ownerRequestNote } from '../operator/handlers/plan-week.handler';
+import { ReelQueueService } from './reel-queue.service';
+import { animatedReelsOn } from '../operator/video/animated/flag';
+import { tierHas } from '../operator/tier-entitlements';
+import { weekNumber, weeklyPromoOffer } from './weekly-animated';
 
 /** Shape of the PLAN_WEEK Result we care about. */
 type PlanResult = { data?: { slots?: CalendarSlot[] } };
@@ -58,6 +62,7 @@ export class CronService {
     private readonly performance: ArchetypePerformanceService,
     private readonly recap: RecapService,
     private readonly referrals: ReferralCreditService,
+    @Optional() private readonly reelQueue?: ReelQueueService,
   ) {}
 
   private get enabled(): boolean {
@@ -330,8 +335,45 @@ export class CronService {
       }
     }
 
+    await this.queueWeeklyAnimatedPromo(customerId, customer?.planTier ?? 'starter').catch((e) =>
+      this.log.warn(`weekly animated promo for ${customerId} failed: ${String(e)}`),
+    );
+
     this.log.log(`${customerId}: planned ${slots.length}, drafted ${drafted}`);
     return drafted;
+  }
+
+  /**
+   * Pro, with animated reels switched on: one promo reel a week from one of
+   * the owner's own offers, made in the background. It lands behind the
+   * week's drafts and comes up for its yes in turn, so Monday brings no extra
+   * text. Skipped when the profile has no offers (the reel's words only ever
+   * come from the owner) or a promo reel was made in the last six days.
+   */
+  async queueWeeklyAnimatedPromo(customerId: string, planTier: string, now = new Date()): Promise<boolean> {
+    if (!this.reelQueue || !animatedReelsOn() || !tierHas(planTier, 'reel')) return false;
+    const profile = await this.prisma.brandProfile.findUnique({
+      where: { customerId },
+      select: { offers: true },
+    });
+    const offer = weeklyPromoOffer(profile?.offers, weekNumber(now));
+    if (!offer) return false;
+    const recent = await this.prisma.mediaAsset.count({
+      where: {
+        customerId,
+        kind: 'video',
+        r2Key: { endsWith: 'animated-reel.mp4' },
+        createdAt: { gte: new Date(now.getTime() - 6 * 86_400_000) },
+      },
+    });
+    if (recent > 0) return false;
+    await this.reelQueue.enqueue({
+      customerId,
+      platform: 'instagram',
+      weekly: true,
+      animated: { kind: 'promo', offerText: offer },
+    });
+    return true;
   }
 
   /**

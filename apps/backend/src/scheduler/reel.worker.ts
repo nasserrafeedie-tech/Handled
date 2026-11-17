@@ -14,6 +14,7 @@ import { REEL_QUEUE, type ReelJobData } from './queue.constants';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import { isWorkerRole } from '../common/service-role';
+import { reelNotice } from './weekly-animated';
 
 /**
  * Consumes the reel queue and does the heavy assembly — but ONLY on the worker
@@ -48,10 +49,13 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
         const task: Task = buildReelTask(job.data);
         const result = await this.bus.emit(task);
         // Tell the owner how it went (§3: the Concierge owns the thread).
+        const notice = reelNotice(job.data, result);
+        if (!notice) {
+          this.log.log(`weekly reel for ${job.data.customerId}: ${result.status}, no text`);
+          return;
+        }
         await this.concierge
-          .notify(job.data.customerId, result.summary_for_owner, {
-            promptedByOwner: true,
-          })
+          .notify(job.data.customerId, notice.text, { promptedByOwner: notice.promptedByOwner })
           .catch((e) => this.log.warn(`reel notice failed: ${String(e)}`));
       },
       {
@@ -72,7 +76,7 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
     this.worker.on('failed', (job, err) => {
       this.log.error(`reel job ${job?.id} failed: ${err.message}`);
       // On the final attempt, tell the owner rather than leaving them waiting.
-      if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      if (job && !job.data.weekly && job.attemptsMade >= (job.opts.attempts ?? 1)) {
         void this.concierge
           .notify(
             job.data.customerId,
