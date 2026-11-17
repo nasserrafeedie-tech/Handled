@@ -22,6 +22,8 @@
  * Instagram 4:5 portrait canvas.
  */
 
+import { capHeight, textWidth } from './text-metrics';
+
 export const CANVAS = 1080;
 // 4:5 portrait (1080×1350) — the maximum feed real estate. Every 2025-26
 // benchmark and design guide converged on portrait over square for carousels.
@@ -45,16 +47,78 @@ export type SlideKind = 'title' | 'body' | 'quote' | 'promo' | 'cta';
 /**
  * How a photo is used behind the type. Picking one per post is what keeps a
  * feed from looking like the same template four times a week.
- *   full — photo fills the frame, text sits on a dark scrim
- *   card — photo fills the frame, text sits in a floating card
- *   band — photo on top, solid brand color below
+ *   full  — photo fills the frame, text sits on a dark scrim
+ *   card  — photo fills the frame, text sits in a floating card
+ *   band  — photo on top, solid brand color below
+ *   frame — photo inset with a margin, like a print on a mat, words below
  */
-export type PhotoLayout = 'full' | 'card' | 'band';
+export type PhotoLayout = 'full' | 'card' | 'band' | 'frame';
 
 /**
- * Type personality. Each maps to a font pairing so a barber shop and a day spa
- * don't get the same-looking graphics. All fonts are open-source (Google Fonts).
+ * Which photo layout slide `index` of a post seeded `seed` uses. Covers walk
+ * full → card → frame and inside slides walk band → frame, so two photo posts
+ * in a row never share a cover treatment (seeds of neighbouring posts differ
+ * by one). A whole post shares one seed, so its slides still look like a set.
  */
+export function photoLayoutFor(seed: number, index: number): PhotoLayout {
+  const s = Math.abs(Math.floor(seed));
+  if (index === 0) return (['full', 'card', 'frame'] as const)[s % 3];
+  return (['band', 'frame'] as const)[s % 2];
+}
+
+/**
+ * How the words themselves are arranged on a designed (text) slide. Before
+ * this, every title and body slide was the same stack — small brand line,
+ * headline, short rule, paragraph — on a rotating background, and a feed of
+ * them read as one template recoloured. The layout now changes per post:
+ *   stack     — the classic: brand line, headline, rule, paragraph
+ *   poster    — a huge headline anchored to the bottom, like a gig poster
+ *   highlight — each headline line on a marker-style colour bar
+ *   split     — a solid colour block holds the headline, the paragraph sits below
+ *   numeral   — a giant number leads ("3 ways…", "$18", step 01/02 on inside slides)
+ */
+export type TextLayout = 'stack' | 'poster' | 'highlight' | 'split' | 'numeral';
+
+/** Rotation order. Neighbours are deliberately unlike each other. */
+const TEXT_LAYOUTS: TextLayout[] = ['poster', 'highlight', 'stack', 'split', 'numeral'];
+
+/**
+ * The number a numeral layout can lead with: a price, a percentage, or a small
+ * count ("3 ways", "$18", "2 minutes"). Long numbers (years, phone numbers)
+ * don't count — a giant "2026" isn't a design, it's a date.
+ */
+export function leadNumber(
+  headline: string,
+): { before: string; num: string; after: string } | null {
+  const m = /(^|\s)(\$?\d{1,3}(?:[.,]\d{1,2})?%?)(?=[\s,.!?:]|$)/.exec(headline);
+  if (!m) return null;
+  const num = m[2];
+  if (num.replace(/\D/g, '').length > 4) return null;
+  const at = m.index + m[1].length;
+  return {
+    before: headline.slice(0, at).trim(),
+    num,
+    after: headline.slice(at + num.length).replace(/^[\s,.:]+/, '').trim(),
+  };
+}
+
+/**
+ * The text layout for a post. Seeded by the POST (every slide in a carousel
+ * shares it, so the set stays coherent); consecutive posts differ because
+ * their seeds differ by one and no layout sits next to itself in the rotation.
+ * A numeral turn with no number to show falls back to highlight or stack
+ * (alternating), neither of which neighbours numeral in the rotation, so the
+ * no-repeat promise still holds.
+ */
+export function textLayoutFor(seed: number, coverHeadline?: string): TextLayout {
+  const l = TEXT_LAYOUTS[Math.abs(Math.floor(seed)) % TEXT_LAYOUTS.length];
+  if (l === 'numeral' && coverHeadline !== undefined && !leadNumber(coverHeadline)) {
+    // Alternate the stand-in so it doesn't make one layout twice as common.
+    return Math.floor(Math.abs(seed) / TEXT_LAYOUTS.length) % 2 === 0 ? 'highlight' : 'stack';
+  }
+  return l;
+}
+
 export type BrandStyle = 'modern' | 'editorial' | 'bold' | 'luxe';
 
 export interface BrandTheme {
@@ -90,6 +154,17 @@ export interface SlideSpec {
   photo?: string;
   /** How the photo is composed with the type. Defaults to 'full'. */
   photoLayout?: PhotoLayout;
+  /**
+   * How the words are arranged on a designed slide. Normally left unset: it is
+   * derived from `seed` (see textLayoutFor) so a carousel shares one layout
+   * and the next post gets another. Set it to force one (tests, previews).
+   */
+  textLayout?: TextLayout;
+  /**
+   * The carousel's cover headline. Lets every slide in a set agree on the
+   * layout when the cover has no number for a numeral layout to show.
+   */
+  coverHeadline?: string;
   /**
    * Which look this SET of slides uses — the surface (background treatment and
    * the palette that reads on it). Every slide in one carousel must be given the
@@ -212,21 +287,71 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** Word-wrap by estimated glyph width. `factor` ≈ average glyph width / fontSize. */
-function wrap(text: string, fontSize: number, maxWidth: number, factor = 0.56): string[] {
-  const maxChars = Math.max(6, Math.floor(maxWidth / (fontSize * factor)));
-  const words = text.split(/\s+/);
+/** The face a block of text is set in — what `wrap` measures against. */
+interface Face {
+  family: string;
+  weight: number;
+  tracking?: number;
+}
+
+/**
+ * Widest line any `wrap` call produced since the last reset. The auto-fit loop
+ * reads it: a single word too wide for the frame (a long name in a huge size)
+ * can't be fixed by wrapping, only by shrinking the type, and height alone
+ * never notices it.
+ */
+let widestLine = 0;
+
+/**
+ * Word-wrap to a pixel width. With a `face`, lines are measured from the real
+ * font metrics (text-metrics.ts); without one — or if the font can't be read —
+ * the old estimate of `factor` × font size per character is used.
+ */
+function wrap(
+  text: string,
+  fontSize: number,
+  maxWidth: number,
+  factor = 0.56,
+  face?: Face,
+  balance = false,
+  probe = false,
+): string[] {
+  const width = (s: string): number =>
+    (face && textWidth(s, face.family, fontSize, face.weight, face.tracking ?? 0)) ??
+    s.length * fontSize * factor;
+  const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let line = '';
   for (const w of words) {
-    if ((line + ' ' + w).trim().length > maxChars) {
-      if (line) lines.push(line);
+    const next = line ? `${line} ${w}` : w;
+    if (line && width(next) > maxWidth) {
+      lines.push(line);
       line = w;
     } else {
-      line = (line + ' ' + w).trim();
+      line = next;
     }
   }
   if (line) lines.push(line);
+  if (balance && lines.length > 1) {
+    // Even the lines out: find the narrowest width that still needs no more
+    // lines than the greedy pass did. "NEW CHAIR, SAME / CREW" becomes
+    // "NEW CHAIR, / SAME CREW" — no lonely last word under a long line.
+    let lo = 0;
+    let hi = maxWidth;
+    let best = lines;
+    for (let i = 0; i < 14 && hi - lo > 2; i++) {
+      const mid = (lo + hi) / 2;
+      const trial = wrap(text, fontSize, mid, factor, face, false, true);
+      if (trial.length <= lines.length && trial.every((l) => width(l) <= mid + 0.5)) {
+        best = trial;
+        hi = mid;
+      } else {
+        lo = mid;
+      }
+    }
+    lines.splice(0, lines.length, ...best);
+  }
+  if (!probe) for (const l of lines) widestLine = Math.max(widestLine, width(l));
   return lines;
 }
 
@@ -425,15 +550,29 @@ function borderedPaper(b: Base): Surface {
  * every slide in a carousel gets a different surface and consecutive posts start
  * at a different point.
  */
+/** HSL-style saturation, 0 (grey) to 1 (pure colour). */
+function saturation(hex: string): number {
+  const { r, g, b } = parseHex(hex);
+  const max = Math.max(r, g, b) / 255;
+  const min = Math.min(r, g, b) / 255;
+  if (max === min) return 0;
+  const l = (max + min) / 2;
+  return (max - min) / (1 - Math.abs(2 * l - 1));
+}
+
 function surfaceRotation(b: Base): (() => Surface)[] {
   const P = b.primary;
+  // A black or charcoal brand tinted toward white is just grey — the dull
+  // mid-grey slides a barber shop got. Take the light surfaces' colour from
+  // the accent instead (a gold accent gives warm cream), when there is one.
+  const T = saturation(P) < 0.12 && saturation(b.accent) >= 0.12 ? b.accent : P;
   const darkBg = luminance(P) > 0.5 ? darken(P, 0.62) : darken(P, 0.16);
   const darkGrad: [string, string] = [lighten(darkBg, 0.1), darken(darkBg, 0.22)];
   return [
     () => flatSurface(darkBg, b, darkGrad),                                 // 0 dark gradient
-    () => flatSurface(lighten(P, 0.9), b),                                  // 1 cream paper
+    () => flatSurface(lighten(T, 0.9), b),                                  // 1 cream paper
     () => flatSurface(P, b, [lighten(P, 0.05), darken(P, 0.18)]),           // 2 solid brand
-    () => flatSurface(lighten(P, 0.76), b),                                 // 3 soft pastel tint
+    () => flatSurface(lighten(T, 0.76), b),                                 // 3 soft pastel tint
     () => accentSurface(b),                                                 // 4 accent panel
     () => borderedPaper(b),                                                 // 5 framed paper
     () => splitSurface(b),                                                  // 6 colour split
@@ -650,6 +789,9 @@ function pickLook(
  * wash of the brand color underneath the type keeps text readable on *any*
  * image while still looking designed rather than slapped together.
  */
+/** Where the 'frame' photo layout puts its inset print. */
+const FRAME = { x: 64, y: 64, w: CANVAS - 128, h: 760, r: 30 };
+
 function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
   const bandH = Math.round(CANVAS_H * 0.5);
   const defs = `
@@ -679,6 +821,18 @@ function photoFrame(p: Palette, photo: string, layout: PhotoLayout): string {
       ${img(0, bandH)}
       <rect width="${CANVAS}" height="${bandH}" fill="url(#bandFade)"/>
       <circle cx="${CANVAS - 90}" cy="${bandH + 150}" r="200" fill="${p.deco}" opacity="0.05"/>`;
+  }
+
+  if (layout === 'frame') {
+    // A print on a mat: the photo inset with an even margin and soft corners,
+    // words underneath on the brand colour. Reads as curated rather than
+    // full-bleed, which breaks up a feed of edge-to-edge photos.
+    const f = FRAME;
+    return `${defs}
+      <rect width="${CANVAS}" height="${CANVAS_H}" fill="url(#bg)"/>
+      <clipPath id="frameClip"><rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="${f.r}"/></clipPath>
+      <image href="${photo}" x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#frameClip)"/>
+      <rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="${f.r}" fill="none" stroke="${p.fg}" stroke-opacity="0.18" stroke-width="2"/>`;
   }
 
   if (layout === 'card') {
@@ -824,19 +978,59 @@ function stack(blocks: Block[], zoneTop: number, zoneBottom: number): string {
 
 
 /* ── main entry ────────────────────────────────────────────────────────── */
+
+/** What one pass of the layout builder produced at a given type scale. */
+interface Built {
+  blocks: Block[];
+  /** Vertical placement of the stack inside its zone. */
+  anchor: 'center' | 'bottom' | 'top';
+  /** Fixed-position SVG drawn under the stack (split's colour block). */
+  under?: string;
+  /** Fixed-position SVG drawn over the stack (poster's brand line). */
+  over?: string;
+  /** Overrides the zone the stack is fitted into. */
+  zone?: [number, number];
+  /** Set when something outside the stack didn't fit at this scale. */
+  overflow?: boolean;
+}
+
 export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   const layout: PhotoLayout | undefined = spec.photo
     ? (spec.photoLayout ?? 'full')
     : undefined;
+  const seed = spec.seed ?? spec.variant ?? 0;
   // Photo slides keep the consistent dark scrim. Text-only slides take their
   // surface from the SET's seed, so a carousel reads as one designed piece;
   // `seed` falls back to `variant` for single one-off graphics that have no set.
   const surface = layout
     ? undefined
-    : pickLook(theme, spec.seed ?? spec.variant ?? 0, spec.variant ?? 0, spec.kind);
+    : pickLook(theme, seed, spec.variant ?? 0, spec.kind);
   const p = surface ? surface.p : photoPalette(theme);
   const t = typeSet(theme.style);
   const footer = spec.footer ?? theme.brandName ?? '';
+  const wordSlide = spec.kind === 'title' || spec.kind === 'body';
+
+  // The arrangement of the words. Designed word slides take the post's text
+  // layout; photo slides keep their photo composition, except that a
+  // full-bleed photo can carry poster type (huge, bottom-anchored) when that
+  // is the post's layout.
+  let tl: TextLayout = 'stack';
+  if (wordSlide) {
+    const chosen =
+      spec.textLayout ?? textLayoutFor(seed, spec.coverHeadline ?? spec.headline);
+    if (!layout) tl = chosen;
+    else if (layout === 'full' && chosen === 'poster') tl = 'poster';
+  }
+  // A numeral title needs a number to lead with; an inside slide leads with
+  // its step number instead ("01", "02"…).
+  const lead = tl === 'numeral' ? leadNumber(spec.headline) : null;
+  const stepNo =
+    tl === 'numeral' && spec.kind === 'body' && spec.variant !== undefined
+      ? String(spec.variant).padStart(2, '0')
+      : null;
+  if (tl === 'numeral' && !(spec.kind === 'title' ? lead : stepNo ?? lead)) {
+    tl = Math.floor(Math.abs(seed) / 5) % 2 === 0 ? 'highlight' : 'stack';
+  }
 
   const BAND_H = Math.round(CANVAS_H * 0.5);
   const CARD_M = 96;
@@ -844,16 +1038,21 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
 
   // Text is confined to a zone so it never collides with the photo band or the
   // edge of a card. 'card' gets its final zone after we measure the content.
-  const pad = layout === 'card' ? CARD_M + 56 : 110;
+  const pad =
+    layout === 'card' ? CARD_M + 56 : tl === 'poster' || tl === 'split' ? 90 : tl === 'stack' ? 110 : 100;
   let zoneTop = 190;
   let zoneBottom = CANVAS_H - 190;
   if (layout === 'band') {
     zoneTop = BAND_H + 62;
     zoneBottom = CANVAS_H - 78;
+  } else if (layout === 'frame') {
+    zoneTop = FRAME.y + FRAME.h + 56;
+    zoneBottom = CANVAS_H - 72;
   }
 
   const centered =
     layout === 'card' ||
+    tl === 'highlight' ||
     spec.kind === 'quote' ||
     spec.kind === 'promo' ||
     spec.kind === 'cta';
@@ -867,19 +1066,62 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
 
   // For title/body the eyebrow already carries the brand name — repeating it in
   // a footer just prints the business name twice.
-  const eyebrowIsBrand = spec.kind === 'title' || spec.kind === 'body';
-  // Band and card layouts have no room for a pinned footer, so it joins the
-  // stack instead of floating at the bottom of the canvas.
-  const footerInStack = layout === 'band' || layout === 'card';
+  const eyebrowIsBrand = wordSlide;
+  // Band, card and frame layouts have no room for a pinned footer, so it joins
+  // the stack instead of floating at the bottom of the canvas.
+  const footerInStack = layout === 'band' || layout === 'card' || layout === 'frame';
+  const brandLine = (theme.brandName || footer || 'New').toUpperCase();
+
+  const headFace: Face = { family: t.head, weight: t.headWeight, tracking: t.headTracking };
+  const bodyFace = (weight: number): Face => ({ family: t.body, weight });
+  const head = (s: string) => (t.headUpper ? s.toUpperCase() : s);
+  const headCap = capHeight(t.head, t.headWeight);
+
+  /** A paragraph block in the body face. */
+  const paragraph = (
+    text: string,
+    fs: number,
+    lh: number,
+    maxLines: number,
+    gap: number,
+    weight = 400,
+    width = maxW,
+  ): Block => {
+    const lines = clampLines(wrap(text, fs, width, 0.54, bodyFace(weight)), maxLines);
+    return {
+      h: lines.length * fs * lh,
+      gap,
+      render: (y) =>
+        `<text${anchor} font-family="${t.body}" font-size="${fs}" font-weight="${weight}" fill="${p.fgSoft}" xml:space="preserve">${tsp(lines, y + fs * 0.8, fs * lh)}</text>`,
+    };
+  };
+
+  /** A headline block in the head face. */
+  const headline = (
+    text: string,
+    fs: number,
+    lh: number,
+    maxLines: number,
+    gap: number,
+    fill = p.fg,
+  ): Block => {
+    const lines = clampLines(wrap(head(text), fs, maxW, 0.58, headFace, true), maxLines);
+    return {
+      h: lines.length * fs * lh,
+      gap,
+      render: (y) =>
+        `<text${anchor} font-family="${t.head}" font-size="${fs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${fill}" xml:space="preserve">${tsp(lines, y + fs * 0.8, fs * lh)}</text>`,
+    };
+  };
 
   /**
    * Builds the slide's blocks at a given type scale. Called repeatedly by the
-   * auto-fit loop below: measure, and if the content is taller than its zone,
-   * step the type down and measure again. That's what guarantees a headline
-   * never runs off the bottom of the frame, however long the owner's text is.
+   * auto-fit loop below: measure, and if the content is taller than its zone
+   * (or a line is wider than the frame), step the type down and try again.
+   * That's what guarantees a headline never runs off the frame, however long
+   * the owner's text is.
    */
-  const build = (scale: number): Block[] => {
-    const head = (s: string) => (t.headUpper ? s.toUpperCase() : s);
+  const build = (scale: number): Built => {
     // Gaps shrink with the type, otherwise fixed whitespace eats the savings.
     const g = (n: number) => Math.round(n * scale);
     // Line ceilings are a LAST RESORT, not a fitting strategy. They sit well
@@ -888,13 +1130,18 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
     // the content "fit" at full size and silently truncate the headline to an
     // ellipsis ("floss for a…"), which reads as broken rather than designed.
     // Photo band/card zones are genuinely tighter, so they keep lower ceilings.
-    const headMax = layout === 'band' ? 4 : layout === 'card' ? 5 : 7;
-    const bodyMax = layout === 'band' ? 3 : layout === 'card' ? 4 : 5;
+    const tight = layout === 'band' || layout === 'frame';
+    const headMax = tight ? 4 : layout === 'card' ? 5 : 7;
+    const bodyMax = tight ? 3 : layout === 'card' ? 4 : 5;
     const blocks: Block[] = [];
+    const isTitle = spec.kind === 'title';
 
     if (spec.kind === 'quote') {
       const qFs = Math.round(78 * scale);
-      const qLines = clampLines(wrap(spec.headline, qFs, maxW, 0.5), 5);
+      const qLines = clampLines(
+        wrap(spec.headline, qFs, maxW, 0.5, { family: t.quote, weight: 500 }, true),
+        5,
+      );
       const qLH = qFs * 1.28;
       if (layout !== 'card') {
         const mFs = Math.round(300 * scale);
@@ -925,7 +1172,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
             `<text x="${cx}" y="${y + 28}" text-anchor="middle" font-family="${t.body}" font-size="34" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(footer)}</text>`,
         });
       }
-      return blocks;
+      return { blocks, anchor: 'center' };
     }
 
     if (spec.kind === 'promo') {
@@ -936,88 +1183,128 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
       });
       const short = spec.headline.replace(/\s+/g, '').length <= 8;
       const hFs = Math.round((short ? 190 : 124) * scale);
-      const hLines = clampLines(
-        wrap(head(spec.headline), hFs, maxW, t.head === DISPLAY ? 0.48 : 0.6),
-        headMax,
-      );
-      const hLH = hFs * 1.04;
-      blocks.push({
-        h: hLines.length * hLH,
-        gap: spec.body ? g(56) : g(0),
-        render: (y) =>
-          `<text text-anchor="middle" font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.fg}" xml:space="preserve">${tspansCentered(hLines, cx, y + hFs * 0.8, hLH)}</text>`,
-      });
-      if (spec.body) {
-        const bFs = Math.round(46 * scale);
-        const bLines = clampLines(wrap(spec.body, bFs, maxW, 0.54), bodyMax);
-        blocks.push({
-          h: bLines.length * bFs * 1.3,
-          gap: g(0),
-          render: (y) =>
-            `<text text-anchor="middle" font-family="${t.body}" font-size="${bFs}" font-weight="500" fill="${p.fgSoft}" xml:space="preserve">${tspansCentered(bLines, cx, y + bFs * 0.8, bFs * 1.3)}</text>`,
-        });
-      }
+      blocks.push(headline(spec.headline, hFs, 1.04, headMax, spec.body ? g(56) : 0));
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(46 * scale), 1.3, bodyMax, 0, 500));
     } else if (spec.kind === 'cta') {
       const hFs = Math.round(88 * scale);
-      const hLines = clampLines(wrap(head(spec.headline), hFs, maxW, 0.58), headMax);
-      const hLH = hFs * 1.08;
-      blocks.push({
-        h: hLines.length * hLH,
-        gap: spec.body ? g(44) : g(66),
-        render: (y) =>
-          `<text text-anchor="middle" font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.fg}" xml:space="preserve">${tspansCentered(hLines, cx, y + hFs * 0.8, hLH)}</text>`,
-      });
-      if (spec.body) {
-        const bFs = Math.round(44 * scale);
-        const bLines = clampLines(wrap(spec.body, bFs, maxW, 0.54), bodyMax);
-        blocks.push({
-          h: bLines.length * bFs * 1.3,
-          gap: g(66),
-          render: (y) =>
-            `<text text-anchor="middle" font-family="${t.body}" font-size="${bFs}" font-weight="400" fill="${p.fgSoft}" xml:space="preserve">${tspansCentered(bLines, cx, y + bFs * 0.8, bFs * 1.3)}</text>`,
-        });
-      }
+      blocks.push(headline(spec.headline, hFs, 1.08, headMax, spec.body ? g(44) : g(66)));
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(44 * scale), 1.3, bodyMax, g(66)));
       blocks.push({
         h: 66,
         gap: g(0),
         render: (y) => ctaButton(cx, y + 33, spec.ctaLabel ?? 'Visit us', p, t),
       });
+    } else if (tl === 'poster') {
+      // A gig poster: the headline is the picture. Huge, tight, bottom-left,
+      // with the brand line pinned top-left and a hairline before the body.
+      const hFs = Math.round((isTitle ? 172 : 126) * scale);
+      blocks.push(headline(spec.headline, hFs, 0.98, headMax, g(44)));
+      blocks.push({
+        h: 6,
+        gap: spec.body ? g(40) : 0,
+        render: (y) => `<rect x="${pad}" y="${y}" width="120" height="6" rx="3" fill="${p.accent}"/>`,
+      });
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(42 * scale), 1.36, bodyMax, 0));
+      const over = `<text x="${pad}" y="124" font-family="${t.body}" font-size="28" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`;
+      return {
+        blocks,
+        anchor: 'bottom',
+        over,
+        zone: [200, layout ? CANVAS_H - 120 : CANVAS_H - 160],
+      };
+    } else if (tl === 'highlight') {
+      // Marker highlights: each headline line sits on its own colour bar, the
+      // way a person highlights the line that matters.
+      const hFs = Math.round((isTitle ? 104 : 80) * scale);
+      const padX = Math.round(hFs * 0.24);
+      const barH = Math.round(hFs * 1.18);
+      const step = barH + Math.round(hFs * 0.14);
+      const lines = clampLines(wrap(head(spec.headline), hFs, maxW - padX * 2, 0.58, headFace, true), headMax);
+      blocks.push({
+        h: 30,
+        gap: g(46),
+        render: (y) =>
+          `<text x="${cx}" y="${y + 26}" text-anchor="middle" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`,
+      });
+      blocks.push({
+        h: lines.length * step - (step - barH),
+        gap: spec.body ? g(54) : 0,
+        render: (y) =>
+          lines
+            .map((l, i) => {
+              const w =
+                (textWidth(l, t.head, hFs, t.headWeight, t.headTracking) ?? l.length * hFs * 0.58) +
+                padX * 2;
+              const top = y + i * step;
+              const base = top + barH / 2 + (headCap * hFs) / 2;
+              return `<rect x="${cx - w / 2}" y="${top}" width="${w}" height="${barH}" rx="${Math.round(barH * 0.12)}" fill="${p.accent}"/>` +
+                `<text x="${cx}" y="${base}" text-anchor="middle" font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.onAccent}" xml:space="preserve">${esc(l)}</text>`;
+            })
+            .join(''),
+      });
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(42 * scale), 1.36, bodyMax, 0));
+    } else if (tl === 'numeral') {
+      // A giant number leads: the price, the count, or the step.
+      const num = stepNo ?? lead!.num;
+      const before = stepNo ? '' : lead!.before;
+      const after = stepNo ? spec.headline : lead!.after;
+      const sub = Math.round((isTitle ? 88 : 76) * scale);
+      if (before) blocks.push(headline(before, sub, 1.06, 3, g(28)));
+      let nFs = Math.round((stepNo ? 300 : 400) * scale);
+      const nW = textWidth(num, t.head, nFs, t.headWeight, t.headTracking);
+      if (nW && nW > maxW) nFs = Math.floor((nFs * maxW) / nW);
+      // Playfair's figures are old-style: 3, 4, 5, 7 and 9 drop below the
+      // baseline, so the number needs room under it or it hits the next line.
+      const descends = /playfair/i.test(t.head) && /[34579]/.test(num);
+      blocks.push({
+        h: nFs * (headCap + (descends ? 0.24 : 0.02)),
+        gap: after ? g(40) : spec.body ? g(48) : 0,
+        render: (y) =>
+          `<text x="${pad}" y="${y + nFs * headCap}" font-family="${t.head}" font-size="${nFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.accent}">${esc(num)}</text>`,
+      });
+      if (after) blocks.push(headline(after, sub, 1.06, 4, spec.body ? g(40) : 0));
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(42 * scale), 1.36, bodyMax, 0));
+    } else if (tl === 'split') {
+      // Colour-blocked: a solid band of the accent holds the headline,
+      // bottom-anchored; the paragraph sits on the surface below it.
+      const hFs = Math.round((isTitle ? 132 : 100) * scale);
+      const lh = hFs * 1.02;
+      const hLines = clampLines(wrap(head(spec.headline), hFs, maxW, 0.58, headFace, true), headMax);
+      const headH = hLines.length * lh;
+      const want = 230 + headH + 80;
+      const blockH = Math.round(Math.min(Math.max(want, CANVAS_H * 0.44), CANVAS_H * 0.64));
+      const firstBase = blockH - 80 - headH + hFs * 0.8;
+      const under =
+        `<rect width="${CANVAS}" height="${blockH}" fill="${p.accent}"/>` +
+        `<text x="${pad}" y="124" font-family="${t.body}" font-size="28" font-weight="600" letter-spacing="4" fill="${p.onAccent}" opacity="0.8">${esc(brandLine)}</text>` +
+        `<text font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.onAccent}" xml:space="preserve">${tspansLeft(hLines, pad, firstBase, lh)}</text>`;
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(50 * scale), 1.36, bodyMax, 0, 500));
+      return {
+        blocks,
+        anchor: 'top',
+        under,
+        zone: [blockH + 84, CANVAS_H - 150],
+        overflow: want > CANVAS_H * 0.64,
+      };
     } else {
-      // title / body — editorial, with an eyebrow and a rule under the headline.
-      const eyebrow = (theme.brandName || footer || 'New').toUpperCase();
+      // stack — the classic: eyebrow, headline, rule, paragraph.
       blocks.push({
         h: 30,
         gap: g(50),
         render: (y) =>
-          `<text x="${centered ? cx : pad}"${anchor} y="${y + 26}" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(eyebrow)}</text>`,
+          `<text x="${centered ? cx : pad}"${anchor} y="${y + 26}" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="4" fill="${p.accent}">${esc(brandLine)}</text>`,
       });
       // The title slide is the hook — its headline should dominate the canvas
       // the way the reference decks' hooks do, not match the body slides.
-      const hFs = Math.round((spec.kind === 'title' ? 118 : 82) * scale);
-      const hLines = clampLines(wrap(head(spec.headline), hFs, maxW, 0.58), headMax);
-      const hLH = hFs * 1.06;
-      blocks.push({
-        h: hLines.length * hLH,
-        gap: g(44),
-        render: (y) =>
-          `<text${anchor} font-family="${t.head}" font-size="${hFs}" font-weight="${t.headWeight}" letter-spacing="${t.headTracking}" fill="${p.fg}" xml:space="preserve">${tsp(hLines, y + hFs * 0.8, hLH)}</text>`,
-      });
+      const hFs = Math.round((isTitle ? 124 : 84) * scale);
+      blocks.push(headline(spec.headline, hFs, 1.06, headMax, g(44)));
       blocks.push({
         h: 7,
         gap: spec.body ? g(50) : g(0),
         render: (y) =>
           `<rect x="${centered ? cx - 70 : pad}" y="${y}" width="140" height="7" rx="3.5" fill="${p.accent}"/>`,
       });
-      if (spec.body) {
-        const bFs = Math.round(44 * scale);
-        const bLines = clampLines(wrap(spec.body, bFs, maxW, 0.54), bodyMax);
-        blocks.push({
-          h: bLines.length * bFs * 1.35,
-          gap: g(0),
-          render: (y) =>
-            `<text${anchor} font-family="${t.body}" font-size="${bFs}" font-weight="400" fill="${p.fgSoft}" xml:space="preserve">${tsp(bLines, y + bFs * 0.8, bFs * 1.35)}</text>`,
-        });
-      }
+      if (spec.body) blocks.push(paragraph(spec.body, Math.round(44 * scale), 1.35, bodyMax, 0));
     }
 
     if (footerInStack && footer && !eyebrowIsBrand) {
@@ -1030,49 +1317,82 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
           `<text x="${cx}" y="${y + 26}" text-anchor="middle" font-family="${t.body}" font-size="30" font-weight="600" letter-spacing="1" fill="${p.fgSoft}">${esc(footer)}</text>`,
       });
     }
-    return blocks;
+    // On a full-bleed photo the words sit at the bottom, where the scrim is
+    // darkest; at the top they fought the busiest part of the picture.
+    if (layout === 'full') return { blocks, anchor: 'bottom', zone: [190, CANVAS_H - 130] };
+    return { blocks, anchor: 'center' };
   };
 
   // Auto-fit: start roomy, step down until the content fits its zone.
-  const startScale = layout === 'card' ? 0.82 : layout === 'band' ? 0.86 : 1;
-  const available = () => zoneBottom - zoneTop;
-  let blocks = build(startScale);
+  const startScale = layout === 'card' ? 0.82 : layout === 'band' || layout === 'frame' ? 0.86 : 1;
+  const zoneOf = (b: Built): [number, number] => b.zone ?? [zoneTop, zoneBottom];
+  const tryBuild = (scale: number): Built => {
+    widestLine = 0;
+    const b = build(scale);
+    return b;
+  };
+  const fits = (b: Built, widest: number): boolean => {
+    const [top, bottom] = zoneOf(b);
+    return !b.overflow && measure(b.blocks) <= bottom - top && widest <= maxW + 1;
+  };
+
+  let built = tryBuild(startScale);
+  let widest = widestLine;
   let cardBox: { y: number; h: number } | undefined;
 
   if (layout === 'card') {
     // The card sizes itself to the type rather than the type squeezing into a
     // fixed box, so short posts don't get a half-empty panel.
     const cardH = Math.min(
-      Math.max(measure(blocks) + CARD_PAD * 2, 360),
+      Math.max(measure(built.blocks) + CARD_PAD * 2, 360),
       CANVAS_H - 160,
     );
-    const cardY = (CANVAS_H - cardH) / 2;
+    // Low in the frame, not centred: most photos put their subject in the
+    // middle, and a centred card sat right on top of it (the dog vanished).
+    const cardY = Math.max(80, CANVAS_H - cardH - 110);
     zoneTop = cardY + CARD_PAD;
     zoneBottom = cardY + cardH - CARD_PAD;
     cardBox = { y: cardY, h: cardH };
   }
 
-  for (
-    let s = startScale - 0.05;
-    measure(blocks) > available() && s >= 0.38;
-    s -= 0.05
-  ) {
-    blocks = build(s);
+  let scale = startScale;
+  for (let s = startScale - 0.05; !fits(built, widest) && s >= 0.38; s -= 0.05) {
+    built = tryBuild(s);
+    widest = widestLine;
+    scale = s;
   }
+  // One unbreakable word can still be wider than the frame at the smallest
+  // step (a long name in poster type). Shrink exactly enough for it to fit:
+  // smaller type beats a word cut off by the edge of the image.
+  for (let i = 0; i < 3 && widest > maxW + 1; i++) {
+    scale *= (maxW / widest) * 0.98;
+    built = tryBuild(scale);
+    widest = widestLine;
+  }
+
+  const [zTop, zBottom] = zoneOf(built);
+  const stackTop =
+    built.anchor === 'bottom' ? Math.max(zTop, zBottom - measure(built.blocks)) : zTop;
+  // stack() centres within [top, bottom]; a top-anchored stack is centred in
+  // a zone exactly its own height.
+  const stackBottom = built.anchor === 'top' ? zTop + measure(built.blocks) : zBottom;
 
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS_H}" viewBox="0 0 ${CANVAS} ${CANVAS_H}">`,
     spec.photo ? photoFrame(p, spec.photo, layout!) : surface!.bg,
   ];
+  if (built.under) parts.push(built.under);
   if (cardBox) parts.push(cardPanel(p, cardBox.y, cardBox.h));
-  parts.push(stack(blocks, zoneTop, zoneBottom));
+  parts.push(stack(built.blocks, stackTop, stackBottom));
+  if (built.over) parts.push(built.over);
 
   // "n / N" progress tag, top-right. Numbered progress tells the reader how
   // long the tunnel is and measurably lifts swipe-through — same principle
   // as the numbered onboarding questions.
   if (spec.total && spec.total > 1 && spec.variant !== undefined) {
+    const tagFill = tl === 'split' ? p.onAccent : p.fgSoft;
     parts.push(
-      `<text x="${CANVAS - 96}" y="112" text-anchor="end" font-family="${t.body}" font-size="27" font-weight="600" letter-spacing="2" fill="${p.fgSoft}" opacity="0.9">${spec.variant + 1} / ${spec.total}</text>`,
+      `<text x="${CANVAS - 96}" y="112" text-anchor="end" font-family="${t.body}" font-size="27" font-weight="600" letter-spacing="2" fill="${tagFill}" opacity="0.9">${spec.variant + 1} / ${spec.total}</text>`,
     );
   }
 
@@ -1080,7 +1400,7 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
   // slides (the surface layouts) — the actual brand mark instead of the text
   // name. It shows even on title/body slides where the text footer is skipped
   // as redundant with the eyebrow, because a logo is not redundant with a word.
-  // Photo layouts (band/card) keep their in-stack text footer untouched.
+  // Photo layouts (band/card/frame) keep their in-stack text footer untouched.
   if (theme.logoDataUri && !layout) {
     parts.push(logoBadge(theme.logoDataUri, centered, pad));
   } else if (!footerInStack && footer && !eyebrowIsBrand && spec.kind !== 'quote') {

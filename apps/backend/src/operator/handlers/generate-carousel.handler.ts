@@ -6,7 +6,7 @@ import { StorageService } from '../../common/storage.service';
 import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
 import { GraphicsService } from '../graphics/graphics.service';
-import { CANVAS, CANVAS_H, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
+import { CANVAS, CANVAS_H, photoLayoutFor, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
 import { resolveBrandColors } from '../graphics/brand-palette';
 import { logoDataUri } from '../graphics/logo-colors';
 import { ImageGenService } from '../graphics/image-gen.service';
@@ -392,7 +392,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
           if (!key) return;
           try {
             const photo = await this.graphics.fetchPhoto(this.storage.publicUrl(key));
-            specs[i] = { ...specs[i], photo, photoLayout: i === 0 ? 'full' : 'band' };
+            specs[i] = { ...specs[i], photo, photoLayout: photoLayoutFor(specs[i].seed ?? 0, i) };
           } catch (e) {
             this.log.warn(`walk photo ${key} fetch failed: ${String(e)}`);
           }
@@ -425,7 +425,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
         missing.forEach((i, k) => {
           const img = generated[k];
           if (!img) return;
-          specs[i] = { ...specs[i], photo: img, photoLayout: i === 0 ? 'full' : 'band' };
+          specs[i] = { ...specs[i], photo: img, photoLayout: photoLayoutFor(specs[i].seed ?? 0, i) };
           usedAiImage = true;
         });
       }

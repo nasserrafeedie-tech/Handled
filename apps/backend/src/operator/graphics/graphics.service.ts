@@ -70,6 +70,10 @@ export class GraphicsService {
 
   /** Render a multi-slide Instagram carousel — one PNG per slide, in order. */
   renderCarousel(specs: SlideSpec[], theme: BrandTheme): Buffer[] {
-    return specs.map((s) => this.renderSlide(s, theme));
+    // Every slide agrees on the set's text layout by deciding it from the
+    // cover's headline (see textLayoutFor), so one slide falling back can't
+    // leave the deck in two styles.
+    const cover = specs[0]?.headline;
+    return specs.map((s) => this.renderSlide({ coverHeadline: cover, ...s }, theme));
   }
 }
