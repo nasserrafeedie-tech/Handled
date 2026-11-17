@@ -201,6 +201,9 @@ describe('reschedule keyword routing (offline classifier)', () => {
       'push it back a day',
       'move the next one to Thursday at 2pm',
       'bump the workshop post to 3pm',
+      'can we do this one at 7am instead',
+      'post it on saturday',
+      '9am instead',
     ]) {
       assert.equal(offline(t).intent, 'reschedule', `"${t}"`);
     }
@@ -210,6 +213,8 @@ describe('reschedule keyword routing (offline classifier)', () => {
     assert.equal(offline('yes looks great').intent, 'approve');
     assert.equal(offline('make it shorter').intent, 'revise');
     assert.notEqual(offline('move the photo to the end').intent, 'reschedule');
+    assert.notEqual(offline('post it on instagram too').intent, 'reschedule');
+    assert.equal(offline('make it about the 7am crowd instead').intent, 'revise');
   });
 
   it('a bare "ok" to a billing notice does not approve the draft it never saw', async () => {

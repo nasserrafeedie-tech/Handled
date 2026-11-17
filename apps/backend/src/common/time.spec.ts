@@ -72,3 +72,12 @@ describe('saying when a post goes out', () => {
     assert.equal(formatInZone(new Date('2026-11-24T20:30:00Z'), tz, now), 'Tue, Nov 24, 12:30 PM');
   });
 });
+
+describe('a new time for a post that already has a day', () => {
+  it('keeps the planned day', () => {
+    const tz = 'America/Los_Angeles';
+    const now = new Date('2026-11-17T06:00:00Z'); // Mon 10 PM
+    const planned = new Date('2026-11-18T20:30:00Z'); // Wed 12:30 PM
+    assert.equal(parseTimeLocally('can we do this one at 7am instead', tz, now, planned)?.toISOString(), '2026-11-18T15:00:00.000Z');
+  });
+});

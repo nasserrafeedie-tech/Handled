@@ -197,6 +197,9 @@ export function parseTimeLocally(
       ? plannedTime.toLocaleTimeString('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false })
       : '10:00';
   }
+  // "at 7am instead" about a post planned for Wednesday means Wednesday at 7,
+  // not today or tomorrow (QA round 5 moved a Wednesday post to Tuesday).
+  if (!date && plannedTime && plannedTime.getTime() > now.getTime()) date = localDate(plannedTime);
   let when = zonedToUtc(date ?? today, time, timeZone);
   // "2pm" alone, already past today, means tomorrow at 2.
   if (!date && when.getTime() <= now.getTime()) when = zonedToUtc(dayOffset(1), time, timeZone);
