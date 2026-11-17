@@ -106,6 +106,11 @@ describe('a design has to keep the template promises', () => {
     assert.match(reason(GOOD.replace('y="580"', 'y="440"')), /overlap/);
   });
 
+  it('turns back words with a shape drawn over them', () => {
+    const covered = GOOD.replace('</svg>', `<rect x="250" y="440" width="400" height="160" fill="#1F3A2E"/></svg>`);
+    assert.match(reason(covered), /FRIDAY.*hidden under/);
+  });
+
   it('reads tspan lines', () => {
     const v = checkDesign(
       svg(

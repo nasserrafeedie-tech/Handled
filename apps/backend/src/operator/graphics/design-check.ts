@@ -451,7 +451,7 @@ function run(src: string, input: DesignInput, rasterize: Rasterize): DesignVerdi
       if (d > 30) changed++;
     }
     const shown = changed / (bare.pixels.length / 16);
-    if (shown < 0.22) throw new SvgRejected(`the photo only shows on ${Math.round(shown * 100)}% of the post; give it at least a quarter`);
+    if (shown < 0.2) throw new SvgRejected(`the photo only shows on ${Math.round(shown * 100)}% of the post; give it at least a fifth`);
   }
 
   for (const l of live) {
@@ -471,5 +471,34 @@ function run(src: string, input: DesignInput, rasterize: Rasterize): DesignVerdi
     }
   }
 
-  return { ok: true, svg: serializeSvg(root, fill), lines, drawnText, extraWords: copy };
+  // Nothing drawn on top of the words: render with them and without, and
+  // every glyph-wide slice of each line has to show a change.
+  const finalSvg = serializeSvg(root, fill);
+  const full = rasterize(finalSvg, CHECK_WIDTH);
+  for (const l of live) {
+    const step = Math.max(4, l.size * 0.6 * scale);
+    const y0 = Math.max(0, Math.floor(l.top * scale));
+    const y1 = Math.min(full.height - 1, Math.ceil(l.bottom * scale));
+    let cols = 0;
+    let shown = 0;
+    const right = l.x1 * scale;
+    for (let cx = l.x0 * scale; cx < right - step / 2; cx += step) {
+      // A last slice shorter than half a glyph joins the one before it.
+      const end = right - (cx + step) < step / 2 ? right : cx + step;
+      let n = 0;
+      let d = 0;
+      for (let y = y0; y <= y1; y++) {
+        for (let x = Math.max(0, Math.floor(cx)); x < Math.min(full.width, end); x++) {
+          const i = (y * full.width + x) * 4;
+          n++;
+          if (Math.abs(full.pixels[i] - bare.pixels[i]) + Math.abs(full.pixels[i + 1] - bare.pixels[i + 1]) + Math.abs(full.pixels[i + 2] - bare.pixels[i + 2]) > 60) d++;
+        }
+      }
+      cols++;
+      if (n && d / n > 0.03) shown++;
+    }
+    if (cols && shown / cols < 0.85) throw new SvgRejected(`part of "${l.text}" is hidden under something drawn on top of it`);
+  }
+
+  return { ok: true, svg: finalSvg, lines, drawnText, extraWords: copy };
 }
