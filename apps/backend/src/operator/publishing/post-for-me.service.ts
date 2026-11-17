@@ -55,16 +55,32 @@ export interface RemoteAccount {
   id: string;
   platform: Platform;
   username?: string;
+  /** 'connected' | 'disconnected'. A disconnected account can't be posted to. */
   status?: string;
+  /** Whose account Post for Me thinks this is — our customer id. */
+  externalId?: string | null;
+}
+
+/**
+ * Post for Me's "External Id already exists for account spc_…" — what an
+ * auth returns when that Instagram (or Page) is already registered under a
+ * DIFFERENT external_id. The connect then fails silently on their side: no
+ * new account, isSuccess=false. Pulls the existing account's id out.
+ */
+export function conflictingAccountId(error: string | null | undefined): string | null {
+  const m = /external id already exists for account\s+(spc_[A-Za-z0-9_-]+)/i.exec(error ?? '');
+  return m ? m[1] : null;
 }
 
 /** The raw shape Post for Me returns — we normalize it into RemoteAccount. */
 interface RawAccount {
   id: string;
   platform: string;
-  username?: string;
+  username?: string | null;
   handle?: string;
+  /** 'connected' | 'disconnected' (Post for Me's SocialAccount.status). */
   status?: string;
+  external_id?: string | null;
 }
 
 /**
@@ -115,17 +131,41 @@ export class PostForMeService {
    */
   async listAccounts(externalId: string): Promise<RemoteAccount[]> {
     this.assertConfigured();
+    // limit: Post for Me paginates (default page is small). One customer has a
+    // handful of accounts, so one generous page is every account they have.
     const data = await this.call<{ data?: RawAccount[] } | RawAccount[]>(
       'GET',
-      `/v1/social-accounts?external_id=${encodeURIComponent(externalId)}`,
+      `/v1/social-accounts?external_id=${encodeURIComponent(externalId)}&limit=100`,
     );
     const rows = Array.isArray(data) ? data : (data.data ?? []);
-    return rows.map((r) => ({
-      id: r.id,
-      platform: r.platform as Platform,
-      username: r.username ?? r.handle ?? undefined,
-      status: r.status ?? undefined,
-    }));
+    return rows.map(normalizeAccount);
+  }
+
+  /** One account by its spc_… id, or null if Post for Me doesn't have it. */
+  async getAccount(id: string): Promise<RemoteAccount | null> {
+    this.assertConfigured();
+    try {
+      const raw = await this.call<RawAccount>('GET', `/v1/social-accounts/${encodeURIComponent(id)}`);
+      return raw?.id ? normalizeAccount(raw) : null;
+    } catch (e) {
+      if (/→ 404/.test(String(e))) return null;
+      throw e;
+    }
+  }
+
+  /**
+   * Re-home an account to another of our customers (PATCH external_id). The
+   * fix for the connect that never worked: Post for Me keys an account on the
+   * platform user, so an Instagram first connected under a test customer (or
+   * a customer who later re-signed up) refuses every new connect under the
+   * new id. Moving the external_id is what un-sticks it; their API has no
+   * delete, so this is the only way.
+   */
+  async setExternalId(id: string, externalId: string): Promise<void> {
+    this.assertConfigured();
+    await this.call<unknown>('PATCH', `/v1/social-accounts/${encodeURIComponent(id)}`, {
+      external_id: externalId,
+    });
   }
 
   /**
@@ -151,13 +191,13 @@ export class PostForMeService {
   }
 
   /**
-   * Remove one account from Post for Me (by their spc_… id). Used to clear a
-   * stale row whose Instagram user blocks a fresh connect from registering
-   * under the right external_id — Post for Me dedupes on the platform user.
+   * Disconnect one account at Post for Me (by its spc_… id). There is no
+   * DELETE on this resource — the old deleteAccount called one and could only
+   * ever 404. POST …/disconnect is the real call.
    */
-  async deleteAccount(id: string): Promise<unknown> {
+  async disconnectAccount(id: string): Promise<unknown> {
     this.assertConfigured();
-    return this.call<unknown>('DELETE', `/v1/social-accounts/${encodeURIComponent(id)}`);
+    return this.call<unknown>('POST', `/v1/social-accounts/${encodeURIComponent(id)}/disconnect`, {});
   }
 
   async publish(req: PublishRequest): Promise<PublishOutcome> {
@@ -166,28 +206,18 @@ export class PostForMeService {
       .filter(Boolean)
       .join('\n\n');
 
-    if (req.aiGenerated) {
-      // UNVERIFIED: the field name below is our best reading of how Post for Me
-      // exposes AI disclosure, and it has not been confirmed against their API.
-      // The consequence of getting it wrong lands on the owner's account, not
-      // ours, so it is logged every time until someone checks the docs and
-      // either confirms the key or replaces it.
-      this.log.warn(
-        `publishing AI-generated media to ${req.platform} — disclosure field ` +
-          'not yet verified against the Post for Me API',
-      );
-    }
-
-    // The resource is /v1/social-posts. We were posting to /v1/posts, which
-    // does not exist — every publish came back "Cannot POST /v1/posts", so no
-    // post could ever have gone out. Auth and the request body were fine all
-    // along; it was one wrong word in the path.
+    // Body per Post for Me's CreateSocialPost: caption, social_accounts,
+    // media, platform_configurations — nothing else. We used to also send a
+    // top-level `platform` and `is_ai_generated`, neither of which exists.
+    // AI disclosure lives on TikTok's own config (is_ai_generated); Instagram
+    // has no API field for it, so it is the caption's job there.
     const data = await this.call<{ id: string }>('POST', '/v1/social-posts', {
       social_accounts: [req.postForMeRef],
-      platform: req.platform,
       caption,
       media: req.mediaUrls.map((url) => ({ url })),
-      ...(req.aiGenerated ? { is_ai_generated: true } : {}),
+      ...(req.aiGenerated && req.platform === 'tiktok'
+        ? { platform_configurations: { tiktok: { is_ai_generated: true } } }
+        : {}),
     });
     return { externalPostId: data.id };
   }
@@ -227,7 +257,7 @@ export class PostForMeService {
 
   /** One place that talks to Post for Me. Flips on when the key is set. */
   private async call<T>(
-    method: 'GET' | 'POST' | 'DELETE',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     path: string,
     body?: unknown,
   ): Promise<T> {
@@ -254,4 +284,14 @@ export class PostForMeService {
       throw new Error('POST_FOR_ME_API_KEY not configured');
     }
   }
+}
+
+function normalizeAccount(r: RawAccount): RemoteAccount {
+  return {
+    id: r.id,
+    platform: r.platform as Platform,
+    username: r.username ?? r.handle ?? undefined,
+    status: r.status ?? undefined,
+    externalId: r.external_id ?? null,
+  };
 }

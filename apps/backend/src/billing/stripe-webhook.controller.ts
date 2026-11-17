@@ -16,6 +16,7 @@ import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import type { PlanId } from './billing.service';
 import { ReferralCreditService } from './referral-credit.service';
+import { portalLink } from './portal-link';
 import { normalizePhone } from '../common/phone';
 import { socialLimit, isGoogleBusiness } from '../operator/tier-entitlements';
 
@@ -96,6 +97,9 @@ export class StripeWebhookController {
           break;
         case 'customer.subscription.deleted':
           await this.onSubscriptionDeleted(event);
+          break;
+        case 'invoice.paid':
+          await this.onInvoicePaid(event);
           break;
         default:
           this.log.debug(`ignoring stripe event ${event.type}`);
@@ -276,9 +280,9 @@ export class StripeWebhookController {
       this.log.warn(`payment failed for ${customer.id}, Stripe will retry`);
       await this.concierge.notify(
         customer.id,
-        "Heads up — your card was declined, so this month's payment didn't go " +
+        "Heads up, your card was declined, so this month's payment didn't go " +
           "through. I'll keep posting as normal and try again in a few days. " +
-          'You can update your card any time and it sorts itself out.',
+          `If you'd like to update your card, it takes a minute: ${portalLink(customer.id)}`,
       );
       return;
     }
@@ -297,8 +301,8 @@ export class StripeWebhookController {
     await this.concierge.notify(
       customer.id,
       "I wasn't able to process your payment, so I've paused your posts for " +
-        'now — nothing will go out. Update your card and text me, and I\'ll ' +
-        'pick straight back up where we left off.',
+        'now and nothing will go out. Update your card here and I\'ll pick ' +
+        `straight back up where we left off: ${portalLink(customer.id)}`,
     );
   }
 
@@ -373,8 +377,62 @@ export class StripeWebhookController {
       }
     }
 
+    // Coming back after a cancel (or a failed payment, or a STOP) and paying
+    // again: they're paused, and onboarding has nothing to ask a customer who
+    // finished it, so without this they paid and heard nothing while staying
+    // paused forever. Paying is as clear an opt-back-in as there is.
+    if (customer.status === 'paused') {
+      await this.resume(customer.id);
+      const profile = await this.prisma.brandProfile.findUnique({
+        where: { customerId: customer.id },
+        select: { onboardingComplete: true },
+      });
+      if (profile?.onboardingComplete) {
+        await this.concierge.notify(
+          customer.id,
+          "Welcome back! You're all set up again, so I'll plan your next posts " +
+            'and send them over for a look.',
+          { promptedByOwner: true },
+        );
+        return;
+      }
+    }
+
     // First text goes out from us — the welcome doubles as onboarding Q1.
     await this.concierge.beginOnboarding(customer.id);
+  }
+
+  /**
+   * A paid invoice lifts a billing pause. Stripe's retries (or the owner
+   * fixing their card through the portal link we texted) end here — before
+   * this, nothing ever un-paused them, so a customer who did exactly what the
+   * text asked stayed paused and kept paying for nothing.
+   *
+   * Every routine monthly renewal lands here too; for anyone not paused for
+   * billing it does nothing.
+   */
+  private async onInvoicePaid(event: StripeEvent): Promise<void> {
+    const stripeCustomerId = event.data.object.customer;
+    if (!stripeCustomerId) return;
+    const customer = await this.prisma.customer.findFirst({ where: { stripeCustomerId } });
+    if (!customer || customer.status !== 'paused' || customer.pausedReason !== 'billing') return;
+    await this.resume(customer.id);
+    await this.concierge.notify(
+      customer.id,
+      "Payment went through, thank you! You're back on, and posting picks up where it left off.",
+    );
+  }
+
+  private async resume(customerId: string): Promise<void> {
+    await this.bus.emit({
+      task_id: randomUUID(),
+      customer_id: customerId,
+      type: 'PAUSE_CUSTOMER',
+      payload: { reason: 'billing', resume: true },
+      requires_approval: false,
+      created_by: 'concierge',
+      created_at: new Date().toISOString(),
+    } as Task);
   }
 
   /** Subscription gone → stop publishing immediately, say goodbye kindly. */

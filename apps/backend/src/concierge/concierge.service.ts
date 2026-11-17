@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { Task, CalendarSlot, DraftPostResult } from '@smm/contracts';
 import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
+import { portalLink } from '../billing/portal-link';
 import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
 import { EmailService } from './email.service';
@@ -233,6 +234,45 @@ export class ConciergeService {
       );
     }
 
+    // 1b'. A paused customer. Who paused them decides what happens next:
+    //   - they texted STOP → total silence (carrier rules: nothing after an
+    //     opt-out) until they text START, which brings them straight back;
+    //   - billing → every text gets the update-your-card link, because that's
+    //     the only thing that will un-pause them (Stripe's invoice.paid does);
+    //   - admin/moderation → a hold notice; only the admin side lifts it.
+    if (customer.status === 'paused') {
+      const reason = customer.pausedReason ?? 'owner_stop';
+      if (reason === 'owner_stop') {
+        if (!this.isResume(msg.body)) return;
+        const result = await this.bus.emit(
+          this.task(customer.id, 'PAUSE_CUSTOMER', { reason: 'owner_stop', resume: true }),
+        );
+        await this.reply(this.addressOf(customer), conversation.id, result.summary_for_owner);
+        // Mid-interview when they stopped → ask the next question again so
+        // the conversation has somewhere to go.
+        const prof = await this.prisma.brandProfile.findUnique({ where: { customerId: customer.id } });
+        const next = customer.stripeCustomerId ? this.onboarding.nextField(prof) : null;
+        if (next) {
+          await this.reply(this.addressOf(customer), conversation.id, this.onboarding.question(next));
+        }
+        return;
+      }
+      if (reason === 'billing') {
+        return this.reply(
+          this.addressOf(customer),
+          conversation.id,
+          "Your posts are paused because the last payment didn't go through. " +
+            `Update your card here and I'll pick right back up: ${portalLink(customer.id)}`,
+        );
+      }
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        'Your account is on hold for the moment, so nothing is posting. ' +
+          'Email nasser@texthandled.com and we will sort it out.',
+      );
+    }
+
     // 1c. Text-to-join opt-in: the FIRST time a new number texts us, that
     //     inbound message is the opt-in, so confirm it with the registered
     //     compliance disclosure (frequency, rates, HELP/STOP, Terms/Privacy)
@@ -249,6 +289,17 @@ export class ConciergeService {
     //     carrier compliance doesn't care whether they've paid.
     if (!customer.stripeCustomerId) {
       return this.handleFreeTaste(customer, conversation.id, msg, created);
+    }
+
+    // 1e. Billing — "billing", "update my card". The answer is always the same
+    //     signed link to their Stripe portal, so it needs no interpretation.
+    //     The expired-link page tells owners to text exactly this.
+    if (/^\s*(billing|my billing|update (my )?(card|payment)|change (my )?(card|payment( method)?)|card)\s*[?.!]?\s*$/i.test(msg.body)) {
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        `Here's your billing page, where you can update your card or see invoices: ${portalLink(customer.id)}`,
+      );
     }
 
     // 2. Media in → ingest each attachment, and aim it at whatever is waiting:
@@ -1093,6 +1144,14 @@ export class ConciergeService {
       this.log.warn(`notify: no customer ${customerId}`);
       return;
     }
+    // An owner who texted STOP has opted out of texts, full stop. Nothing we
+    // start (a referral thank-you, a weekly plan, a billing notice) may reach
+    // them until they text START. Billing/admin pauses still hear from us —
+    // those texts are how they find out why posting stopped.
+    if (customer.status === 'paused' && (customer.pausedReason ?? 'owner_stop') === 'owner_stop') {
+      this.log.log(`notify: ${customerId} opted out (STOP) — not texting`);
+      return;
+    }
     // Quiet hours (TCPA): unprompted texts only between 8:00 and 21:00 on the
     // owner's own clock. Outside that, hold it for the next window. Exempt:
     // anything the owner just asked for — a reply mid-conversation, an upload
@@ -1823,7 +1882,11 @@ export class ConciergeService {
           where: { customerId },
           data: { websiteUrl: website },
         });
-        if (website !== NO_WEBSITE) {
+        if (website === NO_WEBSITE) {
+          // "No site" is a complete answer. Without an ack here the reply fell
+          // through to "Sorry — didn't quite catch that." (QA, Nov 2026).
+          ack = 'No problem, plenty of great businesses run on social alone.';
+        } else {
           ack = "On it — I'll go look you up while we keep going ✳";
           void this.lookup
             .lookUp(customerId, website, {
@@ -2255,6 +2318,16 @@ export class ConciergeService {
   }): string {
     const primary = c.preferredChannel === 'email' ? c.email : c.phone;
     return primary ?? c.phone ?? c.email ?? '';
+  }
+
+  /**
+   * The opt-back-in words. Exactly Twilio's default opt-in keywords, on
+   * purpose: after a STOP, Twilio blocks every text to that number until it
+   * sees one of these, so resuming on anything else ("go", "resume") would
+   * restart posting while our confirmation silently fails to send.
+   */
+  private isResume(body: string): boolean {
+    return /^\s*(start|unstop|yes)\s*[!.]?\s*$/i.test(body);
   }
 
   private isStop(body: string): boolean {

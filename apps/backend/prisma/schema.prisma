@@ -143,6 +143,9 @@ model Customer {
   lastRecapAt     DateTime?
   trustLevel      TrustLevel     @default(approve_all) // §8: everyone starts here
   status          CustomerStatus @default(onboarding)
+  /// Why a paused customer is paused: owner_stop | billing | moderation | admin.
+  /// Decides what lifts it (START, a paid invoice, or an admin). Null unless paused.
+  pausedReason    String?
   stripeCustomerId String?       @unique
   // Text-to-join paywall: an unpaid lead gets exactly ONE free drafted caption
   // (the taste that converts a business-card text into a subscriber). Stamped

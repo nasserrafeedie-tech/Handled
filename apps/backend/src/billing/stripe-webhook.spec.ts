@@ -16,7 +16,12 @@ import { StripeWebhookController } from './stripe-webhook.controller';
  */
 
 function makeController(rows: Record<string, any>, seen = new Set<string>()) {
-  const calls = { onboarded: [] as string[], notified: [] as string[], paused: [] as string[] };
+  const calls = {
+    onboarded: [] as string[],
+    notified: [] as string[],
+    paused: [] as string[],
+    tasks: [] as any[],
+  } as any;
   const prisma = {
     customer: {
       upsert: async ({ where, create, update }: any) => {
@@ -34,6 +39,12 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
         const row: any = Object.values(rows).find((r: any) => r.id === where.id);
         if (row) Object.assign(row, data);
         return row ?? {};
+      },
+    },
+    brandProfile: {
+      findUnique: async ({ where }: any) => {
+        const row: any = Object.values(rows).find((r: any) => r.id === where.customerId);
+        return row ? { onboardingComplete: Boolean(row.onboarded) } : null;
       },
     },
     connectedAccount: {
@@ -66,7 +77,18 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
     beginOnboarding: async (id: string) => calls.onboarded.push(id),
     notify: async (id: string, msg: string) => calls.notified.push(msg),
   };
-  const bus = { emit: async (t: any) => calls.paused.push(t.customer_id) };
+  const bus = {
+    emit: async (t: any) => {
+      calls.paused.push(t.customer_id);
+      calls.tasks.push(t);
+      // Act like the real pause handler so state-dependent paths can be seen.
+      const row: any = Object.values(rows).find((r: any) => r.id === t.customer_id);
+      if (row && t.type === 'PAUSE_CUSTOMER') {
+        if (t.payload.resume) Object.assign(row, { status: 'active', pausedReason: null });
+        else Object.assign(row, { status: 'paused', pausedReason: t.payload.reason });
+      }
+    },
+  };
   const referrals = {
     record: async () => ({ isNew: false, creditId: null }),
     apply: async () => ({ status: 'pending' }),
@@ -461,5 +483,73 @@ describe('Stripe checkout → referral credit', () => {
     });
     assert.equal(log.recorded, 0);
     assert.equal(calls.onboarded.length, 1);
+  });
+});
+
+describe('Getting back on after a billing pause', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+
+  const paid = (ctrl: any) =>
+    ctrl.onInvoicePaid({ type: 'invoice.paid', data: { object: { customer: 'cus_stripe_123' } } });
+
+  it('the declined-card texts carry a link to fix the card', async () => {
+    const rows: Record<string, any> = {
+      '+15550001111': { id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123', status: 'active' },
+    };
+    const { ctrl, calls } = makeController(rows);
+    for (const next of [1700000000, null]) {
+      await ctrl['onPaymentFailed']({
+        type: 'invoice.payment_failed',
+        data: { object: { customer: 'cus_stripe_123', next_payment_attempt: next } },
+      });
+    }
+    assert.equal(calls.notified.length, 2);
+    for (const msg of calls.notified) assert.match(msg, /\/billing\/manage\?t=/);
+  });
+
+  it('a paid invoice lifts a billing pause and says so', async () => {
+    const rows: Record<string, any> = {
+      '+15550001111': {
+        id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123',
+        status: 'paused', pausedReason: 'billing',
+      },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await paid(ctrl);
+    assert.equal(calls.tasks[0].payload.resume, true);
+    assert.equal(rows['+15550001111'].status, 'active');
+    assert.match(calls.notified[0], /back on/);
+  });
+
+  it('a routine renewal, or an owner who texted STOP, is left alone', async () => {
+    for (const r of [
+      { status: 'active', pausedReason: null },
+      { status: 'paused', pausedReason: 'owner_stop' },
+    ]) {
+      const rows: Record<string, any> = {
+        '+15550001111': { id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123', ...r },
+      };
+      const { ctrl, calls } = makeController(rows);
+      await paid(ctrl);
+      assert.equal(calls.tasks.length, 0);
+      assert.equal(calls.notified.length, 0);
+    }
+  });
+
+  it('re-subscribing after a cancel un-pauses them and welcomes them back (not silence)', async () => {
+    const rows: Record<string, any> = {
+      '+14244098341': {
+        id: 'c1', phone: '+14244098341', stripeCustomerId: 'cus_old',
+        status: 'paused', pausedReason: 'billing', onboarded: true,
+      },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await checkout(ctrl, '+14244098341');
+    assert.equal(rows['+14244098341'].status, 'active');
+    assert.match(calls.notified.at(-1), /Welcome back/);
+    assert.deepEqual(calls.onboarded, [], 'no re-interview for a finished profile');
   });
 });

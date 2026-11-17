@@ -44,7 +44,16 @@ export default function ConnectPage() {
   // Read the customer id from the link and load any accounts already connected.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const c = params.get('c') ?? params.get('customer');
+    let c = params.get('c') ?? params.get('customer');
+    if (!c) {
+      // Coming back from the callback's "connect another" / "try again"
+      // without the id in the link — use the one this browser remembered.
+      try {
+        c = localStorage.getItem('handled:connect:customer');
+      } catch {
+        c = null;
+      }
+    }
     setCustomer(c);
     if (c && api) {
       fetch(`${api}/connect/status?customer=${encodeURIComponent(c)}`)
@@ -73,7 +82,18 @@ export default function ConnectPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ customerId: customer, platform }),
       });
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) {
+        // The server writes its reason for the owner ("part of the Pro plan,
+        // reply UPGRADE"). It used to be thrown away for "something went
+        // wrong", leaving them nothing to act on.
+        const body = (await res.json().catch(() => null)) as
+          | { reason?: string; message?: { reason?: string } }
+          | null;
+        const why = body?.reason ?? body?.message?.reason;
+        setNote(why ?? 'Something went wrong. Please try again in a moment.');
+        setBusy(null);
+        return;
+      }
       const { url } = (await res.json()) as { url: string };
       // Post for Me sends the owner back to a single project-level redirect
       // URL, so nothing about this customer survives the round trip. Remember

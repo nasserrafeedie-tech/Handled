@@ -325,10 +325,10 @@ export class AdminController {
   }
 
   /**
-   * Remove one Post for Me account by its spc_… id. For stale rows that block
-   * a fresh connect: Post for Me dedupes on the platform user, so an old
-   * account under a dead external_id swallows every new grant for that same
-   * Instagram. Requires explicit confirm, same as the customer delete.
+   * Disconnect one Post for Me account by its spc_… id. Post for Me has no
+   * delete — this used to call DELETE and could only 404. To un-stick a
+   * connect blocked by an old external_id, use pfm-account/reassign instead.
+   * Requires explicit confirm, same as the customer delete.
    */
   @HttpDelete('pfm-account')
   async deletePfmAccount(
@@ -341,8 +341,38 @@ export class AdminController {
       .object({ id: z.string().startsWith('spc_'), confirm: z.literal(true) })
       .safeParse(body);
     if (!parsed.success) return { error: 'need { id: "spc_…", confirm: true }' };
-    await this.pfm.deleteAccount(parsed.data.id);
-    return { deleted: parsed.data.id };
+    await this.pfm.disconnectAccount(parsed.data.id);
+    return { disconnected: parsed.data.id };
+  }
+
+  /**
+   * Move a Post for Me account to another customer (sets its external_id).
+   * The manual version of what the connect callback now does on its own for
+   * stale links: for when an account is held by a LIVE customer and a human
+   * has decided who it belongs to.
+   */
+  @HttpPost('pfm-account/reassign')
+  async reassignPfmAccount(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    assertAdmin(token);
+    if (!this.pfm.configured) return { error: 'pfm_not_configured' };
+    const parsed = z
+      .object({
+        id: z.string().startsWith('spc_'),
+        customerId: z.string().uuid(),
+        confirm: z.literal(true),
+      })
+      .safeParse(body);
+    if (!parsed.success) return { error: 'need { id: "spc_…", customerId, confirm: true }' };
+    await this.pfm.setExternalId(parsed.data.id, parsed.data.customerId);
+    // The old holder must stop publishing to it.
+    await this.prisma.connectedAccount.updateMany({
+      where: { postForMeRef: parsed.data.id, NOT: { customerId: parsed.data.customerId } },
+      data: { revoked: true },
+    });
+    return { reassigned: parsed.data.id, to: parsed.data.customerId };
   }
 
   /**

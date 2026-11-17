@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { verifyPortalToken } from './portal-link';
 
 export type PlanId = 'starter' | 'growth' | 'pro';
 
@@ -28,6 +30,49 @@ export interface CheckoutResult {
 @Injectable()
 export class BillingService {
   private readonly log = new Logger(BillingService.name);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Turn a texted "update your card" link into a Stripe customer-portal
+   * session. Returns null for a bad/expired link or a customer Stripe doesn't
+   * know — the page then says "text us" instead of a dead end.
+   */
+  async createPortalSession(token: string | undefined): Promise<{ url: string } | null> {
+    const customerId = verifyPortalToken(token);
+    if (!customerId) return null;
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { stripeCustomerId: true },
+    });
+    if (!customer?.stripeCustomerId) return null;
+
+    const secret = process.env.STRIPE_SECRET_KEY;
+    const siteUrl = process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com';
+    if (!secret) {
+      this.log.warn('Stripe offline mode — portal link resolves to the demo page');
+      return { url: `${siteUrl}/billing?demo=1&portal=1` };
+    }
+    const form = new URLSearchParams();
+    form.set('customer', customer.stripeCustomerId);
+    form.set('return_url', `${siteUrl}/billing?status=updated`);
+    const res = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${secret}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+    });
+    if (!res.ok) {
+      // Most likely: the customer portal hasn't been switched on in the Stripe
+      // dashboard yet (Settings → Billing → Customer portal).
+      this.log.error(`Stripe portal session failed → ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+      return null;
+    }
+    const data = (await res.json()) as { url?: string };
+    return data.url ? { url: data.url } : null;
+  }
 
   /** Map each plan to its Stripe Price ID (set in env when you go live). */
   private priceId(plan: PlanId): string | undefined {
