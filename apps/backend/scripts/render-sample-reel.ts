@@ -66,12 +66,17 @@ function clipFrom(photo: string, i: number): string {
   return p;
 }
 
-/** Spread the script's words evenly across the clips, as if spoken. */
+/**
+ * Spread the script across the clips, as if spoken: one sentence per clip when
+ * the counts match (a clip that ends mid-phrase leaves a one-word caption that
+ * real footage wouldn't), otherwise the words evenly.
+ */
 function transcripts(n: number): TranscriptWord[][] {
+  const sentences = SCRIPT.match(/[^.!?]+[.!?]+/g)?.map((x) => x.trim()) ?? [];
   const words = SCRIPT.split(/\s+/);
   const per = Math.ceil(words.length / n);
   return Array.from({ length: n }, (_, c) => {
-    const mine = words.slice(c * per, (c + 1) * per);
+    const mine = sentences.length === n ? sentences[c].split(/\s+/) : words.slice(c * per, (c + 1) * per);
     const step = (CLIP_SECS - 0.4) / Math.max(1, mine.length);
     return mine.map((text, k) => ({ text, start: 0.2 + k * step, end: 0.2 + (k + 0.9) * step }));
   });
