@@ -20,6 +20,14 @@ export function animatedReelAsk(body: string): AnimatedAsk | null {
 }
 
 /**
+ * The words sent with two photos. The photos themselves are the ask, so
+ * "before and after reel" alone counts, with no "make" or "can you".
+ */
+export function isRevealCaption(body: string): boolean {
+  return !LOOK.test(body) && REEL.test(body) && REVEAL.test(body);
+}
+
+/**
  * The offer in the ask, with the ask itself taken off: "make a promo reel for
  * kids cuts $20 on weekdays" → "kids cuts $20 on weekdays". Nothing left means
  * they want their usual offer.

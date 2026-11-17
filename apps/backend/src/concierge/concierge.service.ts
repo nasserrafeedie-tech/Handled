@@ -43,7 +43,7 @@ import { entitlementLine, upgradePitch, postsPerWeek, tierHas } from '../operato
 import { ReelQueueService } from '../scheduler/reel-queue.service';
 import { animatedReelsOn } from '../operator/video/animated/flag';
 import { ensureVisual } from '../operator/graphics/visual-safety-net';
-import { animatedReelAsk, type AnimatedAsk } from './animated-reel-ask';
+import { animatedReelAsk, isRevealCaption, type AnimatedAsk } from './animated-reel-ask';
 import { polishCaption } from '../operator/llm/caption-polish';
 import { detectSlop, slopFeedback } from '../operator/llm/slop';
 
@@ -486,8 +486,8 @@ export class ConciergeService {
     if (msg.mediaUrls.length > 0) {
       // Two photos sent with "before and after reel": those two are the reel,
       // in the order sent, rather than photos for the waiting draft.
-      const reveal = animatedReelsOn() && msg.mediaUrls.length === 2 ? animatedReelAsk(msg.body) : null;
-      if (reveal?.kind === 'before_after' && tierHas(customer.planTier, 'reel')) {
+      const reveal = animatedReelsOn() && msg.mediaUrls.length === 2 && isRevealCaption(msg.body ?? '');
+      if (reveal && tierHas(customer.planTier, 'reel')) {
         return this.takeRevealPhotos(customer.id, customer.planTier, this.addressOf(customer), conversation.id, msg);
       }
       return this.takePhotos(customer, conversation.id, msg);

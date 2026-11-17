@@ -58,3 +58,14 @@ describe('asking for an animated reel by text', () => {
     assert.equal(w.sent[0], 'Your promo reel is ready');
   });
 });
+
+describe('words sent with two photos', () => {
+  it('"before and after reel" alone counts once the photos are attached', async () => {
+    const { isRevealCaption } = await import('./animated-reel-ask');
+    assert.equal(isRevealCaption('before and after reel'), true);
+    assert.equal(isRevealCaption('Before & after video please'), true);
+    assert.equal(isRevealCaption('show me the before and after reel'), false);
+    assert.equal(isRevealCaption('before and after'), false);
+    assert.equal(isRevealCaption('new photos for the week'), false);
+  });
+});
