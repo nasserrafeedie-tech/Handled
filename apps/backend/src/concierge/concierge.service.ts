@@ -385,7 +385,11 @@ export class ConciergeService {
         const next = customer.stripeCustomerId ? this.onboarding.nextField(prof) : null;
         if (next) {
           await this.reply(this.addressOf(customer), conversation.id, this.onboarding.question(next));
+          return;
         }
+        // Back with nothing waiting: "I'll plan your next posts" has to be
+        // true now, not next Monday.
+        void this.planIfIdle(customer.id).catch((e) => this.log.warn(`plan on resume failed: ${String(e)}`));
         return;
       }
       if (reason === 'subscription_ended') {
@@ -2574,6 +2578,25 @@ export class ConciergeService {
     await this.notify(customerId, photoWalkInvite(site, customerId), {
       promptedByOwner: true,
     }).catch((e) => this.log.warn(`photo-walk invite failed: ${String(e)}`));
+  }
+
+  /**
+   * After a pause lifts with nothing lined up, plan and draft the coming week
+   * and show the first draft. Without this, "I'll plan your next posts and
+   * send them over" meant nothing until the Monday cron, up to a week later
+   * (QA round 4, START and paying again after a cancel). Does nothing when
+   * they're not live or something is already waiting or scheduled.
+   */
+  async planIfIdle(customerId: string, opts: { promptedByOwner?: boolean } = { promptedByOwner: true }): Promise<boolean> {
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { status: true } });
+    if (customer?.status !== 'active') return false;
+    const lined = await this.prisma.post.count({
+      where: { customerId, status: { in: ['pending_approval', 'approved', 'scheduled'] }, scheduledTime: { gt: new Date() } },
+    });
+    if (lined > 0) return false;
+    const drafted = await this.draftFirstWeek(customerId);
+    if (!drafted) return false;
+    return this.presentNextDraft(customerId, "Here's the first one ✳", opts);
   }
 
   /**

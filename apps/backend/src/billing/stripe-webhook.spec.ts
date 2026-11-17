@@ -21,6 +21,7 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
     notified: [] as string[],
     paused: [] as string[],
     tasks: [] as any[],
+    planned: [] as string[],
   } as any;
   const prisma = {
     customer: {
@@ -80,6 +81,10 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
     beginOnboarding: async (id: string) => calls.onboarded.push(id),
     notify: async (id: string, msg: string) => calls.notified.push(msg),
     presentNextDraft: async () => false,
+    planIfIdle: async (id: string) => {
+      calls.planned.push(id);
+      return true;
+    },
   };
   const bus = {
     emit: async (t: any) => {
@@ -586,6 +591,8 @@ describe('Getting back on after a billing pause', () => {
     assert.equal(rows['+14244098341'].status, 'active');
     assert.match(calls.notified.at(-1), /Welcome back/);
     assert.deepEqual(calls.onboarded, [], 'no re-interview for a finished profile');
+    // "I'll plan your next posts" is kept now, not at next Monday's run.
+    assert.deepEqual(calls.planned, ['c1']);
   });
 });
 

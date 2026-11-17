@@ -407,6 +407,8 @@ export class StripeWebhookController {
             'and send them over for a look.',
           { promptedByOwner: true },
         );
+        // Planning calls the model; Stripe shouldn't wait on it.
+        void this.concierge.planIfIdle(customer.id).catch((e) => this.log.warn(`plan after rejoin failed: ${String(e)}`));
         return;
       }
     }
@@ -434,8 +436,10 @@ export class StripeWebhookController {
       customer.id,
       "Payment went through, thank you! You're back on, and posting picks up where it left off.",
     );
-    // Posts the pause took off the schedule come back as drafts; show the first.
-    await this.concierge.presentNextDraft(customer.id).catch(() => false);
+    // Posts the pause took off the schedule come back as drafts; show the
+    // first, or plan new ones when none came back.
+    const shown = await this.concierge.presentNextDraft(customer.id).catch(() => false);
+    if (!shown) void this.concierge.planIfIdle(customer.id, { promptedByOwner: false }).catch((e) => this.log.warn(`plan after payment failed: ${String(e)}`));
   }
 
   private async resume(customerId: string): Promise<void> {
