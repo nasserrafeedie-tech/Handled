@@ -2634,9 +2634,44 @@ export class ConciergeService {
   private async draftFirstWeek(customerId: string): Promise<number> {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
-      select: { timezone: true },
+      select: { timezone: true, planTier: true },
     });
     const tz = customer?.timezone ?? 'America/Los_Angeles';
+
+    // The regular plan starts next Monday, which left a new owner with nothing
+    // posting for up to a week after they signed up (QA round 5: a Monday-night
+    // signup's first post was the next Monday). A short starter week fills the
+    // days from tomorrow until then, drafted first so it's shown first.
+    let drafted = 0;
+    const starter = starterWeek(tz, nextMonday());
+    if (starter) {
+      const profile = await this.prisma.brandProfile.findUnique({
+        where: { customerId },
+        select: { postingFrequency: true },
+      });
+      const perWeek = Math.min(profile?.postingFrequency ?? 3, postsPerWeek(customer?.planTier ?? 'starter'));
+      const posts = Math.min(3, starter.days, Math.max(1, Math.round((perWeek * starter.days) / 7)));
+      const planned = await this.bus
+        .emit(
+          this.task(
+            customerId,
+            'PLAN_WEEK',
+            { week_start: `${starter.start}T00:00:00.000Z`, days: starter.days, posting_frequency: posts },
+            'concierge',
+          ),
+        )
+        .catch((e) => {
+          this.log.warn(`starter week plan failed for ${customerId}: ${String(e)}`);
+          return null;
+        });
+      const early = (planned?.data as { slots?: CalendarSlot[] } | null | undefined)?.slots ?? [];
+      // A slot whose time has already passed today can't be offered.
+      drafted += await this.draftSlots(
+        customerId,
+        tz,
+        early.filter((sl) => zonedToUtc(sl.date, sl.best_time, tz).getTime() > Date.now() + 3600_000),
+      );
+    }
 
     // PLAN_WEEK runs a real LLM call, and the first request to a cold backend
     // can time out and come back with zero slots. Left unretried that silently
@@ -2651,6 +2686,11 @@ export class ConciergeService {
       this.log.error(`PLAN_WEEK yielded no slots for ${customerId} after retries`);
     }
 
+    return drafted + (await this.draftSlots(customerId, tz, slots));
+  }
+
+  /** Drafts each planned slot, with its visuals; returns how many landed. */
+  private async draftSlots(customerId: string, tz: string, slots: CalendarSlot[]): Promise<number> {
     let drafted = 0;
     for (const slot of slots) {
       try {
@@ -2903,6 +2943,17 @@ function stripCommand(text: string): string {
     )
     .replace(/^["“]|["”]$/g, '')
     .trim();
+}
+
+/**
+ * The days from tomorrow (the owner's tomorrow) up to the regular plan's
+ * Monday, or null when fewer than two are left, so a Saturday signup isn't
+ * handed a one-day plan.
+ */
+export function starterWeek(tz: string, planMonday: string, now = new Date()): { start: string; days: number } | null {
+  const start = new Date(now.getTime() + 86_400_000).toLocaleDateString('en-CA', { timeZone: tz });
+  const days = Math.round((Date.parse(planMonday.slice(0, 10)) - Date.parse(start)) / 86_400_000);
+  return days >= 2 && days <= 7 ? { start, days } : null;
 }
 
 function nextMonday(): string {

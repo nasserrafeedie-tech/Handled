@@ -85,6 +85,24 @@ export function clampAssetAsks<T extends { archetype: string; needs_asset: boole
   );
 }
 
+/** YYYY-MM-DD plus n days. */
+export function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Keeps slots dated within [start, start + days), one a day at most. */
+export function clampToWindow<T extends { date: string }>(slots: T[], start: string, days: number): T[] {
+  const end = addDays(start, days);
+  const seen = new Set<string>();
+  return slots.filter((s) => {
+    if (s.date < start || s.date >= end || seen.has(s.date)) return false;
+    seen.add(s.date);
+    return true;
+  });
+}
+
 /**
  * Hold promo to at most one slot in five — the trust ratio, guaranteed.
  *
@@ -188,6 +206,9 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     // Cap the cadence at what the plan sells (Starter 3 / Growth 5 / Pro 7), so
     // a profile that somehow holds a higher number never drafts more than the
     // tier is paid for.
+    const start = task.payload.week_start.slice(0, 10);
+    const days = task.payload.days ?? 7;
+    const lastDay = addDays(start, days - 1);
     const requested =
       task.payload.posting_frequency ?? profile.postingFrequency ?? 3;
     const frequency = Math.min(requested, postsPerWeek(customer?.planTier ?? 'starter'));
@@ -201,7 +222,10 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     const context = buildBrandContext(profile);
     const requests = profile.postRequests ?? [];
     const prompt = [
-      `Plan ${frequency} posts for the week starting ${task.payload.week_start.slice(0, 10)}.`,
+      days < 7
+        ? `Plan ${frequency} posts for the week starting ${start}. This is a short starter week: ` +
+          `every date must fall within the ${days} days from ${start} to ${lastDay}, one post a day at most.`
+        : `Plan ${frequency} posts for the week starting ${start}.`,
       'Mix archetypes across the week (promo, behind_the_scenes, testimonial,',
       'educational_tip, product_spotlight, seasonal, ugc_repost, were_open).',
       // The trust ratio (§ engagement research): over-promotion is the top
@@ -262,6 +286,9 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     // And the guarantee behind the pillar-mix instruction: at most one promo
     // slot in five survives the plan.
     planned.slots = clampPromoQuota(planned.slots);
+    // A starter week has to stay inside its days, or it runs into the week the
+    // regular plan covers and doubles it up.
+    if (days < 7) planned.slots = clampToWindow(planned.slots, start, days);
     let leftover = requests;
     if (requests.length) {
       const assigned = assignOwnerRequests(planned.slots, requests);

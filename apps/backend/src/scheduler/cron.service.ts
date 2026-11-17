@@ -113,6 +113,27 @@ export class CronService {
     });
     const tz = customer?.timezone ?? 'America/Los_Angeles';
 
+    // Someone who signed up (or came back) between Sunday afternoon and this
+    // run already had this same week planned at signup. Planning it again would
+    // double every post and every approval text.
+    const weekStart = nextMonday();
+    const already = await this.prisma.post.count({
+      where: {
+        customerId,
+        status: { notIn: ['cancelled', 'failed'] },
+        // The owner's own Monday to Sunday: a Sunday-evening post in Los
+        // Angeles is already Monday in UTC.
+        scheduledTime: {
+          gte: zonedToUtc(weekStart.slice(0, 10), '00:00', tz),
+          lt: new Date(zonedToUtc(weekStart.slice(0, 10), '00:00', tz).getTime() + 7 * 86_400_000),
+        },
+      },
+    });
+    if (already > 0) {
+      this.log.log(`week of ${weekStart.slice(0, 10)} already planned for ${customerId}; skipping`);
+      return 0;
+    }
+
     // A cold backend's first PLAN_WEEK LLM call can time out to zero slots.
     // Unretried that quietly skips the customer's whole week, so try a few
     // times before giving up — the same cold-start guard the onboarding path
@@ -120,7 +141,7 @@ export class CronService {
     let slots: CalendarSlot[] = [];
     for (let attempt = 1; attempt <= 3; attempt++) {
       const planned = await this.emit(customerId, 'PLAN_WEEK', {
-        week_start: nextMonday(),
+        week_start: weekStart,
       });
       slots = (planned as PlanResult)?.data?.slots ?? [];
       if (slots.length) break;
