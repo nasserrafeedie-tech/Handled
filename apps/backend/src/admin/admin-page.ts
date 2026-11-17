@@ -119,6 +119,11 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
     <div id="err"></div>
     <div id="cards" class="cards"></div>
 
+    <h2>Launch check — are the keys in?</h2>
+    <p class="cap">Read from this service's own settings. It says whether each
+      key is set and looks right, never the key itself.</p>
+    <div id="launch"></div>
+
     <h2>Media mix — what treatment posts actually got</h2>
     <p class="cap">Emergent, not a setting. Watch it before touching the
       archetype weights, the 2/week photo-ask cap, or the AI-image opt-in.</p>
@@ -181,10 +186,28 @@ async function load(){
     document.getElementById('err').innerHTML='';
     document.getElementById('stamp').textContent='as of '+new Date().toLocaleTimeString();
     render(ov,ob);
+    loadLaunch();
   }catch(e){
     const box=TOKEN&&!document.getElementById('app').classList.contains('hide')
       ?'err':'gateErr';
     document.getElementById(box).innerHTML='<div class="err">'+esc(e.message)+'</div>';
+  }
+}
+
+const LAUNCH_STATE={ready:'✓ Ready',missing:'✗ Missing',malformed:'✗ Looks wrong',not_yet:'Not yet'};
+async function loadLaunch(){
+  const box=document.getElementById('launch');
+  try{
+    const r=await api('/health/launch');
+    const rows=[];
+    for(const g of r.groups||[])for(const k of g.checks||[])
+      rows.push('<tr><td>'+esc(g.name)+'</td><td>'+esc(k.what)+'</td><td>'+
+        esc(LAUNCH_STATE[k.state]||k.state)+'</td><td>'+esc(k.note)+'</td></tr>');
+    box.innerHTML='<p><b>'+esc(r.headline)+'</b></p><div class="scroll"><table>'+
+      '<tr><th>Area</th><th>What it unlocks</th><th>State</th><th>Note</th></tr>'+
+      rows.join('')+'</table></div>';
+  }catch(e){
+    box.innerHTML='<div class="err">Couldn’t load the launch check: '+esc(e.message)+'</div>';
   }
 }
 
