@@ -46,6 +46,7 @@ describe('REGENERATE_POST when the rewrite repeats itself', () => {
     assert.ok(r.error);
     assert.match(r.summary_for_owner, /came back the same/);
     assert.doesNotMatch(r.summary_for_owner, /Reworked/);
+    assert.doesNotMatch(r.summary_for_owner, /shorter|croissants/, 'no canned example after they gave one');
     assert.equal(t.updates.length, 0, 'the post must not be touched');
   });
 

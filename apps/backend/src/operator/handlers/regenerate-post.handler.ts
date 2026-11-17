@@ -83,7 +83,9 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
       if (same(gen.caption, post.caption)) {
         return fail(
           task.task_id,
-          "That one came back the same. What should change? A line like \"shorter\" or \"mention the croissants\" helps.",
+          // No example edits here: the owner has just given one, and offering
+          // "shorter" back to someone who said shorter reads as not listening.
+          "That one came back the same, sorry. Can you tell me a bit more about what you'd like different?",
           'revise_unchanged',
           task.customer_id,
         );

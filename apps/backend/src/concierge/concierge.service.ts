@@ -1617,8 +1617,9 @@ export class ConciergeService {
     } | null,
     /** So a novel business type can be told what the pause is for. */
     notify?: { phone: string; conversationId: string },
-  ): Promise<void> {
-    if (!profile?.businessType) return;
+  ): Promise<{ toldAboutResearch: boolean }> {
+    let toldAboutResearch = false;
+    if (!profile?.businessType) return { toldAboutResearch };
 
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
@@ -1628,7 +1629,7 @@ export class ConciergeService {
 
     if (verdict.slug && verdict.confidence >= CONFIDENT) {
       await this.playbook.attach(customerId, verdict.slug, verdict.confidence);
-      return;
+      return { toldAboutResearch };
     }
 
     // Novel business type — research it, then plan from it (Flow 2).
@@ -1646,12 +1647,14 @@ export class ConciergeService {
           "so give me about five minutes to go read up on what actually " +
           "works for your kind of business. I'll text you the second your " +
           'first week is ready.',
-      ).catch(() => undefined);
+      )
+        .then(() => (toldAboutResearch = true))
+        .catch(() => undefined);
     }
     const researched = await this.research.ensureArchetypeFor(profile.businessType);
     if (researched) {
       await this.playbook.attach(customerId, researched.slug, researched.confidence);
-      return;
+      return { toldAboutResearch };
     }
 
     // Research failed. Fall back to the closest partial match rather than
@@ -1659,6 +1662,7 @@ export class ConciergeService {
     if (verdict.slug) {
       await this.playbook.attach(customerId, verdict.slug, verdict.confidence);
     }
+    return { toldAboutResearch };
   }
 
   /**
@@ -1671,10 +1675,11 @@ export class ConciergeService {
       this.prisma.brandProfile.findUnique({ where: { customerId } }),
       this.prisma.post.findMany({
         // Drafts waiting on the owner are the ones that need them, so they
-        // belong in "coming up" too (F17). The summary puts them first.
+        // belong in "coming up" too (F17). The summary shows four in time
+        // order and counts the rest, so it reads them all.
         where: { customerId, status: { in: ['pending_approval', 'approved', 'scheduled'] } },
         orderBy: { scheduledTime: 'asc' },
-        take: 6,
+        take: 30,
         select: { caption: true, scheduledTime: true, status: true },
       }),
       this.prisma.post.count({
@@ -2151,9 +2156,13 @@ export class ConciergeService {
     // (engine Flow 1). A novel business type researches its own archetype
     // first — the wait sits between two texts, so the owner reads it as the
     // machine working, and their very first plan is already specialist-grade.
-    await this.assignArchetype(customerId, done, { phone, conversationId }).catch((e) =>
-      this.log.warn(`archetype assignment failed for ${customerId}: ${String(e)}`),
-    );
+    const { toldAboutResearch } = await this.assignArchetype(customerId, done, {
+      phone,
+      conversationId,
+    }).catch((e) => {
+      this.log.warn(`archetype assignment failed for ${customerId}: ${String(e)}`);
+      return { toldAboutResearch: false };
+    });
 
     // Send the connect link, then write the first week's posts so the owner
     // has something to look at immediately. Planning alone used to be the end
@@ -2165,15 +2174,7 @@ export class ConciergeService {
     await this.reply(
       phone,
       conversationId,
-      `Next, whenever you have two minutes: connect the accounts you want ` +
-        `me to post to (secure link, we never see your passwords): ` +
-        `${site}/connect?c=${customerId}\n\n` +
-        // Optional, never a gate. A logo lets us brand every post and pull the
-        // real colours — but a signup should never stall on finding a logo file,
-        // so it's an offer, and the colour fallback covers everyone who skips.
-        `Got a logo handy? Drop it here and I'll put it on your posts: ` +
-        `${site}/upload?c=${customerId}&kind=logo\n\n` +
-        `Meanwhile I'm writing your first week — give me a moment.`,
+      connectMessage(site, customerId, toldAboutResearch),
     );
 
     // If the look-you-up research is still reading, give it a moment — the
@@ -2523,4 +2524,24 @@ function nextMonday(): string {
   d.setUTCDate(d.getUTCDate() + add);
   d.setUTCHours(0, 0, 0, 0);
   return d.toISOString();
+}
+
+/**
+ * The text that sends the connect link (and the optional logo link) as
+ * onboarding finishes. After the research note the owner has already been told
+ * the first week is coming, so saying it again would read as a second, shorter
+ * promise; the closing line only goes out when nothing has said so yet.
+ */
+export function connectMessage(site: string, customerId: string, toldAboutResearch: boolean): string {
+  return (
+    `Next, whenever you have two minutes: connect the accounts you want ` +
+    `me to post to (secure link, we never see your passwords): ` +
+    `${site}/connect?c=${customerId}\n\n` +
+    // Optional, never a gate. A logo lets us brand every post and pull the
+    // real colours — but a signup should never stall on finding a logo file,
+    // so it's an offer, and the colour fallback covers everyone who skips.
+    `Got a logo handy? Drop it here and I'll put it on your posts: ` +
+    `${site}/upload?c=${customerId}&kind=logo` +
+    (toldAboutResearch ? '' : `\n\nMeanwhile I'm writing your first week — give me a moment.`)
+  );
 }
