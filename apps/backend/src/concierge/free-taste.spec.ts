@@ -251,6 +251,12 @@ describe('free-taste paywall', () => {
     assert.equal(world.updates.length, 0);
   });
 
+  it('"what do you actually do" is the same question (QA round 6)', () => {
+    for (const q of ['what do you actually do', 'what does handled do', 'what exactly do you do', 'what does this actually do?']) {
+      assert.equal(aboutHandled(q), 'how', q);
+    }
+  });
+
   it('a description that starts like an ask is still the description', () => {
     for (const d of ["I'm in Austin, I run a bakery", 'we help people get started with yoga', "Buy one get one free on Tuesdays at Joe's Pizza", 'start', 'join']) {
       assert.equal(aboutHandled(d), null, d);

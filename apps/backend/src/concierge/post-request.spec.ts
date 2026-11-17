@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { ConciergeService, looksLikePostRequest } from './concierge.service';
+import { ConciergeService, THANKS_RE, isNewPostAsk, looksLikePostRequest } from './concierge.service';
 import { PlanWeekHandler, assignOwnerRequests, ownerRequestNote } from '../operator/handlers/plan-week.handler';
 
 /**
@@ -112,5 +112,31 @@ describe('the next plan carries the requests', () => {
     assert.equal(slots[1].owner_request, undefined);
     assert.match(prompt, /owner asked for these posts.*\$25 cuts/);
     assert.deepEqual(updates, [{ postRequests: [] }]);
+  });
+});
+
+describe('a new post asked for while a draft waits (QA round 6)', () => {
+  it('reads "do one about X" as a new post, and a tweak to the draft as a tweak', () => {
+    for (const t of [
+      'do one about our new beard trims',
+      'can you make a post about saturday',
+      'write another one on our kids cuts',
+      'can you post about the holiday hours',
+      'do a new post for black friday',
+    ]) {
+      assert.ok(isNewPostAsk(t), t);
+    }
+    for (const t of ['make it shorter', 'make the next one about kids cuts', 'yes', 'change the caption to mention parking', 'post it']) {
+      assert.equal(isNewPostAsk(t), false, t);
+    }
+  });
+
+  it('knows a bare thanks from a thanks with a yes in it', () => {
+    for (const t of ['thanks', 'Thank you!', 'thx', 'ty', 'thanks so much', 'appreciate it', 'thanks 🙏']) {
+      assert.ok(THANKS_RE.test(t), t);
+    }
+    for (const t of ['perfect, thanks!', 'thanks, post it', 'thanks but make it shorter']) {
+      assert.equal(THANKS_RE.test(t), false, t);
+    }
   });
 });

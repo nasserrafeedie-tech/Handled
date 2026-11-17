@@ -255,7 +255,7 @@ export function aboutHandled(body: string): 'signup' | 'how' | null {
     return 'signup';
   }
   if (
-    /^(?:so\s+)?(?:how (?:does|do) (?:this|it|you|handled) work|what (?:is|'?s) (?:this|handled)|what do you (?:guys )?do|who (?:is|'?s) this|what are you)\b/i.test(rest)
+    /^(?:so\s+)?(?:how (?:does|do) (?:this|it|you|handled) work|what (?:is|'?s) (?:this|handled)|what (?:exactly |actually )?(?:do|does) (?:you|handled|this)(?: guys)?(?: actually| exactly| even| really)? do|who (?:is|'?s) this|what are you)\b/i.test(rest)
   ) {
     return 'how';
   }
@@ -880,6 +880,42 @@ export class ConciergeService {
         phone,
         conversationId,
         'Want me to post the draft? Reply yes, or tell me what to change.',
+      );
+    }
+
+    // A bare thanks. The fallback used to answer it with "Reply yes to send
+    // that draft", which reads as a nag, and when the draft hadn't been shown
+    // yet it pointed at something they had never seen.
+    if (THANKS_RE.test(body) && !(await this.pendingConfirmation(conversationId))) {
+      if (!pending) return this.reply(phone, conversationId, 'Anytime ✳');
+      const tz =
+        (await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }))
+          ?.timezone ?? 'America/Los_Angeles';
+      const when = pending.scheduledTime ? ` for ${formatInZone(pending.scheduledTime, tz)}` : '';
+      return this.reply(phone, conversationId, `Anytime ✳ Your draft${when} is there whenever you're ready for it.`);
+    }
+
+    // "Do one about our new beard trims" while a draft waits. That is a new
+    // post, not a change to the draft: offline it fell through to "Reply yes
+    // to send that draft" and the ask was lost, and the model could read it as
+    // a revise and rewrite the draft they were looking at. Keep the draft and
+    // keep the ask for the next plan.
+    if (pending && isNewPostAsk(body)) {
+      const profile = await this.prisma.brandProfile.findUnique({ where: { customerId }, select: { postRequests: true } });
+      const ask = body.trim().slice(0, 300);
+      await this.prisma.brandProfile.update({
+        where: { customerId },
+        data: { postRequests: [...(profile?.postRequests ?? []), ask].slice(-5) },
+      });
+      const tz =
+        (await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }))
+          ?.timezone ?? 'America/Los_Angeles';
+      const when = pending.scheduledTime ? ` for ${formatInZone(pending.scheduledTime, tz)}` : '';
+      return this.reply(
+        phone,
+        conversationId,
+        "Got it. I'll build one of your next posts around that, and you'll see it before it goes out. " +
+          `Your draft${when} is still waiting: reply “yes” to schedule it, or tell me what to change.`,
       );
     }
 
@@ -3074,6 +3110,19 @@ export function looksLikePostRequest(text: string): boolean {
   const t = text.trim();
   if (t.split(/\s+/).length < 3) return false;
   return /\b(about|post|posts|feature|highlight|promote|show(?:case)?|mention|announce|shout ?out|next one|one on|do one)\b/i.test(t);
+}
+
+/** A thank-you with nothing else in it. */
+export const THANKS_RE =
+  /^\s*(?:thanks?|thank you|thx|ty|tysm|appreciate (?:it|you)|cheers)(?:\s+(?:so much|a lot|again|man|bro|dude|boss))?[\s.!]*(?:\p{Extended_Pictographic}\s*)*$/iu;
+
+/**
+ * Asking for a new post ("do one about our beard trims", "can you make a post
+ * about Saturday"). "Next one" is left out: with a draft waiting, "make the
+ * next one about X" most likely means that draft, which revise handles.
+ */
+export function isNewPostAsk(text: string): boolean {
+  return /\b(?:do|make|write|create|put up|need)\s+(?:me\s+)?(?:a|an|one|another|some)\s+(?:new\s+)?(?:post|posts|one)?\s*(?:about|on|for|featuring|announcing)\b|\bcan you (?:also\s+)?post (?:something\s+)?(?:about|on)\b|\b(?:another|a separate|a new) (?:post|one) (?:about|on|for)\b/i.test(text);
 }
 
 /** "I want to cancel", with no word for what: the draft, or the plan. */
