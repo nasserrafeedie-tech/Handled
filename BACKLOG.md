@@ -45,7 +45,7 @@ Last re-ranked: 2026-11-17.
 - [x] **Schema drift (F10).** Fixed in the schema, not the database: the three ids now declare the database's own uuid default, and the unique index keeps its existing name. `prisma migrate diff` is empty against both the migrations and a live database, so nothing needs deploying. An `archetype_performance` index name and three id defaults differ from what Prisma expects. Add a migration so `prisma migrate diff` comes back empty.
 - [x] **README is out of date.** Now names Handled, the real test commands, the real model defaults and what each key turns on. `.env.example` gained the R2, Postmark and admin variables the code reads. It still calls Anthropic, Post for Me, R2 and the crons "stubs". They are all wired now.
 - [x] **Admin overview journey.** Customers by status, MRR by tier, leads, the media mix and photo asks all matched the database. Fixed: the failed-post count stopped at 25. Check that every number on the admin page matches the database for a seeded customer.
-- [ ] **Two clean QA rounds in a row.** Rerun every journey after the fixes. It's done when two rounds in a row turn up nothing new. Round 2 found 6, round 3 found 4, round 4 found 3, round 5 found 5 (all fixed).
+- [x] **Two clean QA rounds in a row.** Rerun every journey after the fixes. It's done when two rounds in a row turn up nothing new. Round 2 found 6, round 3 found 4, round 4 found 3, round 5 found 5, round 6 found 3 (all fixed). Rounds 7 and 8 were both clean.
 
 ## 5. Handled runs its own Instagram (dogfooding)
 
@@ -76,6 +76,8 @@ would. Everything up to linking the account can be built now.
 - [x] Times read "today", "tomorrow", a weekday within the week, or the date past that, so two different Tuesdays no longer look the same.
 - [x] Coming back (START, paying again, a fixed card) with nothing lined up plans the week right away instead of waiting for Monday.
 - [x] QA round 5: posts start the day after signup (a starter week) and the Monday run never plans a week twice; "at 7am instead" keeps the post's day; a queued graphic says how many drafts are ahead; a failed answer no longer promises a follow-up; a bare "I want to cancel" asks draft or plan.
+- [x] QA round 6: three fixes. "Do one about our new beard trims" while a draft waits is saved for an upcoming post instead of being dropped, a bare "thanks" gets a short reply instead of the generic one, and "what do you actually do" gets the explanation instead of the paywall.
+- [x] QA rounds 7 and 8: both clean. All three round 6 fixes held up.
 - [x] The email sign-up on `/start` is hidden, and refused by the backend, until Postmark works both ways. The page offers "email us" instead, so the no-phone path stays.
 
 ## Only Nasser can do these
