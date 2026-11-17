@@ -16,6 +16,9 @@ import { TaskHandler, ok } from './handler.interface';
  * cancelled customer could text "start" and get free service, and an owner
  * who texted STOP could never get back on at all.
  */
+/** Marks a post the pause took off the schedule, so a resume can bring it back. */
+export const PAUSE_MARK = 'paused: taken off the schedule by an account pause';
+
 @Injectable()
 export class PauseCustomerHandler implements TaskHandler<'PAUSE_CUSTOMER'> {
   readonly type = 'PAUSE_CUSTOMER' as const;
@@ -47,11 +50,35 @@ export class PauseCustomerHandler implements TaskHandler<'PAUSE_CUSTOMER'> {
           pausedReason: null,
         },
       });
+      // Posts the pause took off the schedule that are still ahead come back
+      // as drafts for another look. Before this, "I'll plan your next posts"
+      // left the owner with nothing until the next weekly plan, a week or more
+      // out, because the week they'd approved had been cancelled.
+      const restored = await this.prisma.post.updateMany({
+        where: {
+          customerId: task.customer_id,
+          status: 'cancelled',
+          failureReason: PAUSE_MARK,
+          scheduledTime: { gt: new Date(Date.now() + 30 * 60_000) },
+        },
+        data: {
+          status: 'pending_approval',
+          approvalState: 'awaiting_owner',
+          failureReason: null,
+          publishStartedAt: null,
+          presentedAt: null,
+        },
+      });
+      const back = restored.count;
       return ok(
         task.task_id,
-        profile?.onboardingComplete
-          ? "You're back on. I'll plan your next posts and send them over for a look."
-          : "You're back on. Let's pick up where we left off.",
+        !profile?.onboardingComplete
+          ? "You're back on. Let's pick up where we left off."
+          : back > 0
+            ? `You're back on. The ${back === 1 ? 'post' : `${back} posts`} I had lined up ${back === 1 ? 'is' : 'are'} ready again for a quick look.`
+            : "You're back on. I'll plan your next posts and send them over for a look.",
+        'done',
+        { restored_posts: back },
       );
     }
 
@@ -63,7 +90,7 @@ export class PauseCustomerHandler implements TaskHandler<'PAUSE_CUSTOMER'> {
       }),
       this.prisma.post.updateMany({
         where: { customerId: task.customer_id, status: 'scheduled' },
-        data: { status: 'cancelled' },
+        data: { status: 'cancelled', failureReason: PAUSE_MARK },
       }),
     ]);
 

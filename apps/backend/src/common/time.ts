@@ -127,3 +127,60 @@ export function tomorrowMorningInZone(timeZone: string): Date {
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '01';
   return zonedToUtc(`${get('year')}-${get('month')}-${get('day')}`, '09:00', timeZone);
 }
+
+const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/**
+ * Reads plain timing from a text without a model: "now", "tomorrow at 2pm",
+ * "Thursday 9:30am", "friday". It's the fallback for when the model is
+ * unreachable, so a reschedule still works instead of "tell me when". A day
+ * with no time keeps the post's planned time of day (10:00 if none). Returns
+ * null when it can't be sure.
+ */
+export function parseTimeLocally(
+  text: string,
+  timeZone: string,
+  now: Date = new Date(),
+  plannedTime?: Date | null,
+): Date | null {
+  const t = text.toLowerCase();
+  if (/\b(right now|now|asap|immediately)\b/.test(t)) return now;
+
+  const localDate = (d: Date) => d.toLocaleDateString('en-CA', { timeZone });
+  const today = localDate(now);
+  const dayOffset = (n: number) => localDate(new Date(now.getTime() + n * 24 * 3600_000));
+  let date: string | null = null;
+  if (/\btoday\b|\btonight\b/.test(t)) date = today;
+  else if (/\btomorrow\b/.test(t)) date = dayOffset(1);
+  else {
+    const m = /\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/.exec(t);
+    if (m) {
+      const todayIdx = new Date(`${today}T12:00:00Z`).getUTCDay();
+      let add = (WEEKDAYS.indexOf(m[1]) - todayIdx + 7) % 7;
+      if (add === 0) add = 7; // "Thursday" said on a Thursday means next week's
+      date = dayOffset(add);
+    }
+  }
+
+  let time: string | null = null;
+  const tm = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\b(\d{1,2}):(\d{2})\b|\bnoon\b/.exec(t);
+  if (tm) {
+    if (tm[0] === 'noon') time = '12:00';
+    else if (tm[3]) {
+      let h = Number(tm[1]) % 12;
+      if (tm[3] === 'pm') h += 12;
+      time = `${String(h).padStart(2, '0')}:${tm[2] ?? '00'}`;
+    } else if (Number(tm[4]) < 24) time = `${tm[4].padStart(2, '0')}:${tm[5]}`;
+  } else if (/\btonight\b/.test(t)) time = '19:00';
+
+  if (!date && !time) return null;
+  if (!time) {
+    time = plannedTime
+      ? plannedTime.toLocaleTimeString('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false })
+      : '10:00';
+  }
+  let when = zonedToUtc(date ?? today, time, timeZone);
+  // "2pm" alone, already past today, means tomorrow at 2.
+  if (!date && when.getTime() <= now.getTime()) when = zonedToUtc(dayOffset(1), time, timeZone);
+  return when;
+}

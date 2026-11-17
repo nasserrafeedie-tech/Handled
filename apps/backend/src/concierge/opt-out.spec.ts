@@ -1,7 +1,7 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConciergeService } from './concierge.service';
-import { PauseCustomerHandler } from '../operator/handlers/pause-customer.handler';
+import { PAUSE_MARK, PauseCustomerHandler } from '../operator/handlers/pause-customer.handler';
 import { signPortalToken, verifyPortalToken, portalLink, PORTAL_LINK_TTL_MS } from '../billing/portal-link';
 import { BillingService } from '../billing/billing.service';
 
@@ -17,11 +17,14 @@ import { BillingService } from '../billing/billing.service';
 
 type Row = Record<string, any>;
 
+let postCalls: Row[] = [];
+let restorable = 0;
 function handler(customer: Row, profile: Row | null) {
+  postCalls = [];
   const prisma = {
     brandProfile: { findUnique: async () => profile },
     customer: { update: async ({ data }: any) => Object.assign(customer, data) },
-    post: { updateMany: async () => ({ count: 0 }) },
+    post: { updateMany: async (a: any) => (postCalls.push(a), { count: restorable }) },
     queuedText: { deleteMany: async () => ({ count: 0 }) },
     $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
   };
@@ -54,6 +57,25 @@ describe('PAUSE_CUSTOMER keeps why, and resume puts them back where they were', 
     const c: Row = { status: 'paused', pausedReason: 'owner_stop' };
     await handler(c, { onboardingComplete: false }).handle(task({ reason: 'owner_stop', resume: true }));
     assert.equal(c.status, 'onboarding');
+  });
+});
+
+describe('posts the pause took off the schedule', () => {
+  it('a pause marks them, and a resume brings back the ones still ahead as drafts', async () => {
+    restorable = 2;
+    const c: Row = { status: 'active' };
+    const h = handler(c, { onboardingComplete: true });
+    await h.handle(task({ reason: 'owner_stop', resume: false }));
+    assert.equal(postCalls[0].data.failureReason, PAUSE_MARK);
+    const out = await h.handle(task({ reason: 'owner_stop', resume: true }));
+    const restore = postCalls[1];
+    assert.equal(restore.where.failureReason, PAUSE_MARK);
+    assert.equal(restore.where.status, 'cancelled');
+    assert.ok(restore.where.scheduledTime.gt > new Date());
+    assert.equal(restore.data.status, 'pending_approval');
+    assert.match(out.summary_for_owner, /2 posts I had lined up are ready again/);
+    assert.equal((out.data as Row).restored_posts, 2);
+    restorable = 0;
   });
 });
 

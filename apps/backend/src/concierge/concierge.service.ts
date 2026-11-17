@@ -32,6 +32,7 @@ import {
   nextTextingWindowOpen,
   tomorrowMorningInZone,
   zonedToUtc,
+  parseTimeLocally,
 } from '../common/time';
 import { z } from 'zod';
 import { strategySummary } from './strategy-summary';
@@ -372,6 +373,10 @@ export class ConciergeService {
           this.task(customer.id, 'PAUSE_CUSTOMER', { reason: 'owner_stop', resume: true }),
         );
         await this.reply(this.addressOf(customer), conversation.id, result.summary_for_owner);
+        if ((result.data as { restored_posts?: number } | undefined)?.restored_posts) {
+          await this.presentNextDraft(customer.id, undefined, { promptedByOwner: true });
+          return;
+        }
         // Mid-interview when they stopped → ask the next question again so
         // the conversation has somewhere to go.
         const prof = await this.prisma.brandProfile.findUnique({ where: { customerId: customer.id } });
@@ -699,12 +704,14 @@ export class ConciergeService {
       if (parsed.when === 'none') return null;
       if (parsed.when === 'now') return { when: new Date(), scope: parsed.scope };
       const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/.exec(parsed.when);
-      if (!m) return null;
-      return { when: zonedToUtc(m[1], m[2], tz), scope: parsed.scope };
+      if (m) return { when: zonedToUtc(m[1], m[2], tz), scope: parsed.scope };
     } catch (e) {
       this.log.warn(`time parse failed: ${String(e)}`);
-      return null;
     }
+    // The model was unreachable or gave nothing usable: plain timing still
+    // works ("Thursday at 2pm"), for one post.
+    const local = parseTimeLocally(body, tz, new Date(), plannedTime);
+    return local ? { when: local, scope: 'post' } : null;
   }
 
   /**

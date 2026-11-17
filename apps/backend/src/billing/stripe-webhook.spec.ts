@@ -79,6 +79,7 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
   const concierge = {
     beginOnboarding: async (id: string) => calls.onboarded.push(id),
     notify: async (id: string, msg: string) => calls.notified.push(msg),
+    presentNextDraft: async () => false,
   };
   const bus = {
     emit: async (t: any) => {

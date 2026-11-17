@@ -434,6 +434,8 @@ export class StripeWebhookController {
       customer.id,
       "Payment went through, thank you! You're back on, and posting picks up where it left off.",
     );
+    // Posts the pause took off the schedule come back as drafts; show the first.
+    await this.concierge.presentNextDraft(customer.id).catch(() => false);
   }
 
   private async resume(customerId: string): Promise<void> {
