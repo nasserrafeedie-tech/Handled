@@ -1,3 +1,4 @@
+import { bestPostLine } from './best-post';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomUUID } from 'node:crypto';
@@ -488,6 +489,30 @@ export class CronService {
       }),
     ]);
     if (published === 0 && scheduled === 0) return; // nothing to brag about
+    // How the week's posts actually did, from the latest metrics snapshot.
+    const [cust, withNumbers] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }),
+      published
+        ? this.prisma.post.findMany({
+            where: { customerId, status: 'published', publishedAt: { gte: since } },
+            select: {
+              caption: true,
+              publishedAt: true,
+              metrics: { select: { impressions: true, likes: true, saves: true }, orderBy: { fetchedAt: 'desc' }, take: 1 },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+    const best = bestPostLine(
+      withNumbers.map((p) => ({
+        caption: p.caption,
+        publishedAt: p.publishedAt,
+        impressions: p.metrics[0]?.impressions ?? 0,
+        likes: p.metrics[0]?.likes ?? 0,
+        saves: p.metrics[0]?.saves ?? 0,
+      })),
+      cust?.timezone ?? 'America/Los_Angeles',
+    );
     const bits = [
       published
         ? `${published} post${published > 1 ? 's' : ''} went out this week`
@@ -496,7 +521,7 @@ export class CronService {
     ].filter(Boolean);
     await this.concierge.notify(
       customerId,
-      `Friday check-in ✳ ${bits.join(', ')}. Have a great weekend — I've got the feed.`,
+      `Friday check-in ✳ ${bits.join(', ')}.${best ? ` ${best}` : ''} Have a great weekend — I've got the feed.`,
     );
   }
 
