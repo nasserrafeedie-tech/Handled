@@ -26,6 +26,12 @@ export class PauseCustomerHandler implements TaskHandler<'PAUSE_CUSTOMER'> {
   ) {}
 
   async handle(task: Extract<Task, { type: 'PAUSE_CUSTOMER' }>): Promise<Result> {
+    // Texts held for quiet hours were written for the account as it was. A
+    // Friday recap saying "I've got the feed" must not land after the plan
+    // ended, nor a "posts paused" notice after they're back on. The notice
+    // about this change is sent after this runs, so it is kept.
+    await this.prisma.queuedText.deleteMany({ where: { customerId: task.customer_id, sentAt: null } });
+
     if (task.payload.resume) {
       // Back to where they were: live if the interview was finished, else
       // mid-interview. Flipping a half-onboarded customer straight to 'active'

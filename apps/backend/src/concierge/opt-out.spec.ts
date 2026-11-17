@@ -22,6 +22,7 @@ function handler(customer: Row, profile: Row | null) {
     brandProfile: { findUnique: async () => profile },
     customer: { update: async ({ data }: any) => Object.assign(customer, data) },
     post: { updateMany: async () => ({ count: 0 }) },
+    queuedText: { deleteMany: async () => ({ count: 0 }) },
     $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
   };
   const queue = { cancelAllForCustomer: async () => 0 };
@@ -148,5 +149,65 @@ describe('The texted update-your-card link', () => {
     assert.equal(out?.url, 'https://billing.stripe.com/p/session/x');
     assert.equal(new URLSearchParams(body).get('customer'), 'cus_ABC');
     assert.equal(await svc.createPortalSession('nope'), null);
+  });
+});
+
+/**
+ * QA round 2 (Nov 17): the plan ended at night, the "your subscription has
+ * ended" text was held for the morning, and the morning flush dropped it
+ * because the account was paused. The Friday recap queued earlier would
+ * otherwise have gone out after the plan ended.
+ */
+describe('texts held for quiet hours around a pause', () => {
+  it('a pause or resume clears what was queued before it', async () => {
+    const deleted: Row[] = [];
+    const prisma = {
+      brandProfile: { findUnique: async () => ({ onboardingComplete: true }) },
+      customer: { update: async () => ({}) },
+      post: { updateMany: async () => ({ count: 0 }) },
+      queuedText: { deleteMany: async (a: Row) => void deleted.push(a.where) },
+      $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
+    };
+    const h = new PauseCustomerHandler(prisma as any, { cancelAllForCustomer: async () => 0 } as any);
+    await h.handle(task({ reason: 'subscription_ended', resume: false }));
+    await h.handle(task({ reason: 'billing', resume: true }));
+    assert.deepEqual(deleted, [{ customerId: 'c1', sentAt: null }, { customerId: 'c1', sentAt: null }]);
+  });
+
+  function flushWorld(customer: Row) {
+    const sent: string[] = [];
+    const dropped: string[] = [];
+    const prisma = {
+      queuedText: {
+        findMany: async () => [{ id: 'q1', customerId: 'c1', body: 'Your subscription has ended…', customer: { ...customer, conversation: { id: 'conv1' } } }],
+        delete: async ({ where }: Row) => void dropped.push(where.id),
+        update: async () => ({}),
+      },
+    };
+    const svc = new ConciergeService(prisma as any, ...(Array(11).fill({}) as []));
+    (svc as any).reply = async (_to: string, _c: string, body: string) => void sent.push(body);
+    return { svc, sent, dropped };
+  }
+  const base = { id: 'c1', phone: '+13105550000', preferredChannel: 'sms', timezone: 'UTC' };
+  // A zone where it is midday right now, so the texting window is open.
+  const middayZone = () => {
+    let off = 12 - new Date().getUTCHours();
+    if (off > 12) off -= 24;
+    if (off < -11) off += 24;
+    return off === 0 ? 'UTC' : `Etc/GMT${off > 0 ? '-' : '+'}${Math.abs(off)}`;
+  };
+  it('still sends to an ended plan or a billing pause', async () => {
+    for (const pausedReason of ['subscription_ended', 'billing']) {
+      const w = flushWorld({ ...base, timezone: middayZone(), status: 'paused', pausedReason });
+      await w.svc.flushQueuedTexts();
+      assert.equal(w.sent.length, 1, pausedReason);
+      assert.equal(w.dropped.length, 0, pausedReason);
+    }
+  });
+
+  it('drops it for an owner who texted STOP', async () => {
+    const w = flushWorld({ ...base, status: 'paused', pausedReason: 'owner_stop' });
+    await w.svc.flushQueuedTexts();
+    assert.deepEqual([w.sent.length, w.dropped], [0, ['q1']]);
   });
 });

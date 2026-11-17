@@ -1573,7 +1573,15 @@ export class ConciergeService {
     let sent = 0;
     for (const item of due) {
       const customer = item.customer;
-      if (!customer || !['active', 'onboarding'].includes(customer.status)) {
+      // A billing pause or an ended plan still hears from us: that queued text
+      // is how they learn why posting stopped (QA round 2: the "your
+      // subscription has ended" notice, queued overnight, was dropped here).
+      // Only an owner who texted STOP, or a closed account, gets nothing.
+      const reachable =
+        customer &&
+        (['active', 'onboarding'].includes(customer.status) ||
+          (customer.status === 'paused' && (customer.pausedReason ?? 'owner_stop') !== 'owner_stop'));
+      if (!reachable) {
         await this.prisma.queuedText.delete({ where: { id: item.id } });
         this.log.log(
           `quiet-hours queue: dropped text for ${item.customerId} (status ${customer?.status ?? 'gone'})`,
