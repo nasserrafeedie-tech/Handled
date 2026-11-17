@@ -7,7 +7,9 @@ import { AnimatedReelHandler } from './animated-reel.handler';
  * ANIMATED_REEL: dark unless the flag is on, Pro only, never invents the
  * offer, and lands as a draft for the owner's yes like every other post.
  */
-function build(opts: { planTier?: string; offers?: string[]; photos?: boolean; waiting?: number } = {}) {
+function build(
+  opts: { planTier?: string; offers?: string[]; photos?: boolean; waiting?: number; recent?: { id: string; r2Key: string; createdAt: Date }[] } = {},
+) {
   const created: { post?: any; assets: any[]; stored: string[]; renders: any[] } = { assets: [], stored: [], renders: [] };
   const prisma = {
     customer: {
@@ -33,7 +35,7 @@ function build(opts: { planTier?: string; offers?: string[]; photos?: boolean; w
     },
     mediaAsset: {
       findFirst: async (a: any) => (opts.photos ? { id: `m-${a.where.subject}`, r2Key: `k/${a.where.subject}.jpg` } : null),
-      findMany: async () => [],
+      findMany: async (a: any) => (a.where.source === 'owner_upload' ? (opts.recent ?? []) : []),
       updateMany: async () => ({}),
       create: async (a: any) => created.assets.push(a.data),
     },
@@ -143,5 +145,28 @@ describe('ANIMATED_REEL', () => {
     assert.equal(r.status, 'pending_approval');
     assert.ok(created.renders[0].o.photos.before && created.renders[0].o.photos.after);
     assert.equal(created.post.archetype, 'behind_the_scenes');
+  });
+
+  it('with no tagged pair, uses the two photos the owner just sent together, older one first', async () => {
+    const now = Date.now();
+    const recent = [
+      { id: 'after-id', r2Key: 'k/after.jpg', createdAt: new Date(now - 60_000) },
+      { id: 'before-id', r2Key: 'k/before.jpg', createdAt: new Date(now - 120_000) },
+    ];
+    const { handler, created } = build({ recent });
+    const r = await handler.handle(task({ kind: 'before_after' }));
+    assert.equal(r.status, 'pending_approval');
+    assert.equal(created.renders.length, 1);
+  });
+
+  it('two photos sent hours apart are not treated as a pair', async () => {
+    const now = Date.now();
+    const recent = [
+      { id: 'a', r2Key: 'k/a.jpg', createdAt: new Date(now - 60_000) },
+      { id: 'b', r2Key: 'k/b.jpg', createdAt: new Date(now - 3 * 3_600_000) },
+    ];
+    const r = await build({ recent }).handler.handle(task({ kind: 'before_after' }));
+    assert.equal(r.error?.code, 'not_enough_photos');
+    assert.match(r.summary_for_owner, /before and after reel/);
   });
 });

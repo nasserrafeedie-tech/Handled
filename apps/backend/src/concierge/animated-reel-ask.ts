@@ -4,7 +4,7 @@
  * "make a reel" is still a cut of the owner's own clips, and "show me the
  * reel" is a look, not a commission.
  */
-export type AnimatedAsk = { kind: 'promo' | 'before_after'; offerText?: string };
+export type AnimatedAsk = { kind: 'promo' | 'before_after'; offerText?: string; mediaAssetIds?: string[] };
 
 const LOOK = /\b(see|show|view|send|resend|look at|where('?s| is)|watch)\b[\s\S]{0,30}\b(reel|video)\b/i;
 const MAKE = /\b(make|create|design|build|whip up|put together|do|need|want|can (?:you|i get)|could you)\b/i;

@@ -84,7 +84,7 @@ export class AnimatedReelHandler implements TaskHandler<'ANIMATED_REEL'> {
       if (!picked) {
         return fail(
           task.task_id,
-          'Send me a before photo and an after photo and I\'ll turn them into a reveal reel.',
+          'Text me the before photo and the after photo together, with "before and after reel", and I\'ll make the reveal.',
           'not_enough_photos',
           'need two photos',
         );
@@ -232,6 +232,19 @@ export class AnimatedReelHandler implements TaskHandler<'ANIMATED_REEL'> {
           select: { id: true, r2Key: true },
         });
       [before, after] = await Promise.all([newest('before'), newest('after')]);
+      if (!before || !after) {
+        // No tagged pair: the last two photos the owner sent, if they came
+        // together (within half an hour) today. The first one is the before.
+        const recent = await this.prisma.mediaAsset.findMany({
+          where: { customerId, kind: 'image', source: 'owner_upload', createdAt: { gte: new Date(Date.now() - 86_400_000) } },
+          orderBy: { createdAt: 'desc' },
+          take: 2,
+          select: { id: true, r2Key: true, createdAt: true },
+        });
+        if (recent.length === 2 && recent[0].createdAt.getTime() - recent[1].createdAt.getTime() <= 30 * 60_000) {
+          [after, before] = recent;
+        }
+      }
     }
     if (!before || !after || before.id === after.id) return null;
     const [b, a] = await Promise.all([this.storage.get(before.r2Key), this.storage.get(after.r2Key)]);

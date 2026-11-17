@@ -51,6 +51,11 @@ const CORE: Shot[] = [
     hint: 'The messy start. Paired with an after, this is the highest-performing post there is.',
   },
   {
+    key: 'after',
+    title: 'The after, from the same spot',
+    hint: 'Same angle as the before, once the work is done. The pair makes a reveal.',
+  },
+  {
     key: 'tool',
     title: 'The tool you touch most',
     hint: 'Close up. Worn is good — worn reads as experience.',
@@ -142,7 +147,7 @@ export function subjectPreferences(archetype: string): string[] {
     case 'educational_tip':
       return ['tool', 'hands_at_work', 'detail', 'process', 'todays_best'];
     case 'transformation':
-      return ['before', 'todays_best'];
+      return ['before', 'after', 'todays_best'];
     case 'seasonal':
     case 'community':
       return ['owner_face', 'community', 'workspace', 'detail'];

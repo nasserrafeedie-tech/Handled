@@ -484,6 +484,12 @@ export class ConciergeService {
     //    else the next upcoming post that has no photo yet). Without this linkage every photo landed as an
     //    orphan record and the "I'll need 1 quick photo" ask was never closed.
     if (msg.mediaUrls.length > 0) {
+      // Two photos sent with "before and after reel": those two are the reel,
+      // in the order sent, rather than photos for the waiting draft.
+      const reveal = animatedReelsOn() && msg.mediaUrls.length === 2 ? animatedReelAsk(msg.body) : null;
+      if (reveal?.kind === 'before_after' && tierHas(customer.planTier, 'reel')) {
+        return this.takeRevealPhotos(customer.id, customer.planTier, this.addressOf(customer), conversation.id, msg);
+      }
       return this.takePhotos(customer, conversation.id, msg);
     }
 
@@ -1421,7 +1427,11 @@ export class ConciergeService {
       await this.reelQueue.enqueue({
         customerId,
         platform: 'instagram',
-        animated: { kind: ask.kind, ...(ask.offerText ? { offerText: ask.offerText } : {}) },
+        animated: {
+          kind: ask.kind,
+          ...(ask.offerText ? { offerText: ask.offerText } : {}),
+          ...(ask.mediaAssetIds?.length === 2 ? { mediaAssetIds: ask.mediaAssetIds } : {}),
+        },
       });
       return this.reply(phone, conversationId, `On it 🎬 Your ${what} will be here in a couple of minutes.`);
     }
@@ -1430,6 +1440,7 @@ export class ConciergeService {
         kind: ask.kind,
         platform: 'instagram',
         ...(ask.offerText ? { offer_text: ask.offerText } : {}),
+        ...(ask.mediaAssetIds?.length === 2 ? { media_asset_ids: ask.mediaAssetIds } : {}),
       }),
     );
     return this.reply(phone, conversationId, result.summary_for_owner);
@@ -1886,6 +1897,31 @@ export class ConciergeService {
    *
    * Returns false when the queue is empty.
    */
+  /** The two photos of a before-and-after ask: banked, then made into the reel. */
+  private async takeRevealPhotos(
+    customerId: string,
+    planTier: string,
+    phone: string,
+    conversationId: string,
+    msg: InboundSms,
+  ): Promise<void> {
+    const ids: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const result = await this.bus.emit(
+        this.task(customerId, 'INGEST_MEDIA', {
+          source_url: msg.mediaUrls[i],
+          content_type: msg.mediaContentTypes[i] ?? 'image/jpeg',
+        }),
+      );
+      const id = (result.data as { media_asset_id?: string | null } | null)?.media_asset_id;
+      if (id) ids.push(id);
+    }
+    if (ids.length < 2) {
+      return this.reply(phone, conversationId, "One of those photos didn't come through. Mind sending both again?");
+    }
+    return this.requestAnimatedReel(customerId, planTier, phone, conversationId, { kind: 'before_after', mediaAssetIds: ids });
+  }
+
   /** Photos texted in: each goes on the post it belongs to (photoTarget). */
   async takePhotos(
     customer: { id: string; phone: string | null; email: string | null; preferredChannel: string },
