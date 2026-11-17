@@ -33,10 +33,25 @@ export class FetchMetricsHandler implements TaskHandler<'FETCH_METRICS'> {
       },
     });
 
+    // Metrics come from each account's feed, so we need the Post for Me
+    // account id for the post's platform.
+    const accounts = await this.prisma.connectedAccount.findMany({
+      where: { customerId: task.customer_id, revoked: false },
+      select: { platform: true, postForMeRef: true },
+    });
+    const accountFor = new Map(accounts.map((a) => [a.platform as string, a.postForMeRef]));
+
     const collected: PostMetrics[] = [];
     for (const post of posts) {
+      const account = accountFor.get(post.platform as string);
+      if (!account) {
+        this.log.warn(`metrics skipped for ${post.id}: no linked ${post.platform} account`);
+        continue;
+      }
       try {
-        const m = await this.postForMe.fetchMetrics(post.externalPostId!);
+        const m = await this.postForMe.fetchMetrics(account, post.externalPostId!);
+        // Not in the feed yet: keep whatever we had rather than writing zeros.
+        if (!m) continue;
         // Platform metrics are cumulative totals, so we keep the LATEST snapshot
         // per post, not one new row every daily run. Appending accumulated N
         // rows per post and any downstream sum would multiply the numbers. Clear

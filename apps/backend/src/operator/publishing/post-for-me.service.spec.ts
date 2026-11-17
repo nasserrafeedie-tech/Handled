@@ -90,7 +90,27 @@ describe('PostForMeService', () => {
     assert.deepEqual(calls[0].body, {
       platform: 'instagram',
       external_id: 'c1',
+      permissions: ['posts', 'feeds'],
       platform_data: { instagram: { connection_type: 'facebook' } },
     });
+  });
+
+  it('metrics come from the account feed with expand=metrics, filtered to the one post', async () => {
+    const calls = stub(() => ({
+      data: [{ social_post_id: 'sp_7', metrics: { views: 1200, likes: 40, comments: 3, shares: 2, saved: 9, reach: 900 } }],
+      meta: { cursor: '', limit: 5, next: null },
+    }));
+    const m = await new PostForMeService().fetchMetrics('spc_1', 'sp_7');
+    assert.equal(calls[0].method, 'GET');
+    const u = new URL(calls[0].url);
+    assert.equal(u.pathname, '/v1/social-account-feeds/spc_1');
+    assert.equal(u.searchParams.get('expand'), 'metrics');
+    assert.equal(u.searchParams.get('social_post_id'), 'sp_7');
+    assert.deepEqual(m, { impressions: 1200, likes: 40, comments: 3, shares: 2, saves: 9 });
+  });
+
+  it('a post that is not in the feed yet is null, not a row of zeros', async () => {
+    stub(() => ({ data: [], meta: { cursor: '', limit: 5, next: null } }));
+    assert.equal(await new PostForMeService().fetchMetrics('spc_1', 'sp_new'), null);
   });
 });

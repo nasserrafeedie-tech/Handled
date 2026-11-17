@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Platform } from '@smm/contracts';
+import { feedMetrics } from './feed-metrics';
 
 export interface PublishRequest {
   platform: Platform;
@@ -112,6 +113,9 @@ export class PostForMeService {
       {
         platform: req.platform,
         external_id: req.externalId,
+        // Without "feeds" the account can post but Post for Me returns no
+        // feed and no metrics for it, so the weekly recap would have nothing.
+        permissions: ['posts', 'feeds'],
         // Omitted entirely when unset — sending it as null still trips the
         // Quickstart check.
         ...(req.redirectUrl ? { redirect_url_override: req.redirectUrl } : {}),
@@ -236,23 +240,26 @@ export class PostForMeService {
     );
   }
 
-  async fetchMetrics(externalPostId: string): Promise<PlatformMetrics> {
+  /**
+   * Lifetime totals for one published post, or null when Post for Me has no
+   * feed item for it yet (Instagram can take a while to process a post).
+   *
+   * Metrics live on the account's feed, not on the post:
+   * `GET /v1/social-account-feeds/{social_account_id}?expand=metrics&social_post_id=sp_…`.
+   * The account must have been linked with the "feeds" permission. This
+   * replaces a guessed `/v1/social-posts/{id}/insights` path that does not
+   * exist in Post for Me's API.
+   */
+  async fetchMetrics(socialAccountId: string, socialPostId: string): Promise<PlatformMetrics | null> {
     this.assertConfigured();
-    const data = await this.call<Partial<PlatformMetrics>>(
+    const q = new URLSearchParams({ expand: 'metrics', social_post_id: socialPostId, limit: '5' });
+    const data = await this.call<{ data?: Array<{ social_post_id?: string | null; metrics?: unknown }> }>(
       'GET',
-      // Same resource name as the create call. UNVERIFIED: the exact insights
-      // path has not been confirmed against their API — /v1/posts was wrong, so
-      // this is the consistent guess rather than a checked fact. Metrics
-      // failing is loud and non-urgent, unlike publishing.
-      `/v1/social-posts/${encodeURIComponent(externalPostId)}/insights`,
+      `/v1/social-account-feeds/${encodeURIComponent(socialAccountId)}?${q.toString()}`,
     );
-    return {
-      impressions: data.impressions ?? 0,
-      likes: data.likes ?? 0,
-      comments: data.comments ?? 0,
-      shares: data.shares ?? 0,
-      saves: data.saves ?? 0,
-    };
+    const item = (data.data ?? []).find((d) => !d.social_post_id || d.social_post_id === socialPostId);
+    if (!item || !item.metrics) return null;
+    return feedMetrics(item.metrics);
   }
 
   /** One place that talks to Post for Me. Flips on when the key is set. */
