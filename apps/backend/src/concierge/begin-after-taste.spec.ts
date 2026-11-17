@@ -75,7 +75,7 @@ describe('starting the interview after a free draft', () => {
   });
 
   it('asks question one as usual with no free draft, or when they only said hi', async () => {
-    for (const taste of [undefined, { asked: 'hey!' }]) {
+    for (const taste of [undefined, { asked: 'hey!' }, { asked: 'ok sign me up for starter' }]) {
       const h = harness({ channel: 'sms', taste });
       await h.svc.beginOnboarding('c1');
       assert.match(h.sent[0], /1 of 7: Tell me about Juniper Florals/);

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { lastMessageShowsDraft, STRONG_APPROVE_RE } from './concierge.service';
+import { draftIsLastAsk, lastMessageShowsDraft, STRONG_APPROVE_RE } from './concierge.service';
 
 /**
  * QA round 1 (Nov 17): the owner answered "ok will do" to the declined-card
@@ -33,5 +33,16 @@ describe('which message a bare "ok" answers', () => {
     for (const s of ['ok', 'ok will do', 'yes', 'sure', 'thanks', 'great']) {
       assert.equal(STRONG_APPROVE_RE.test(s), false, s);
     }
+  });
+
+  it('a tip sent right after the first draft does not swallow the "yes" the draft asked for', () => {
+    const t = new Date('2026-11-17T10:00:00Z').getTime();
+    const draft = { body: 'Draft for Mon 9:00 AM:\n\n“Fresh fades.”\n\nreply “yes” to post as text-only.', createdAt: new Date(t) };
+    const tip = { body: 'One more thing — the biggest upgrade is real photos: https://x.test/photo-walk', createdAt: new Date(t + 2000) };
+    assert.ok(draftIsLastAsk([tip, draft], 'Fresh fades.'));
+    const later = { ...tip, createdAt: new Date(t + 3 * 3600_000) };
+    assert.equal(draftIsLastAsk([later, draft], 'Fresh fades.'), false, 'a notice hours later is the last word');
+    const asks = { body: 'Want me to add your logo?', createdAt: new Date(t + 2000) };
+    assert.equal(draftIsLastAsk([asks, draft], 'Fresh fades.'), false, 'a follow-up that asks something is what "yes" answers');
   });
 });

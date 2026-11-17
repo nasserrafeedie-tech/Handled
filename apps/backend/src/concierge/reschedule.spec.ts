@@ -68,6 +68,12 @@ function makeWorld(opts: {
       findFirst: async () => ({
         body: opts.lastOutbound ?? 'Draft for Thu 9:00 AM:\n\n“A caption.”\n\nReply “yes” to schedule it, or tell me what to change.',
       }),
+      findMany: async () => [
+        {
+          body: opts.lastOutbound ?? 'Draft for Thu 9:00 AM:\n\n“A caption.”\n\nReply “yes” to schedule it, or tell me what to change.',
+          createdAt: new Date(),
+        },
+      ],
     },
     mediaAsset: { findFirst: async () => null },
   };

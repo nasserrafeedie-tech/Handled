@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it, beforeEach } from 'node:test';
 
-import { ConciergeService, isPriceQuestion, type InboundSms } from './concierge.service';
+import { ConciergeService, aboutHandled, isPriceQuestion, type InboundSms } from './concierge.service';
 
 /**
  * The paywall free taste (§ pricing): a new number gets exactly one drafted
@@ -228,6 +228,33 @@ describe('free-taste paywall', () => {
     await world.svc.handleInbound(sms('how much?'));
     assert.match(world.sent[0], /\$95/);
     assert.doesNotMatch(world.sent[0], /free sample/);
+  });
+
+  it('"sign me up" gets the plan link and keeps the free draft unspent', async () => {
+    world.seed({ ...UNPAID });
+    for (const q of ['ok sign me up for starter', 'how do I pay?', "I'm in"]) {
+      world.sent.length = 0;
+      await world.svc.handleInbound(sms(q));
+      assert.equal(world.sent.length, 1, q);
+      assert.match(world.sent[0], /texthandled\.com\/billing/, q);
+      assert.match(world.sent[0], /free sample/, q);
+    }
+    assert.equal(world.llmCalls(), 0);
+    assert.equal(world.updates.length, 0, 'asking to sign up must not spend the free draft');
+  });
+
+  it('"how does this work?" gets what Handled does, not a post about the question', async () => {
+    world.seed({ ...UNPAID });
+    await world.svc.handleInbound(sms('how does this work?'));
+    assert.match(world.sent[0], /plan, write, design and post/);
+    assert.equal(world.llmCalls(), 0);
+    assert.equal(world.updates.length, 0);
+  });
+
+  it('a description that starts like an ask is still the description', () => {
+    for (const d of ["I'm in Austin, I run a bakery", 'we help people get started with yoga', "Buy one get one free on Tuesdays at Joe's Pizza", 'start', 'join']) {
+      assert.equal(aboutHandled(d), null, d);
+    }
   });
 
   it('a business description that mentions its own prices is still the description', () => {

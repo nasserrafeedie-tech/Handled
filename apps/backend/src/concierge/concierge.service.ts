@@ -227,6 +227,46 @@ export function isPriceQuestion(body: string): boolean {
   return /\bhow much\b|\b(price|prices|pricing|cost|costs|plans?|rates?|monthly fee)\b|\$\s*\?/i.test(t);
 }
 
+/**
+ * A short text about Handled itself rather than about their business: asking
+ * to sign up ("sign me up for starter", "how do I pay") or what this is ("how
+ * does this work?"). Before this, the free-taste lane took either one as the
+ * business description: the lead's one free draft was spent on "sign me up",
+ * and after paying they were told that text had answered question one.
+ */
+export function aboutHandled(body: string): 'signup' | 'how' | null {
+  const t = body.trim();
+  if (!t || t.split(/\s+/).length > 10) return null;
+  // Anchored at the start (after an "ok"/"yes"/"please"), so a description
+  // like "I'm in Austin, I run a bakery" or "we help people get started with
+  // yoga" is still the description.
+  const lead = /^(?:(?:ok(?:ay)?|yes|yeah|yep|sure|great|cool|awesome|perfect|sounds good|alright|please|pls)[,.!\s]+)*/i;
+  const rest = t.replace(lead, '');
+  if (
+    // A bare "start" or "join" is a carrier keyword, handled as an opt-in.
+    (!/^(start|join)[\s.!?]*$/i.test(rest) &&
+      /^(?:(?:can you|could you|i(?:'?d| would) like to|i want to|i wanna|let me)\s+)?(?:sign (?:me )?up|signup|subscribe|join|get started|start)\b/i.test(rest)) ||
+    /^(?:how|where) (?:do|can) i (?:sign up|subscribe|join|get started|start|pay|buy|purchase)\b/i.test(rest) ||
+    /^(?:i'?m in|i am in|i'?m ready|let'?s do (?:it|this)|i'?ll take (?:it|the \w+)|i want the \w+(?: plan)?)[\s.!]*$/i.test(rest)
+  ) {
+    return 'signup';
+  }
+  if (
+    /^(?:so\s+)?(?:how (?:does|do) (?:this|it|you|handled) work|what (?:is|'?s) (?:this|handled)|what do you (?:guys )?do|who (?:is|'?s) this|what are you)\b/i.test(rest)
+  ) {
+    return 'how';
+  }
+  return null;
+}
+
+const SIGNUP_REPLY =
+  "Love it. Pick a plan at texthandled.com/billing and I'll text you here " +
+  'the moment it goes through to get you set up.';
+const HOW_REPLY =
+  "Handled: I plan, write, design and post your business's social media. " +
+  'Each week I text you the posts, you reply yes or tell me what to change, ' +
+  'and I publish them. Plans start at $95/mo: texthandled.com/billing.';
+
 /** How the free draft text opens; also how the free draft is found again later. */
 const FREE_TASTE_LEAD = "Here's what I'd post for you:";
 
@@ -503,6 +543,11 @@ export class ConciergeService {
         customer.freeDraftUsedAt ? PRICE_REPLY : PRICE_REPLY + PRICE_REPLY_TASTE_LEFT,
       );
     }
+    const about = aboutHandled(msg.body);
+    if (about) {
+      const left = customer.freeDraftUsedAt ? '' : PRICE_REPLY_TASTE_LEFT;
+      return this.reply(addr, conversationId, (about === 'signup' ? SIGNUP_REPLY : HOW_REPLY) + left);
+    }
     if (customer.freeDraftUsedAt) {
       return this.reply(addr, conversationId, PAYWALL_REPLY);
     }
@@ -774,12 +819,23 @@ export class ConciergeService {
    * "ok" only approves what the owner was just shown.
    */
   private async lastOutboundShowsDraft(conversationId: string, caption: string | null): Promise<boolean> {
-    const last = await this.prisma.message.findFirst({
-      where: { conversationId, direction: 'outbound' },
+    const lastIn = await this.prisma.message.findFirst({
+      where: { conversationId, direction: 'inbound' },
       orderBy: { createdAt: 'desc' },
-      select: { body: true },
+      skip: 1, // the text being answered is already stored
+      select: { createdAt: true },
     });
-    return lastMessageShowsDraft(last?.body ?? null, caption);
+    const since = await this.prisma.message.findMany({
+      where: {
+        conversationId,
+        direction: 'outbound',
+        ...(lastIn ? { createdAt: { gt: lastIn.createdAt } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 4,
+      select: { body: true, createdAt: true },
+    });
+    return draftIsLastAsk(since, caption);
   }
 
   /**
@@ -1479,7 +1535,7 @@ export class ConciergeService {
       orderBy: { createdAt: 'desc' },
     });
     const text = asked?.body?.trim();
-    if (!text || this.onboarding.isGreetingOnly(text) || isPriceQuestion(text)) return null;
+    if (!text || this.onboarding.isGreetingOnly(text) || isPriceQuestion(text) || aboutHandled(text)) return null;
     return text;
   }
 
@@ -2679,6 +2735,33 @@ export const STRONG_APPROVE_RE =
  * quotes the caption or asks for the reply that approves a draft. With nothing
  * sent yet there is nothing to answer, so the draft is the only reading.
  */
+/**
+ * Whether our latest texts leave the draft as the thing a plain "yes" answers.
+ * `sent` is what we sent since the owner last wrote, newest first.
+ *
+ * Usually that's just the last text. But the first draft goes out in a burst
+ * with a tip after it (the photo walk), and the draft itself says to reply
+ * "yes"; a "yes" there was turned away as an answer to the tip. So a short
+ * note sent within a minute of the text before it, asking nothing, is looked
+ * past. A notice sent later (a declined card hours on) still is the last word.
+ */
+export function draftIsLastAsk(
+  sent: Array<{ body: string | null; createdAt: Date }>,
+  caption: string | null,
+): boolean {
+  if (sent.length === 0) return true;
+  for (let i = 0; i < sent.length; i++) {
+    if (lastMessageShowsDraft(sent[i].body, caption)) return true;
+    const older = sent[i + 1];
+    const tagAlong =
+      older &&
+      sent[i].createdAt.getTime() - older.createdAt.getTime() <= 60_000 &&
+      !(sent[i].body ?? '').includes('?');
+    if (!tagAlong) return false;
+  }
+  return false;
+}
+
 export function lastMessageShowsDraft(body: string | null, caption: string | null): boolean {
   if (!body) return true;
   const snippet = caption?.trim().slice(0, 20);
