@@ -159,6 +159,31 @@ const FREE_TASTE_CAPACITY_REPLY =
   "Handled: I'm at capacity for free drafts today — text me again tomorrow, " +
   'or skip the line and start now: texthandled.com/billing. Reply STOP to opt out.';
 
+/**
+ * The answer to "how much is it?" from someone who hasn't paid. Before this,
+ * the question either got the paywall text (no price in it) or, if their free
+ * draft was still unused, was taken as the business description and spent the
+ * draft on a caption about the word "price". Static, so it costs no LLM call.
+ * The numbers are the billing page's.
+ */
+const PRICE_REPLY =
+  'Handled plans: Starter $95/mo (3 posts a week), Growth $349/mo (5 a week, ' +
+  'plus designed carousels), Pro $699/mo (a post every day, plus reels from ' +
+  'your clips). Pick one at texthandled.com/billing.';
+const PRICE_REPLY_TASTE_LEFT =
+  " Want a free sample first? Tell me what your business is and I'll write you a post.";
+
+/**
+ * A short text asking what Handled costs. Kept to short messages so a business
+ * description that happens to mention its own prices ("our cakes cost less
+ * than the supermarket's") is still taken as the description.
+ */
+export function isPriceQuestion(body: string): boolean {
+  const t = body.trim();
+  if (!t || t.split(/\s+/).length > 8) return false;
+  return /\bhow much\b|\b(price|prices|pricing|cost|costs|plans?|rates?|monthly fee)\b|\$\s*\?/i.test(t);
+}
+
 /** How the pitch under the free draft reads. The draft itself is above it. */
 const FREE_TASTE_PITCH =
   "That's a taste 🙂 Want me to add a branded image, post it for you, and " +
@@ -393,6 +418,13 @@ export class ConciergeService {
   ): Promise<void> {
     const addr = this.addressOf(customer);
 
+    if (isPriceQuestion(msg.body)) {
+      return this.reply(
+        addr,
+        conversationId,
+        customer.freeDraftUsedAt ? PRICE_REPLY : PRICE_REPLY + PRICE_REPLY_TASTE_LEFT,
+      );
+    }
     if (customer.freeDraftUsedAt) {
       return this.reply(addr, conversationId, PAYWALL_REPLY);
     }

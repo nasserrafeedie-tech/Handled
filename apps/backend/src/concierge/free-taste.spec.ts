@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it, beforeEach } from 'node:test';
 
-import { ConciergeService, type InboundSms } from './concierge.service';
+import { ConciergeService, isPriceQuestion, type InboundSms } from './concierge.service';
 
 /**
  * The paywall free taste (§ pricing): a new number gets exactly one drafted
@@ -208,6 +208,32 @@ describe('free-taste paywall', () => {
     }
     assert.equal(world.llmCalls(), 0, 'keywords must never reach the LLM');
     assert.equal(world.updates.length, 0, 'keywords must not spend the taste');
+  });
+
+  it('"how much is it?" gets the prices, not the paywall text or a wasted draft (F3)', async () => {
+    world.seed({ ...UNPAID });
+    for (const q of ['how much is it?', 'Pricing?', 'what does it cost', 'How much per month']) {
+      world.sent.length = 0;
+      await world.svc.handleInbound(sms(q));
+      assert.equal(world.sent.length, 1, q);
+      assert.match(world.sent[0], /\$95.*\$349.*\$699/, q);
+      assert.match(world.sent[0], /free sample/, `${q}: the draft is still theirs, so say so`);
+    }
+    assert.equal(world.llmCalls(), 0, 'a price question must not reach the LLM');
+    assert.equal(world.updates.length, 0, 'a price question must not spend the free draft');
+  });
+
+  it('after the free draft, the price question still gets prices, without offering another draft', async () => {
+    world.seed({ ...UNPAID, freeDraftUsedAt: new Date() });
+    await world.svc.handleInbound(sms('how much?'));
+    assert.match(world.sent[0], /\$95/);
+    assert.doesNotMatch(world.sent[0], /free sample/);
+  });
+
+  it('a business description that mentions its own prices is still the description', () => {
+    assert.equal(isPriceQuestion('I run a bakery, our cakes cost less than the supermarket and everything is baked daily'), false);
+    assert.equal(isPriceQuestion('I run a bakery'), false);
+    assert.equal(isPriceQuestion('whats the price'), true);
   });
 
   it('an empty body (photo only) re-asks instead of drafting from nothing', async () => {
