@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { parseLlmJson, LlmJsonError } from '@smm/contracts';
+import { fakeSample } from './fake-sample';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export type LlmTier = 'bulk' | 'voice' | 'design';
@@ -74,6 +75,8 @@ export class LlmService {
       return parseLlmJson(schema, await this.rawComplete(req));
     } catch (err) {
       if (!(err instanceof LlmJsonError)) throw err;
+      // Offline, a canned reply that doesn't fit gets a plain valid one.
+      if (this.offline) return parseLlmJson(schema, JSON.stringify(fakeSample(schema as z.ZodTypeAny)));
       this.log.warn(`LLM JSON malformed on ${req.tier}; retrying once`);
       // Tell the model exactly what was wrong with its first try — a bare
       // "return valid JSON" nudge makes it repeat the same shape mistake.
@@ -93,6 +96,11 @@ export class LlmService {
    * canned, schema-valid JSON instead of calling the API. This lets the whole
    * app be tested end-to-end for free — swap in the key to get real content.
    */
+  /** No Anthropic key, or LLM_FAKE=1: answers come from fakeComplete. */
+  get offline(): boolean {
+    return process.env.LLM_FAKE === '1' || !process.env.ANTHROPIC_API_KEY;
+  }
+
   private async rawComplete(req: LlmJsonRequest): Promise<string> {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     const fake = process.env.LLM_FAKE === '1' || !apiKey;

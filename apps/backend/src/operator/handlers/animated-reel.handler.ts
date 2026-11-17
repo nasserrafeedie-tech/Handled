@@ -120,7 +120,8 @@ export class AnimatedReelHandler implements TaskHandler<'ANIMATED_REEL'> {
 
     let built: Awaited<ReturnType<typeof buildSpec>>;
     try {
-      built = await buildSpec(this.llm, ctx, look, brandContext, task.customer_id);
+      // Offline the model step would only echo placeholder words; the offline writer reads the owner.
+      built = await buildSpec(this.llm.offline ? null : this.llm, ctx, look, brandContext, task.customer_id);
     } catch (err) {
       return fail(task.task_id, "I couldn't make the words fit that reel. Try a shorter offer?", 'copy_failed', String(err));
     }
