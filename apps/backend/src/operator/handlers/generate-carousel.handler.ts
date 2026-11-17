@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { PublishGateService } from '../guardrails/publish-gate.service';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { type Task, type Result } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -6,10 +7,12 @@ import { StorageService } from '../../common/storage.service';
 import { LlmService } from '../llm/llm.service';
 import { buildBrandContext } from '../llm/brand-context';
 import { GraphicsService } from '../graphics/graphics.service';
-import { CANVAS, CANVAS_H, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
+import { CANVAS, CANVAS_H, photoLayoutFor, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
+import { readPhoto, reviewPhotoLayout } from '../graphics/photo-focus';
 import { resolveBrandColors } from '../graphics/brand-palette';
 import { logoDataUri } from '../graphics/logo-colors';
 import { ImageGenService } from '../graphics/image-gen.service';
+import { DesignerService } from '../graphics/designer.service';
 import { ImageSafetyService } from '../graphics/image-safety.service';
 import {
   buildImagePrompt,
@@ -43,6 +46,9 @@ import { TaskHandler, ok, fail } from './handler.interface';
  * gate that stays is §7 — a photo the owner actually sent wins over anything we
  * assemble.
  */
+/** Stateless; one instance reads every deck's slide text. */
+const SLIDE_GATE = new PublishGateService();
+
 @Injectable()
 export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'> {
   readonly type = 'GENERATE_CAROUSEL' as const;
@@ -56,7 +62,51 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     private readonly images: ImageGenService,
     private readonly safety: ImageSafetyService,
     private readonly moderation: ModerationService,
+    @Optional() private readonly designer?: DesignerService,
   ) {}
+
+  /**
+   * A designed cover, or null to keep the template's. Whatever the design
+   * draws beyond the slide copy runs through the same guardrails as the
+   * slides did, and a cover that would raise the deck's risk is dropped.
+   */
+  private async designCover(
+    customerId: string,
+    post: { id: string; archetype: string | null; riskLevel: string | null },
+    slidesCopy: Array<{ headline: string; body?: string; cta_label?: string }>,
+    specs: SlideSpec[],
+    theme: BrandTheme,
+    profile: { businessType?: string | null; blackoutTopics?: string[] } | null,
+    customer: { businessName?: string | null } | null,
+  ): Promise<Buffer | null> {
+    if (!this.designer?.live() || !slidesCopy.length) return null;
+    const first = slidesCopy[0];
+    const designed = await this.designer.design({
+      customerId,
+      role: 'carousel_cover',
+      copy: { headline: first.headline, body: first.body, cta: first.cta_label, brandName: customer?.businessName ?? undefined },
+      theme,
+      photo: specs[0].photo,
+      businessType: profile?.businessType ?? undefined,
+      archetype: post.archetype ?? undefined,
+      slides: slidesCopy.length,
+    });
+    if (!designed) return null;
+    const faked = detectFabrication(designed.drawnText);
+    const verdict = await this.moderation.screen({
+      caption: designed.drawnText,
+      hashtags: [],
+      blackoutTopics: profile?.blackoutTopics ?? [],
+    });
+    const risk = SLIDE_GATE.classifyRisk(designed.drawnText);
+    const before = SLIDE_GATE.classifyRisk([first.headline, first.body, first.cta_label].filter(Boolean).join(' '));
+    if (faked.length || !verdict.passed || (risk === 'high' && before !== 'high')) {
+      this.log.warn(`designed cover for ${post.id} flagged by the copy checks; keeping the template cover`);
+      return null;
+    }
+    this.log.log(`designed cover for ${post.id}: ${designed.concept}`);
+    return designed.png;
+  }
 
   /**
    * A generated photo for one slide — the same guarded pipeline the standalone
@@ -392,7 +442,7 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
           if (!key) return;
           try {
             const photo = await this.graphics.fetchPhoto(this.storage.publicUrl(key));
-            specs[i] = { ...specs[i], photo, photoLayout: i === 0 ? 'full' : 'band' };
+            specs[i] = { ...specs[i], photo, photoLayout: photoLayoutFor(specs[i].seed ?? 0, i) };
           } catch (e) {
             this.log.warn(`walk photo ${key} fetch failed: ${String(e)}`);
           }
@@ -425,11 +475,26 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
         missing.forEach((i, k) => {
           const img = generated[k];
           if (!img) return;
-          specs[i] = { ...specs[i], photo: img, photoLayout: i === 0 ? 'full' : 'band' };
+          specs[i] = { ...specs[i], photo: img, photoLayout: photoLayoutFor(specs[i].seed ?? 0, i) };
           usedAiImage = true;
         });
       }
     }
+
+    // Review each photo slide before it is drawn: find where the photo's
+    // subject is, crop toward it, and keep a card or caption off it.
+    await Promise.all(
+      specs.map(async (spec, i) => {
+        if (!spec.photo) return;
+        const read = await readPhoto(spec.photo);
+        if (!read) return;
+        specs[i] = {
+          ...spec,
+          photoFocusY: read.focusY,
+          photoLayout: reviewPhotoLayout(spec.photoLayout ?? 'full', read),
+        };
+      }),
+    );
 
     let pngs: Buffer[];
     try {
@@ -439,6 +504,12 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
         "I couldn't build that carousel — I'll keep it as a plain post.",
         'render_failed', String(e), true);
     }
+
+    // The cover is what shows in the feed, so it gets a design of its own when
+    // the designer is on. The template cover stays as the fallback, and the
+    // rest of the deck keeps the template set in the same colours and fonts.
+    const cover = await this.designCover(task.customer_id, post, slidesCopy, specs, theme, profile, customer);
+    if (cover) pngs[0] = cover;
 
     const batch = randomUUID();
     const refs: string[] = [];
@@ -466,10 +537,29 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     // like any AI image: it is disclosed at publish (aiGeneratedMedia) and forced
     // back to the owner's eyes regardless of trust, exactly as the standalone
     // image handler does.
+    // The slides are written separately from the caption, so they can carry a
+    // price, an offer or a claim the caption never made ("Kids cuts $18").
+    // What the owner's followers will read is the slide, so the trust gate
+    // reads it too: a high-risk deck goes back to the owner at any trust level.
+    const slideRisk = SLIDE_GATE.classifyRisk(
+      slidesCopy.map((s) => [s.headline, s.body, s.cta_label].filter(Boolean).join(' ')).join(' '),
+    );
+    const escalate = slideRisk === 'high' && post.riskLevel !== 'high';
     await this.prisma.post.update({
       where: { id: post.id },
       data: {
         mediaRefs: refs,
+        ...(escalate
+          ? {
+              riskLevel: 'high' as const,
+              approvalState: 'awaiting_owner' as const,
+              // An autopilot draft may already be cleared to go; put it back in
+              // the owner's queue so it is shown to them, not just held unseen.
+              ...(post.status === 'approved' || post.status === 'scheduled'
+                ? { status: 'pending_approval' as const }
+                : {}),
+            }
+          : {}),
         // A generated hero is always DISCLOSED (aiGeneratedMedia). It is also
         // forced back to the owner's REVIEW — except on full_auto, where the
         // owner has made two explicit choices: opt into generated imagery, and

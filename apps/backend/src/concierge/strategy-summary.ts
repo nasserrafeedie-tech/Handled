@@ -69,12 +69,26 @@ export function strategySummary(v: StrategyView): string {
 
   if (v.upcoming.length) {
     lines.push('', 'Coming up:');
-    for (const p of v.upcoming.slice(0, 3)) {
+    // Time order, so the very next post is always the first line. A draft
+    // waiting on their OK says so; putting those first used to push the next
+    // scheduled post off the list when three or more were waiting.
+    const SHOW = 4;
+    const shown = v.upcoming.slice(0, SHOW);
+    for (const p of shown) {
       const when = p.scheduledTime
         ? formatInZone(p.scheduledTime, v.timezone)
         : 'soon';
       const preview = (p.caption ?? '').replace(/\s+/g, ' ').slice(0, 60);
-      lines.push(`· ${when} — "${preview}${preview.length >= 60 ? '…' : ''}"`);
+      const ask = p.status === 'pending_approval' ? ' (waiting on your OK)' : '';
+      lines.push(`· ${when} — "${preview}${preview.length >= 60 ? '…' : ''}"${ask}`);
+    }
+    const rest = v.upcoming.slice(SHOW);
+    if (rest.length) {
+      const waiting = rest.filter((p) => p.status === 'pending_approval').length;
+      lines.push(
+        `· and ${rest.length} more` +
+          (waiting ? ` (${waiting === rest.length && waiting > 1 ? 'all' : waiting} waiting on your OK)` : ''),
+      );
     }
   }
 

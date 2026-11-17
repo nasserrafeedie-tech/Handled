@@ -15,8 +15,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import type { PlanId } from './billing.service';
+import { ReferralCreditService } from './referral-credit.service';
+import { portalLink } from './portal-link';
 import { normalizePhone } from '../common/phone';
-import { socialLimit, isGoogleBusiness } from '../operator/tier-entitlements';
+import { socialLimit, isGoogleBusiness, postsPerWeek } from '../operator/tier-entitlements';
 
 /**
  * Plan order, for telling an upgrade from a downgrade. Only used to decide
@@ -61,6 +63,7 @@ export class StripeWebhookController {
     private readonly prisma: PrismaService,
     private readonly bus: TaskBus,
     private readonly concierge: ConciergeService,
+    private readonly referrals: ReferralCreditService,
   ) {}
 
   @Post()
@@ -94,6 +97,9 @@ export class StripeWebhookController {
           break;
         case 'customer.subscription.deleted':
           await this.onSubscriptionDeleted(event);
+          break;
+        case 'invoice.paid':
+          await this.onInvoicePaid(event);
           break;
         default:
           this.log.debug(`ignoring stripe event ${event.type}`);
@@ -228,11 +234,7 @@ export class StripeWebhookController {
     // Only speak up on an upgrade. A downgrade is a decision they already made
     // and being congratulated on losing features reads as tone-deaf.
     if (RANK[plan] > RANK[from]) {
-      await this.concierge.notify(
-        customer.id,
-        "You're on the new plan — carousels are switched on, and you'll see " +
-          "them in this week's posts. Nothing else changes.",
-      );
+      await this.concierge.notify(customer.id, upgradeText(from, plan, customer.id));
     }
   }
 
@@ -274,9 +276,9 @@ export class StripeWebhookController {
       this.log.warn(`payment failed for ${customer.id}, Stripe will retry`);
       await this.concierge.notify(
         customer.id,
-        "Heads up — your card was declined, so this month's payment didn't go " +
+        "Heads up, your card was declined, so this month's payment didn't go " +
           "through. I'll keep posting as normal and try again in a few days. " +
-          'You can update your card any time and it sorts itself out.',
+          `If you'd like to update your card, it takes a minute: ${portalLink(customer.id)}`,
       );
       return;
     }
@@ -295,8 +297,8 @@ export class StripeWebhookController {
     await this.concierge.notify(
       customer.id,
       "I wasn't able to process your payment, so I've paused your posts for " +
-        'now — nothing will go out. Update your card and text me, and I\'ll ' +
-        'pick straight back up where we left off.',
+        'now and nothing will go out. Update your card here and I\'ll pick ' +
+        `straight back up where we left off: ${portalLink(customer.id)}`,
     );
   }
 
@@ -328,6 +330,23 @@ export class StripeWebhookController {
       return;
     }
 
+    // Someone who signed up with an email on the web already has a row, with
+    // the business name and their free draft on it, but no phone. Checkout
+    // collects a phone, so matching on phone alone would make a second,
+    // empty customer and onboard that one by text. Attach the phone to the
+    // email row instead, and they carry on by email as they chose.
+    const email = obj.customer_details?.email?.trim().toLowerCase();
+    const byPhone = await this.prisma.customer.findUnique({ where: { phone } });
+    if (!byPhone && email) {
+      const byEmail = await this.prisma.customer.findUnique({ where: { email } });
+      if (byEmail && !byEmail.phone) {
+        await this.prisma.customer.update({
+          where: { id: byEmail.id },
+          data: { phone, planTier: plan, stripeCustomerId: obj.customer ?? undefined },
+        });
+      }
+    }
+
     const customer = await this.prisma.customer.upsert({
       where: { phone },
       create: {
@@ -344,9 +363,12 @@ export class StripeWebhookController {
     });
     this.log.log(`checkout complete: ${customer.id} on ${plan}`);
 
-    // Referral credit: thank the referrer, remember who sent them. The actual
-    // billing credit is applied manually in Stripe for now — the important
-    // part is that neither side's goodwill falls on the floor.
+    // Referral credit: remember who sent them, put a free month on the
+    // referrer's Stripe balance, and thank them. Once per referred customer —
+    // a cancel-and-come-back checkout doesn't pay out (or thank) twice. If
+    // Stripe can't take the credit right now it stays pending for the daily
+    // sweep; it never fails this webhook, because onboarding the customer who
+    // just paid matters more than the credit landing this second.
     const ref = obj.metadata?.ref;
     if (ref) {
       const referrer = await this.prisma.customer.findUnique({
@@ -357,15 +379,79 @@ export class StripeWebhookController {
           where: { id: customer.id },
           data: { referredByCode: ref },
         });
+        const { isNew, creditId } = await this.referrals.record(referrer, customer.id, ref);
+        if (isNew && creditId) {
+          await this.referrals.apply(creditId);
+          await this.concierge.notify(
+            referrer.id,
+            'Your referral just joined 🎉 A free month is coming off your next bill — thank you for spreading the word!',
+          );
+        }
+      }
+    }
+
+    // Coming back after a cancel (or a failed payment, or a STOP) and paying
+    // again: they're paused, and onboarding has nothing to ask a customer who
+    // finished it, so without this they paid and heard nothing while staying
+    // paused forever. Paying is as clear an opt-back-in as there is.
+    if (customer.status === 'paused') {
+      await this.resume(customer.id);
+      const profile = await this.prisma.brandProfile.findUnique({
+        where: { customerId: customer.id },
+        select: { onboardingComplete: true },
+      });
+      if (profile?.onboardingComplete) {
         await this.concierge.notify(
-          referrer.id,
-          'Your referral just joined 🎉 A free month is coming off your next bill — thank you for spreading the word!',
+          customer.id,
+          "Welcome back! You're all set up again, so I'll plan your next posts " +
+            'and send them over for a look.',
+          { promptedByOwner: true },
         );
+        // Planning calls the model; Stripe shouldn't wait on it.
+        void this.concierge.planIfIdle(customer.id).catch((e) => this.log.warn(`plan after rejoin failed: ${String(e)}`));
+        return;
       }
     }
 
     // First text goes out from us — the welcome doubles as onboarding Q1.
     await this.concierge.beginOnboarding(customer.id);
+  }
+
+  /**
+   * A paid invoice lifts a billing pause. Stripe's retries (or the owner
+   * fixing their card through the portal link we texted) end here — before
+   * this, nothing ever un-paused them, so a customer who did exactly what the
+   * text asked stayed paused and kept paying for nothing.
+   *
+   * Every routine monthly renewal lands here too; for anyone not paused for
+   * billing it does nothing.
+   */
+  private async onInvoicePaid(event: StripeEvent): Promise<void> {
+    const stripeCustomerId = event.data.object.customer;
+    if (!stripeCustomerId) return;
+    const customer = await this.prisma.customer.findFirst({ where: { stripeCustomerId } });
+    if (!customer || customer.status !== 'paused' || customer.pausedReason !== 'billing') return;
+    await this.resume(customer.id);
+    await this.concierge.notify(
+      customer.id,
+      "Payment went through, thank you! You're back on, and posting picks up where it left off.",
+    );
+    // Posts the pause took off the schedule come back as drafts; show the
+    // first, or plan new ones when none came back.
+    const shown = await this.concierge.presentNextDraft(customer.id).catch(() => false);
+    if (!shown) void this.concierge.planIfIdle(customer.id, { promptedByOwner: false }).catch((e) => this.log.warn(`plan after payment failed: ${String(e)}`));
+  }
+
+  private async resume(customerId: string): Promise<void> {
+    await this.bus.emit({
+      task_id: randomUUID(),
+      customer_id: customerId,
+      type: 'PAUSE_CUSTOMER',
+      payload: { reason: 'billing', resume: true },
+      requires_approval: false,
+      created_by: 'concierge',
+      created_at: new Date().toISOString(),
+    } as Task);
   }
 
   /** Subscription gone → stop publishing immediately, say goodbye kindly. */
@@ -383,14 +469,20 @@ export class StripeWebhookController {
       task_id: randomUUID(),
       customer_id: customer.id,
       type: 'PAUSE_CUSTOMER',
-      payload: { reason: 'billing', resume: false },
+      // Not 'billing': nothing failed. Every later text would otherwise say
+      // their payment didn't go through and offer a card update that can't
+      // restart an ended plan.
+      payload: { reason: 'subscription_ended', resume: false },
       requires_approval: false,
       created_by: 'concierge',
       created_at: new Date().toISOString(),
     } as Task);
+    const site = (process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com').replace(/\/+$/, '');
     await this.concierge.notify(
       customer.id,
-      "Your subscription has ended, so I've paused all posting — nothing will go out. If you ever want to pick things back up, I'm one text away. Thank you for letting me run your social media 💛",
+      "Your subscription has ended, so I've paused all posting and nothing will go out. " +
+        `If you ever want to pick things back up, choose a plan at ${site}/billing and I'll carry on where we left off. ` +
+        'Thank you for letting me run your social media 💛',
     );
   }
 
@@ -441,4 +533,33 @@ export class StripeWebhookController {
       }
     });
   }
+}
+
+/**
+ * What an upgrade switches on, in the owner's words, named against the plan
+ * they came from. A flat "carousels are switched on" was wrong for anyone
+ * moving Growth → Pro: they already had carousels and paid for reels.
+ */
+/**
+ * The upgrade text names what the new plan adds. Reels need clips through the
+ * upload page, so a Pro upgrade carries that link: "your upload link" alone
+ * sent people looking for a link they had never been given.
+ */
+export function upgradeText(from: string, to: PlanId, customerId?: string): string {
+  const rank = (t: string) => RANK[t as PlanId] ?? 0;
+  const parts: string[] = [];
+  if (rank(from) < RANK.growth && rank(to) >= RANK.growth) parts.push('carousels are switched on');
+  const reels = rank(to) >= RANK.pro && rank(from) < RANK.pro;
+  if (reels) parts.push("I'll cut reels from short clips you send me");
+  const before = postsPerWeek(from);
+  const after = postsPerWeek(to);
+  if (after > before) parts.push(after >= 7 ? "you'll get a post every day" : `you'll get ${after} posts a week instead of ${before}`);
+  const accounts = socialLimit(to) - socialLimit(from);
+  if (accounts > 0) parts.push(`you can link ${accounts === 1 ? 'one more account' : `${accounts} more accounts`}`);
+  const name = to === 'pro' ? 'Pro' : 'Growth';
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] ?? 'nothing else changes';
+  const text = `You're on ${name} now: ${list}. It starts with your next weekly plan.`;
+  if (!reels || !customerId) return text;
+  const site = (process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com').replace(/\/+$/, '');
+  return `${text} Send clips here, 5 to 10 seconds each: ${site}/upload?c=${customerId}`;
 }

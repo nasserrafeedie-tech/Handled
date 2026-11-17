@@ -11,12 +11,13 @@ import { DevCronController } from './dev-cron.controller';
 import { ConciergeModule } from '../concierge/concierge.module';
 import { PlaybookModule } from '../playbook/playbook.module';
 import { ConnectModule } from '../connect/connect.module';
+import { BillingModule } from '../billing/billing.module';
 
 @Global()
 @Module({
   // ConciergeModule for the weekly "your posts are ready" text. No cycle:
   // the Concierge never imports the scheduler.
-  imports: [ScheduleModule.forRoot(), ConciergeModule, PlaybookModule, ConnectModule],
+  imports: [ScheduleModule.forRoot(), ConciergeModule, PlaybookModule, ConnectModule, BillingModule],
   controllers: [DevCronController],
   providers: [
     RedisProvider,

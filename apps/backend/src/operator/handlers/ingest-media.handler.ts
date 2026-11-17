@@ -88,7 +88,7 @@ export class IngestMediaHandler implements TaskHandler<'INGEST_MEDIA'> {
     });
 
     let fulfilledAsk = false;
-    let attachedPost: { platform: string } | null = null;
+    let attachedPost: { platform: string; waiting: boolean } | null = null;
 
     if (shot_list_request_id) {
       await this.prisma.shotListRequest.update({
@@ -108,16 +108,20 @@ export class IngestMediaHandler implements TaskHandler<'INGEST_MEDIA'> {
           where: { id: asset.id },
           data: { postId: post.id },
         });
-        attachedPost = { platform: post.platform };
+        attachedPost = { platform: post.platform, waiting: post.status === 'pending_approval' };
       }
     }
 
     // Tell the owner where their photo actually went — "thanks" alone reads
     // like it fell into a void, and the void is why owners stop sending photos.
+    const where = attachedPost ? `your upcoming ${platformName(attachedPost.platform)} post` : '';
+    // The draft still needs their yes; without saying so, "it's on your post"
+    // reads as done and the post sits waiting.
+    const next = attachedPost?.waiting ? ' Reply “yes” to schedule it with the photo, or tell me what to change.' : '';
     const summary = attachedPost
       ? fulfilledAsk
-        ? `Perfect — that's the shot I was waiting on. It's on your upcoming ${attachedPost.platform} post.`
-        : `Love it — I've added it to your upcoming ${attachedPost.platform} post.`
+        ? `Perfect — that's the shot I was waiting on. It's on ${where}.${next}`
+        : `Love it — I've added it to ${where}.${next}`
       : 'Got it — saved to your photo library. I\'ll work it into an upcoming post.';
 
     return ok(task.task_id, summary, 'done', {
@@ -146,4 +150,18 @@ export class IngestMediaHandler implements TaskHandler<'INGEST_MEDIA'> {
     if (bytes.length > MAX_BYTES) throw new Error(`media too large: ${bytes.length} bytes`);
     return bytes;
   }
+}
+
+const PLATFORM_NAMES: Record<string, string> = {
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  tiktok: 'TikTok',
+  google_business: 'Google',
+  linkedin: 'LinkedIn',
+  x: 'X',
+};
+
+/** How the owner writes the platform, not how the database stores it. */
+export function platformName(p: string): string {
+  return PLATFORM_NAMES[p] ?? p;
 }

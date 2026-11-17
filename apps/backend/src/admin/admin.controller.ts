@@ -22,6 +22,9 @@ import { StorageService } from '../common/storage.service';
 import { ReelQueueService } from '../scheduler/reel-queue.service';
 import { ADMIN_PAGE_HTML } from './admin-page';
 import { assertAdmin } from './admin-auth';
+import { ReferralCreditService } from '../billing/referral-credit.service';
+import { ConciergeService } from '../concierge/concierge.service';
+import { NOT_HOUSE, setUpHouseAccount } from './house-account';
 
 const PublishNowBody = z.object({ postId: z.string().uuid() });
 
@@ -131,7 +134,33 @@ export class AdminController {
     private readonly pfm: PostForMeService,
     private readonly storage: StorageService,
     private readonly reelQueue: ReelQueueService,
+    private readonly referrals?: ReferralCreditService,
+    private readonly concierge?: ConciergeService,
   ) {}
+
+  /**
+   * Set up Handled's own account on the owner's phone (house-account.ts), and
+   * plan its first week. Each draft is texted to that phone for a yes; nothing
+   * publishes until the Instagram is linked through the connect link returned
+   * here.
+   */
+  @HttpPost('house-account')
+  async houseAccount(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
+    assertAdmin(token);
+    const parsed = z.object({ phone: z.string().min(7) }).safeParse(body);
+    if (!parsed.success) return { error: 'bad_request', detail: parsed.error.issues };
+    const out = await setUpHouseAccount(this.prisma, parsed.data.phone);
+    if ('error' in out) return out;
+    const planning = this.concierge
+      ? this.concierge.planIfIdle(out.customerId, { promptedByOwner: false }).catch(() => false)
+      : Promise.resolve(false);
+    void planning;
+    return {
+      ...out,
+      connectLink: `${process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com'}/connect?c=${out.customerId}`,
+      next: 'Open the connect link and log in to the Handled Instagram. The first draft is being written and will be texted to this phone for a yes.',
+    };
+  }
 
   /**
    * The operator's page. Served WITHOUT a token on purpose: this is an empty
@@ -323,10 +352,10 @@ export class AdminController {
   }
 
   /**
-   * Remove one Post for Me account by its spc_… id. For stale rows that block
-   * a fresh connect: Post for Me dedupes on the platform user, so an old
-   * account under a dead external_id swallows every new grant for that same
-   * Instagram. Requires explicit confirm, same as the customer delete.
+   * Disconnect one Post for Me account by its spc_… id. Post for Me has no
+   * delete — this used to call DELETE and could only 404. To un-stick a
+   * connect blocked by an old external_id, use pfm-account/reassign instead.
+   * Requires explicit confirm, same as the customer delete.
    */
   @HttpDelete('pfm-account')
   async deletePfmAccount(
@@ -339,8 +368,38 @@ export class AdminController {
       .object({ id: z.string().startsWith('spc_'), confirm: z.literal(true) })
       .safeParse(body);
     if (!parsed.success) return { error: 'need { id: "spc_…", confirm: true }' };
-    await this.pfm.deleteAccount(parsed.data.id);
-    return { deleted: parsed.data.id };
+    await this.pfm.disconnectAccount(parsed.data.id);
+    return { disconnected: parsed.data.id };
+  }
+
+  /**
+   * Move a Post for Me account to another customer (sets its external_id).
+   * The manual version of what the connect callback now does on its own for
+   * stale links: for when an account is held by a LIVE customer and a human
+   * has decided who it belongs to.
+   */
+  @HttpPost('pfm-account/reassign')
+  async reassignPfmAccount(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    assertAdmin(token);
+    if (!this.pfm.configured) return { error: 'pfm_not_configured' };
+    const parsed = z
+      .object({
+        id: z.string().startsWith('spc_'),
+        customerId: z.string().uuid(),
+        confirm: z.literal(true),
+      })
+      .safeParse(body);
+    if (!parsed.success) return { error: 'need { id: "spc_…", customerId, confirm: true }' };
+    await this.pfm.setExternalId(parsed.data.id, parsed.data.customerId);
+    // The old holder must stop publishing to it.
+    await this.prisma.connectedAccount.updateMany({
+      where: { postForMeRef: parsed.data.id, NOT: { customerId: parsed.data.customerId } },
+      data: { revoked: true },
+    });
+    return { reassigned: parsed.data.id, to: parsed.data.customerId };
   }
 
   /**
@@ -713,11 +772,23 @@ export class AdminController {
     return { published: true, result };
   }
 
+  /**
+   * Retry every pending referral credit now, instead of waiting for the daily
+   * sweep — e.g. right after STRIPE_SECRET_KEY goes live, so credits earned
+   * while Stripe was offline land the same minute.
+   */
+  @HttpPost('referral-credits/retry')
+  async retryReferralCredits(@Headers('x-admin-token') token: string | undefined) {
+    assertAdmin(token);
+    if (!this.referrals) return { error: 'unavailable' };
+    return this.referrals.retryPending();
+  }
+
   @Get('overview')
   async overview(@Headers('x-admin-token') token: string | undefined) {
     assertAdmin(token);
 
-    const [leads, customers, recentPosts, failedPosts, archetypes] = await Promise.all([
+    const [leads, customers, recentPosts, failedPosts, archetypes, referralCredits] = await Promise.all([
       this.prisma.lead.findMany({ orderBy: { createdAt: 'desc' }, take: 100 }),
       this.prisma.customer.findMany({
         orderBy: { createdAt: 'desc' },
@@ -748,6 +819,13 @@ export class AdminController {
           researchedAt: true,
         },
       }),
+      // Free months owed to referrers. Anything not 'applied' is a promise
+      // that still needs keeping — 'failed' means the sweep gave up and a
+      // human should settle it in Stripe.
+      this.prisma.referralCredit.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
     ]);
 
     return {
@@ -755,9 +833,11 @@ export class AdminController {
       mediaMix: await this.metrics.mediaMix(),
       counts: {
         leads: await this.prisma.lead.count(),
-        customers: await this.prisma.customer.count(),
-        activeCustomers: await this.prisma.customer.count({ where: { status: 'active' } }),
-        failedPosts: failedPosts.length,
+        customers: await this.prisma.customer.count({ where: NOT_HOUSE }),
+        activeCustomers: await this.prisma.customer.count({ where: { status: 'active', ...NOT_HOUSE } }),
+        // A real count: failedPosts below is the 25 most recent, so its
+        // length stopped at 25 however many had failed.
+        failedPosts: await this.prisma.post.count({ where: { status: 'failed' } }),
       },
       leads,
       customers: customers.map((c) => ({
@@ -771,6 +851,18 @@ export class AdminController {
         created: c.createdAt,
       })),
       recentPosts, failedPosts, archetypes,
+      referralCredits: referralCredits.map((r) => ({
+        id: r.id,
+        referrerId: r.referrerId,
+        referredCustomerId: r.referredCustomerId,
+        code: r.code,
+        amountUsd: r.amountCents / 100,
+        status: r.status,
+        attempts: r.attempts,
+        lastError: r.lastError,
+        appliedAt: r.appliedAt,
+        created: r.createdAt,
+      })),
     };
   }
 }

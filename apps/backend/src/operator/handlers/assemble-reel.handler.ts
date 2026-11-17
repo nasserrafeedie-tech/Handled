@@ -24,6 +24,7 @@ import { TaskHandler, ok, fail } from './handler.interface';
 import { StorageService } from '../../common/storage.service';
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { toSvgColors } from '../graphics/color.util';
+import { endCardCopy } from '../video/end-card';
 
 /**
  * ASSEMBLE_REEL (§7, Growth+). Take the owner's banked clips, cut them into a
@@ -121,11 +122,17 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       brandName: customer.businessName ?? undefined,
       style: (profile.visualStyle as BrandTheme['style']) ?? undefined,
     };
+    const card = endCardCopy({
+      businessName: customer.businessName,
+      businessType: profile.businessType,
+      websiteUrl: profile.websiteUrl,
+    });
     const endCardPng = this.graphics.renderSlide(
       {
         kind: 'cta',
-        headline: customer.businessName ?? 'Come see us',
-        body: 'We saved you a spot.',
+        headline: card.headline,
+        body: card.body,
+        ctaLabel: card.ctaLabel,
         // The headline IS the brand name — a footer would print it twice.
         footer: '',
         variant: await this.prisma.post.count({ where: { customerId: task.customer_id } }),
@@ -259,7 +266,13 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       hashtags: gen.hashtags,
       blackoutTopics: profile.blackoutTopics,
     });
-    const risk = this.gate.classifyRisk(gen.caption);
+    // Gate the words a viewer will actually see: the caption, its hashtags,
+    // and the hook burned into the first seconds of the video.
+    const risk = this.gate.classifyRisk(
+      [gen.caption, gen.hashtags.map((h) => `#${h}`).join(' '), edl.hook || defaultHook]
+        .filter(Boolean)
+        .join(' '),
+    );
     const decision = this.gate.decide(customer.trustLevel, risk);
 
     const post = await this.prisma.post.create({

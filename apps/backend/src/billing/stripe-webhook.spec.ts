@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { Prisma } from '@prisma/client';
-import { StripeWebhookController } from './stripe-webhook.controller';
+import { StripeWebhookController, upgradeText } from './stripe-webhook.controller';
 
 /**
  * Payment must land on the customer who already exists.
@@ -16,7 +16,13 @@ import { StripeWebhookController } from './stripe-webhook.controller';
  */
 
 function makeController(rows: Record<string, any>, seen = new Set<string>()) {
-  const calls = { onboarded: [] as string[], notified: [] as string[], paused: [] as string[] };
+  const calls = {
+    onboarded: [] as string[],
+    notified: [] as string[],
+    paused: [] as string[],
+    tasks: [] as any[],
+    planned: [] as string[],
+  } as any;
   const prisma = {
     customer: {
       upsert: async ({ where, create, update }: any) => {
@@ -27,13 +33,22 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
         rows[where.phone] = row;
         return row;
       },
-      findUnique: async () => null,
+      findUnique: async ({ where }: any) =>
+        (where.phone ? rows[where.phone] : Object.values(rows).find((r: any) => r.email && r.email === where.email)) ??
+        null,
       findFirst: async ({ where }: any) =>
         Object.values(rows).find((r: any) => r.stripeCustomerId === where.stripeCustomerId) ?? null,
       update: async ({ where, data }: any) => {
         const row: any = Object.values(rows).find((r: any) => r.id === where.id);
         if (row) Object.assign(row, data);
+        if (row && data.phone) rows[data.phone] = row;
         return row ?? {};
+      },
+    },
+    brandProfile: {
+      findUnique: async ({ where }: any) => {
+        const row: any = Object.values(rows).find((r: any) => r.id === where.customerId);
+        return row ? { onboardingComplete: Boolean(row.onboarded) } : null;
       },
     },
     connectedAccount: {
@@ -65,12 +80,33 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
   const concierge = {
     beginOnboarding: async (id: string) => calls.onboarded.push(id),
     notify: async (id: string, msg: string) => calls.notified.push(msg),
+    presentNextDraft: async () => false,
+    planIfIdle: async (id: string) => {
+      calls.planned.push(id);
+      return true;
+    },
   };
-  const bus = { emit: async (t: any) => calls.paused.push(t.customer_id) };
+  const bus = {
+    emit: async (t: any) => {
+      calls.paused.push(t.customer_id);
+      calls.tasks.push(t);
+      // Act like the real pause handler so state-dependent paths can be seen.
+      const row: any = Object.values(rows).find((r: any) => r.id === t.customer_id);
+      if (row && t.type === 'PAUSE_CUSTOMER') {
+        if (t.payload.resume) Object.assign(row, { status: 'active', pausedReason: null });
+        else Object.assign(row, { status: 'paused', pausedReason: t.payload.reason });
+      }
+    },
+  };
+  const referrals = {
+    record: async () => ({ isNew: false, creditId: null }),
+    apply: async () => ({ status: 'pending' }),
+  };
   const ctrl = new StripeWebhookController(
     prisma as any,
     bus as any,
     concierge as any,
+    referrals as any,
   );
   return { ctrl, rows, calls };
 }
@@ -217,6 +253,37 @@ describe('Stripe subscription updated → plan tier', () => {
     const { ctrl, calls } = makeController(starterCustomer());
     await updated(ctrl, 'price_growth');
     assert.match(calls.notified.join(' '), /carousel/i);
+  });
+
+  it('Growth → Pro names reels and daily posts, not the carousels they already had', async () => {
+    const rows = starterCustomer();
+    rows['+14244098341'].planTier = 'growth';
+    const { ctrl, calls } = makeController(rows);
+    await updated(ctrl, 'price_pro');
+    const text = calls.notified.join(' ');
+    assert.match(text, /reels/);
+    assert.match(text, /every day/);
+    assert.doesNotMatch(text, /carousel/i);
+  });
+
+  it('Starter → Pro names everything the jump adds', () => {
+    const text = upgradeText('starter', 'pro');
+    assert.match(text, /carousels/);
+    assert.match(text, /reels/);
+    assert.match(text, /every day/);
+    assert.match(text, /3 more accounts/);
+  });
+
+  it('a Pro upgrade says where to send clips, with the real upload link', () => {
+    const text = upgradeText('growth', 'pro', 'cust-123');
+    assert.match(text, /\/upload\?c=cust-123$/);
+    assert.doesNotMatch(text, /your upload link/, 'never point at a link they were not given');
+    assert.doesNotMatch(upgradeText('starter', 'growth', 'cust-123'), /upload/);
+  });
+
+  it('Starter → Growth gives the real cadence change', () => {
+    assert.match(upgradeText('starter', 'growth'), /5 posts a week instead of 3/);
+    assert.match(upgradeText('starter', 'growth'), /one more account/);
   });
 
   it('stays quiet on a downgrade', async () => {
@@ -379,5 +446,232 @@ describe('Stripe webhook idempotency', () => {
     );
     // The claim must have been released — otherwise the id is still in `seen`.
     assert.equal(seen.has('evt_retry'), false, 'claim must be released on failure');
+  });
+});
+
+describe('Stripe checkout → referral credit', () => {
+  /**
+   * A checkout through someone's ?ref= link puts a free month on the
+   * referrer's Stripe balance and thanks them — once. A referred customer who
+   * cancels and checks out again must not pay the referrer (or text them) a
+   * second time.
+   */
+  function setup(referrer: any) {
+    const rows: Record<string, any> = {};
+    const { ctrl, calls } = makeController(rows);
+    const credited = new Set<string>();
+    const log = { recorded: 0, applied: [] as string[] };
+    (ctrl as any).prisma.customer.findUnique = async ({ where }: any) =>
+      where.referralCode === referrer.referralCode ? referrer : null;
+    (ctrl as any).referrals = {
+      record: async (_ref: any, referredId: string) => {
+        log.recorded += 1;
+        if (credited.has(referredId)) return { isNew: false, creditId: null };
+        credited.add(referredId);
+        return { isNew: true, creditId: `rc_${referredId}` };
+      },
+      apply: async (id: string) => {
+        log.applied.push(id);
+        return { status: 'applied' };
+      },
+    };
+    const pay = (phone: string) =>
+      (ctrl as any).onCheckoutCompleted({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            customer: `cus_${phone}`,
+            metadata: { plan: 'growth', ref: referrer.referralCode },
+            customer_details: { phone },
+          },
+        },
+      });
+    return { ctrl, calls, log, rows, pay };
+  }
+
+  it('credits the referrer and thanks them, once per referred customer', async () => {
+    const { calls, log, rows, pay } = setup({ id: 'referrer', referralCode: 'ABC123', planTier: 'pro' });
+
+    await pay('424-409-8341');
+    assert.equal(log.applied.length, 1);
+    assert.equal(calls.notified.filter((m) => /referral just joined/.test(m)).length, 1);
+    assert.equal(rows['+14244098341'].referredByCode, 'ABC123');
+
+    // They cancel and come back through the same link.
+    await pay('424-409-8341');
+    assert.equal(log.recorded, 2);
+    assert.equal(log.applied.length, 1, 'no second credit');
+    assert.equal(
+      calls.notified.filter((m) => /referral just joined/.test(m)).length,
+      1,
+      'no second thank-you',
+    );
+  });
+
+  it('a second, different referral earns a second credit', async () => {
+    const { log, pay } = setup({ id: 'referrer', referralCode: 'ABC123', planTier: 'pro' });
+    await pay('424-409-8341');
+    await pay('310-555-0101');
+    assert.equal(log.applied.length, 2);
+  });
+
+  it('an unknown code credits nobody but still onboards the payer', async () => {
+    const { calls, log, ctrl } = setup({ id: 'referrer', referralCode: 'ABC123', planTier: 'pro' });
+    await (ctrl as any).onCheckoutCompleted({
+      type: 'checkout.session.completed',
+      data: { object: { customer: 'cus_x', metadata: { plan: 'growth', ref: 'NOPE' }, customer_details: { phone: '424-409-8341' } } },
+    });
+    assert.equal(log.recorded, 0);
+    assert.equal(calls.onboarded.length, 1);
+  });
+});
+
+describe('Getting back on after a billing pause', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+
+  const paid = (ctrl: any) =>
+    ctrl.onInvoicePaid({ type: 'invoice.paid', data: { object: { customer: 'cus_stripe_123' } } });
+
+  it('the declined-card texts carry a link to fix the card', async () => {
+    const rows: Record<string, any> = {
+      '+15550001111': { id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123', status: 'active' },
+    };
+    const { ctrl, calls } = makeController(rows);
+    for (const next of [1700000000, null]) {
+      await ctrl['onPaymentFailed']({
+        type: 'invoice.payment_failed',
+        data: { object: { customer: 'cus_stripe_123', next_payment_attempt: next } },
+      });
+    }
+    assert.equal(calls.notified.length, 2);
+    for (const msg of calls.notified) assert.match(msg, /\/billing\/manage\?t=/);
+  });
+
+  it('a paid invoice lifts a billing pause and says so', async () => {
+    const rows: Record<string, any> = {
+      '+15550001111': {
+        id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123',
+        status: 'paused', pausedReason: 'billing',
+      },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await paid(ctrl);
+    assert.equal(calls.tasks[0].payload.resume, true);
+    assert.equal(rows['+15550001111'].status, 'active');
+    assert.match(calls.notified[0], /back on/);
+  });
+
+  it('a routine renewal, or an owner who texted STOP, is left alone', async () => {
+    for (const r of [
+      { status: 'active', pausedReason: null },
+      { status: 'paused', pausedReason: 'owner_stop' },
+    ]) {
+      const rows: Record<string, any> = {
+        '+15550001111': { id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123', ...r },
+      };
+      const { ctrl, calls } = makeController(rows);
+      await paid(ctrl);
+      assert.equal(calls.tasks.length, 0);
+      assert.equal(calls.notified.length, 0);
+    }
+  });
+
+  it('re-subscribing after a cancel un-pauses them and welcomes them back (not silence)', async () => {
+    const rows: Record<string, any> = {
+      '+14244098341': {
+        id: 'c1', phone: '+14244098341', stripeCustomerId: 'cus_old',
+        status: 'paused', pausedReason: 'billing', onboarded: true,
+      },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await checkout(ctrl, '+14244098341');
+    assert.equal(rows['+14244098341'].status, 'active');
+    assert.match(calls.notified.at(-1), /Welcome back/);
+    assert.deepEqual(calls.onboarded, [], 'no re-interview for a finished profile');
+    // "I'll plan your next posts" is kept now, not at next Monday's run.
+    assert.deepEqual(calls.planned, ['c1']);
+  });
+});
+
+describe('Stripe subscription ended', () => {
+  const ended = (ctrl: any) =>
+    ctrl.onSubscriptionDeleted({
+      type: 'customer.subscription.deleted',
+      data: { object: { customer: 'cus_stripe_123' } },
+    });
+
+  it('pauses as "ended", not as a failed payment, and says how to restart', async () => {
+    const rows: Record<string, any> = {
+      '+15550001111': { id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123', status: 'active' },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await ended(ctrl);
+    assert.equal(rows['+15550001111'].pausedReason, 'subscription_ended');
+    assert.match(calls.notified[0], /\/billing\b/);
+    assert.doesNotMatch(calls.notified[0], /card|payment/i);
+  });
+
+  it('a later invoice.paid alone does not lift it (only a new checkout does)', async () => {
+    const rows: Record<string, any> = {
+      '+15550001111': {
+        id: 'c1', phone: '+15550001111', stripeCustomerId: 'cus_stripe_123',
+        status: 'paused', pausedReason: 'subscription_ended',
+      },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await ctrl.onInvoicePaid({ type: 'invoice.paid', data: { object: { customer: 'cus_stripe_123' } } });
+    assert.equal(calls.tasks.length, 0);
+  });
+
+  it('re-subscribing after it ends brings them back', async () => {
+    const rows: Record<string, any> = {
+      '+14244098341': {
+        id: 'c1', phone: '+14244098341', stripeCustomerId: 'cus_old',
+        status: 'paused', pausedReason: 'subscription_ended', onboarded: true,
+      },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await checkout(ctrl, '+14244098341');
+    assert.equal(rows['+14244098341'].status, 'active');
+    assert.match(calls.notified.at(-1), /Welcome back/);
+  });
+});
+
+describe('Stripe checkout after an email signup', () => {
+  it('attaches the phone to the email customer instead of making a second one', async () => {
+    const rows: Record<string, any> = {
+      'email:juniper': { id: 'cus_email', phone: null, email: 'jo@juniper.test', businessName: 'Juniper Florals', planTier: 'starter' },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await ctrl['onCheckoutCompleted']({
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          customer: 'cus_stripe_9',
+          metadata: { plan: 'growth' },
+          customer_details: { phone: '+13105550303', email: 'Jo@Juniper.test' },
+        },
+      },
+    });
+    const ids = new Set(Object.values(rows).map((r: any) => r.id));
+    assert.deepEqual([...ids], ['cus_email']);
+    assert.equal(rows['+13105550303'].planTier, 'growth');
+    assert.deepEqual(calls.onboarded, ['cus_email']);
+  });
+
+  it('leaves an email row that already has another phone alone', async () => {
+    const rows: Record<string, any> = {
+      '+13105550000': { id: 'cus_email', phone: '+13105550000', email: 'jo@juniper.test' },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await ctrl['onCheckoutCompleted']({
+      type: 'checkout.session.completed',
+      data: { object: { customer: 'c', metadata: { plan: 'starter' }, customer_details: { phone: '+13105550303', email: 'jo@juniper.test' } } },
+    });
+    assert.equal(rows['+13105550000'].phone, '+13105550000');
+    assert.notEqual(calls.onboarded[0], 'cus_email');
   });
 });

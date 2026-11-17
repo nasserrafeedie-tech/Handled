@@ -1,10 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { type Task, type Result, type MakeGraphicResult } from '@smm/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GraphicsService } from '../graphics/graphics.service';
+import { DesignerService } from '../graphics/designer.service';
+import { detectFabrication } from '../guardrails/fabrication';
 import { CANVAS, CANVAS_H, stableSeed, type BrandTheme, type SlideSpec } from '../graphics/slide-templates';
 import { resolveBrandColors } from '../graphics/brand-palette';
 import { logoDataUri } from '../graphics/logo-colors';
@@ -19,11 +21,13 @@ import { StorageService } from '../../common/storage.service';
 @Injectable()
 export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
   readonly type = 'MAKE_GRAPHIC' as const;
+  private readonly log = new Logger(MakeGraphicHandler.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly graphics: GraphicsService,
     private readonly storage: StorageService,
+    @Optional() private readonly designer?: DesignerService,
   ) {}
 
   async handle(task: Extract<Task, { type: 'MAKE_GRAPHIC' }>): Promise<Result> {
@@ -85,6 +89,26 @@ export class MakeGraphicHandler implements TaskHandler<'MAKE_GRAPHIC'> {
         err instanceof Error ? err.message : String(err),
         true,
       );
+    }
+
+    // The first (or only) graphic gets a design of its own when the designer
+    // is on; the template render stays as the fallback. The words are the
+    // owner's own, so the only new risk is something the design added, which
+    // the design checks already keep to a few words with no numbers.
+    if (this.designer?.live() && specs.length) {
+      const first = task.payload.slides[0];
+      const designed = await this.designer.design({
+        customerId: task.customer_id,
+        role: specs.length > 1 ? 'carousel_cover' : 'graphic',
+        copy: { headline: first.headline, body: first.body, footer: first.footer, brandName: theme.brandName },
+        theme,
+        businessType: profile?.businessType ?? undefined,
+        slides: specs.length,
+      });
+      if (designed && !detectFabrication(designed.drawnText).length) {
+        pngs[0] = designed.png;
+        this.log.log(`designed graphic for ${task.customer_id}: ${designed.concept}`);
+      }
     }
 
     // Offline media store: write files locally. Swap for R2 upload in prod.

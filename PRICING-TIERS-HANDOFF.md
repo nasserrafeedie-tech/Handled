@@ -1,5 +1,10 @@
 # Handoff: pricing & tier packaging update (web)
 
+> **Superseded in part (Nov 2026).** Since this was written, reels moved to
+> Pro only and Growth links 2 social accounts, not 3. The code
+> (`apps/backend/src/operator/tier-entitlements.ts`) and the billing page agree
+> on that, and the homepage now does too. Treat those as the source of truth.
+
 Context file for Claude Code, written July 21, 2026 by a Cowork session.
 Repo: this one (AISSM — the product is **Handled**, done-for-you social media
 over SMS). Planning source of truth lives outside the repo at

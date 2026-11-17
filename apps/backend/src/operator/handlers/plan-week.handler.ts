@@ -15,6 +15,26 @@ import { ArchetypePerformanceService } from '../../playbook/archetype-performanc
 import { isCarouselArchetype } from '../graphics/carousel-content';
 import { postsPerWeek } from '../tier-entitlements';
 
+/**
+ * Hand the owner's own post requests to the week's slots, one each, in order.
+ * Done in code because the planner reading them is a request; this is the
+ * promise we texted back ("one of next week's posts will be about that").
+ * Returns the slots and whatever didn't fit, which waits for the week after.
+ */
+export function assignOwnerRequests<T extends { owner_request?: string }>(
+  slots: T[],
+  requests: string[],
+): { slots: T[]; left: string[] } {
+  const asks = requests.map((r) => r.trim()).filter(Boolean);
+  const out = slots.map((s, i) => (i < asks.length ? { ...s, owner_request: asks[i].slice(0, 300) } : s));
+  return { slots: out, left: asks.slice(slots.length) };
+}
+
+/** What the drafter is told about a post the owner asked for. */
+export function ownerRequestNote(request: string | undefined): string | undefined {
+  return request ? `The owner asked for this post by text: ${request}. Make the post about that.` : undefined;
+}
+
 /** The most photo asks an owner should get in one week. */
 export const MAX_ASSET_ASKS = 2;
 
@@ -63,6 +83,24 @@ export function clampAssetAsks<T extends { archetype: string; needs_asset: boole
   return slots.map((s) =>
     s.needs_asset && !keep.has(s) ? { ...s, needs_asset: false } : s,
   );
+}
+
+/** YYYY-MM-DD plus n days. */
+export function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Keeps slots dated within [start, start + days), one a day at most. */
+export function clampToWindow<T extends { date: string }>(slots: T[], start: string, days: number): T[] {
+  const end = addDays(start, days);
+  const seen = new Set<string>();
+  return slots.filter((s) => {
+    if (s.date < start || s.date >= end || seen.has(s.date)) return false;
+    seen.add(s.date);
+    return true;
+  });
 }
 
 /**
@@ -168,6 +206,9 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     // Cap the cadence at what the plan sells (Starter 3 / Growth 5 / Pro 7), so
     // a profile that somehow holds a higher number never drafts more than the
     // tier is paid for.
+    const start = task.payload.week_start.slice(0, 10);
+    const days = task.payload.days ?? 7;
+    const lastDay = addDays(start, days - 1);
     const requested =
       task.payload.posting_frequency ?? profile.postingFrequency ?? 3;
     const frequency = Math.min(requested, postsPerWeek(customer?.planTier ?? 'starter'));
@@ -179,8 +220,12 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
       : null;
 
     const context = buildBrandContext(profile);
+    const requests = profile.postRequests ?? [];
     const prompt = [
-      `Plan ${frequency} posts for the week starting ${task.payload.week_start.slice(0, 10)}.`,
+      days < 7
+        ? `Plan ${frequency} posts for the week starting ${start}. This is a short starter week: ` +
+          `every date must fall within the ${days} days from ${start} to ${lastDay}, one post a day at most.`
+        : `Plan ${frequency} posts for the week starting ${start}.`,
       'Mix archetypes across the week (promo, behind_the_scenes, testimonial,',
       'educational_tip, product_spotlight, seasonal, ugc_repost, were_open).',
       // The trust ratio (§ engagement research): over-promotion is the top
@@ -216,6 +261,10 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
       // that some numbers had happened without saying which post earned them,
       // so "lean into what worked" was unactionable. This names the format.
       measured ?? 'No measured results for this kind of business yet — plan a balanced week.',
+      requests.length
+        ? `The owner asked for these posts; the first ${Math.min(requests.length, frequency)} slots, in order, carry them, ` +
+          `so pick an archetype and shot list that fit each: ${requests.slice(0, frequency).map((r, i) => `(${i + 1}) ${r}`).join(' ')}`
+        : '',
       'Return JSON: {"slots":[{"date","archetype","platform","best_time",',
       '"needs_asset","shot_list"}]}. Dates YYYY-MM-DD, best_time HH:MM,',
       'needs_asset boolean, shot_list ONE string (semicolons between shots).',
@@ -237,6 +286,19 @@ export class PlanWeekHandler implements TaskHandler<'PLAN_WEEK'> {
     // And the guarantee behind the pillar-mix instruction: at most one promo
     // slot in five survives the plan.
     planned.slots = clampPromoQuota(planned.slots);
+    // A starter week has to stay inside its days, or it runs into the week the
+    // regular plan covers and doubles it up.
+    if (days < 7) planned.slots = clampToWindow(planned.slots, start, days);
+    let leftover = requests;
+    if (requests.length) {
+      const assigned = assignOwnerRequests(planned.slots, requests);
+      planned.slots = assigned.slots;
+      leftover = assigned.left;
+      await this.prisma.brandProfile.update({
+        where: { customerId: task.customer_id },
+        data: { postRequests: leftover },
+      });
+    }
     const kept = planned.slots.filter((s) => s.needs_asset).length;
     if (kept < asked) {
       this.log.warn(

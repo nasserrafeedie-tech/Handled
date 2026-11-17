@@ -1,3 +1,4 @@
+import { bestPostLine } from './best-post';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomUUID } from 'node:crypto';
@@ -12,10 +13,12 @@ import { ConnectService } from '../connect/connect.service';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
 import { ReconcileService } from './reconcile.service';
 import { RecapService } from '../concierge/recap.service';
+import { ReferralCreditService } from '../billing/referral-credit.service';
 import { photoWalkReminder } from '../concierge/photo-walk';
 import { ArchetypePerformanceService } from '../playbook/archetype-performance.service';
 import { zonedToUtc } from '../common/time';
 import { resolveStrategy, reelClipsFor } from '../operator/llm/vertical-playbook';
+import { ownerRequestNote } from '../operator/handlers/plan-week.handler';
 
 /** Shape of the PLAN_WEEK Result we care about. */
 type PlanResult = { data?: { slots?: CalendarSlot[] } };
@@ -54,6 +57,7 @@ export class CronService {
     private readonly reconcile: ReconcileService,
     private readonly performance: ArchetypePerformanceService,
     private readonly recap: RecapService,
+    private readonly referrals: ReferralCreditService,
   ) {}
 
   private get enabled(): boolean {
@@ -109,6 +113,27 @@ export class CronService {
     });
     const tz = customer?.timezone ?? 'America/Los_Angeles';
 
+    // Someone who signed up (or came back) between Sunday afternoon and this
+    // run already had this same week planned at signup. Planning it again would
+    // double every post and every approval text.
+    const weekStart = nextMonday();
+    const already = await this.prisma.post.count({
+      where: {
+        customerId,
+        status: { notIn: ['cancelled', 'failed'] },
+        // The owner's own Monday to Sunday: a Sunday-evening post in Los
+        // Angeles is already Monday in UTC.
+        scheduledTime: {
+          gte: zonedToUtc(weekStart.slice(0, 10), '00:00', tz),
+          lt: new Date(zonedToUtc(weekStart.slice(0, 10), '00:00', tz).getTime() + 7 * 86_400_000),
+        },
+      },
+    });
+    if (already > 0) {
+      this.log.log(`week of ${weekStart.slice(0, 10)} already planned for ${customerId}; skipping`);
+      return 0;
+    }
+
     // A cold backend's first PLAN_WEEK LLM call can time out to zero slots.
     // Unretried that quietly skips the customer's whole week, so try a few
     // times before giving up — the same cold-start guard the onboarding path
@@ -116,7 +141,7 @@ export class CronService {
     let slots: CalendarSlot[] = [];
     for (let attempt = 1; attempt <= 3; attempt++) {
       const planned = await this.emit(customerId, 'PLAN_WEEK', {
-        week_start: nextMonday(),
+        week_start: weekStart,
       });
       slots = (planned as PlanResult)?.data?.slots ?? [];
       if (slots.length) break;
@@ -139,6 +164,7 @@ export class CronService {
           scheduled_time: scheduledTimeIso,
           needs_asset: slot.needs_asset,
           shot_list_hint: slot.shot_list,
+              prompt_notes: ownerRequestNote(slot.owner_request),
         });
         drafted++;
 
@@ -390,6 +416,25 @@ export class CronService {
       .catch((e) => this.log.warn(`reconciliation failed: ${e.message}`));
   }
 
+  /**
+   * Daily (11:00): land any referral credit that couldn't go on Stripe at
+   * checkout time — Stripe was down, the referrer hadn't paid yet, a timeout.
+   * The Idempotency-Key per credit makes a retry safe even when the first try
+   * actually reached Stripe. See ReferralCreditService.
+   */
+  @Cron('0 11 * * *', { timeZone: CRON_TZ })
+  async applyReferralCredits(): Promise<void> {
+    if (!this.enabled) return;
+    await this.referrals
+      .retryPending()
+      .then((t) => {
+        if (t.applied || t.failed) {
+          this.log.log(`referral credits: ${t.applied} applied, ${t.pending} waiting, ${t.failed} gave up`);
+        }
+      })
+      .catch((e) => this.log.warn(`referral credit sweep failed: ${e.message}`));
+  }
+
   /** Dev-endpoint passthrough: run reconciliation regardless of ENABLE_CRON. */
   async reconcileNow(): Promise<{ requeued: number; stale: number }> {
     return this.reconcile.sweep();
@@ -467,6 +512,30 @@ export class CronService {
       }),
     ]);
     if (published === 0 && scheduled === 0) return; // nothing to brag about
+    // How the week's posts actually did, from the latest metrics snapshot.
+    const [cust, withNumbers] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }),
+      published
+        ? this.prisma.post.findMany({
+            where: { customerId, status: 'published', publishedAt: { gte: since } },
+            select: {
+              caption: true,
+              publishedAt: true,
+              metrics: { select: { impressions: true, likes: true, saves: true }, orderBy: { fetchedAt: 'desc' }, take: 1 },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+    const best = bestPostLine(
+      withNumbers.map((p) => ({
+        caption: p.caption,
+        publishedAt: p.publishedAt,
+        impressions: p.metrics[0]?.impressions ?? 0,
+        likes: p.metrics[0]?.likes ?? 0,
+        saves: p.metrics[0]?.saves ?? 0,
+      })),
+      cust?.timezone ?? 'America/Los_Angeles',
+    );
     const bits = [
       published
         ? `${published} post${published > 1 ? 's' : ''} went out this week`
@@ -475,7 +544,7 @@ export class CronService {
     ].filter(Boolean);
     await this.concierge.notify(
       customerId,
-      `Friday check-in ✳ ${bits.join(', ')}. Have a great weekend — I've got the feed.`,
+      `Friday check-in ✳ ${bits.join(', ')}.${best ? ` ${best}` : ''} Have a great weekend — I've got the feed.`,
     );
   }
 

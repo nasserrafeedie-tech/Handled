@@ -1,4 +1,5 @@
 import type { BrandStyle } from '../graphics/slide-templates';
+import { textWidth } from '../graphics/text-metrics';
 
 /**
  * Burned-in captions, as an ASS subtitle file.
@@ -88,13 +89,30 @@ const MAX_LINE_SECS = 2.5;
 const MIN_LINE_SECS = 0.5;
 
 /**
- * 1080×1920 is the reel canvas; 700px down puts the text in the upper-middle
- * third — clear of Instagram's bottom UI (username, caption, action buttons)
- * and clear of the top corners where the platform draws its own chrome.
+ * 1080×1920 is the reel canvas. Meta's Reels safe zone keeps text out of the
+ * top 14% and bottom 35% (the platform's caption, username and buttons), so
+ * text must end by y≈1248. 940px down puts two caption rows just under the
+ * middle of the frame, inside that zone, and below where a face usually sits
+ * in phone footage — at 700px the captions covered people's faces.
  */
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
-const MARGIN_V = 700;
+const MARGIN_V = 940;
+/** Left/right margins every caption and the hook keep from the frame edge. */
+const MARGIN_H = 80;
+/** Width text may use: the canvas less both margins. */
+const SAFE_W = CANVAS_W - MARGIN_H * 2;
+const CAP_SIZE = 96;
+/** Anton is condensed: at the shared size its captions read small and thin. */
+const capSizeFor = (font: string) => (font === 'Anton' ? 116 : CAP_SIZE);
+const hookSizeFor = (font: string) => (font === 'Anton' ? 124 : HOOK_SIZE);
+/**
+ * The hook is the scroll-stopper, so it is set larger than the captions'
+ * supporting role would suggest; it wraps into up to three boxed rows.
+ */
+const HOOK_SIZE = 100;
+/** The hook's box reaches this far past its text on each side (BorderStyle 3 Outline). */
+const HOOK_BOX = 18;
 
 /** libass needs the font's family name; the file lives in graphics/fonts. */
 function captionFont(style: BrandStyle | undefined): string {
@@ -121,6 +139,92 @@ export function hexToAssColor(hex: string | undefined, fallback = '&H00FFFFFF'):
   if (!m) return fallback;
   const [r, g, b] = [0, 2, 4].map((i) => m[1].slice(i, i + 2).toUpperCase());
   return `&H00${b}${g}${r}`;
+}
+
+/** 0..1 perceived brightness of a #RRGGBB colour (null if it isn't one). */
+function brightness(hex: string | undefined): number | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex ?? '').trim());
+  if (!m) return null;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+/**
+ * The colour the live karaoke word is painted in. It sits on white captions
+ * with a black outline, so a dark brand colour (forest green, navy, black)
+ * would turn the one word meant to pop into the hardest one to read. Dark
+ * colours are lifted toward white until they read; a colour with no hue at
+ * all (black, charcoal, grey) has nothing to lift, so it gets the default
+ * caption yellow instead.
+ */
+export function readableAccent(hex: string | undefined): string | undefined {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex ?? '').trim());
+  if (!m) return undefined;
+  const rgb = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+  const max = Math.max(...rgb);
+  const min = Math.min(...rgb);
+  if (max - min < 28) return undefined; // grey: no hue to keep
+  let out = rgb;
+  for (let i = 0; i < 8 && (brightness(toHex(out)) ?? 1) < 0.55; i++) {
+    out = out.map((c) => Math.round(c + (255 - c) * 0.18));
+  }
+  return toHex(out);
+}
+
+function toHex(rgb: number[]): string {
+  return '#' + rgb.map((c) => c.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+/**
+ * Width a run of caption text will take on screen. Captions are bold (the
+ * styles set Bold -1), and libass fakes bold on faces with no bold cut, so a
+ * small allowance is added for that.
+ */
+function capWidth(text: string, font: string, size: number): number {
+  const w = textWidth(text, font, size, 700) ?? text.length * size * 0.6;
+  return w * 1.04;
+}
+
+/**
+ * Split words into as FEW rows as will fit `maxW` (at most `maxRows`), with
+ * the words spread as evenly as possible across those rows. Returns null when
+ * no split fits — the caller then shrinks the type.
+ */
+export function fitRows(
+  words: string[],
+  font: string,
+  size: number,
+  maxW: number,
+  maxRows: number,
+  rowWidth: (row: string[]) => number = (row) => capWidth(row.join(' '), font, size),
+): string[][] | null {
+  for (let k = 1; k <= Math.min(maxRows, words.length); k++) {
+    const rows = balancedSplit(words, k, rowWidth);
+    if (rows && Math.max(...rows.map(rowWidth)) <= maxW) return rows;
+  }
+  return null;
+}
+
+/** The k-row split of `words` whose widest row is narrowest. */
+function balancedSplit(
+  words: string[],
+  k: number,
+  rowWidth: (row: string[]) => number,
+): string[][] | null {
+  if (k === 1) return [words];
+  let best: string[][] | null = null;
+  let bestW = Infinity;
+  for (let i = 1; i <= words.length - (k - 1); i++) {
+    const rest = balancedSplit(words.slice(i), k - 1, rowWidth);
+    if (!rest) continue;
+    const rows = [words.slice(0, i), ...rest];
+    const w = Math.max(...rows.map(rowWidth));
+    if (w < bestW) {
+      bestW = w;
+      best = rows;
+    }
+  }
+  return best;
 }
 
 /** Seconds → ASS's H:MM:SS.cc timestamp (centiseconds, single-digit hour). */
@@ -224,6 +328,30 @@ export function groupWordsIntoLines(words: TranscriptWord[]): CaptionLine[] {
   return lines.filter((l) => l.end > l.start);
 }
 
+/** Caption rows and size for one line: two rows at most, shrinking only if needed. */
+function fitCaption(words: string[], font: string): { rows: string[][]; size: number } {
+  const room = SAFE_W - 2 * 6; // outline on both sides
+  for (let size = capSizeFor(font); size >= 56; size -= 8) {
+    const rowWidth = (row: string[]) => {
+      const longest = Math.max(...row.map((w) => capWidth(w, font, size)));
+      return capWidth(row.join(' '), font, size) + longest * 0.12;
+    };
+    const rows = fitRows(words, font, size, room, 2, rowWidth);
+    if (rows) return { rows, size };
+  }
+  return { rows: [words], size: 56 };
+}
+
+/** Hook rows and size: up to three boxed rows, shrinking only if needed. */
+function fitHook(words: string[], font: string): { rows: string[][]; size: number } {
+  const room = SAFE_W - 2 * HOOK_BOX;
+  for (let size = hookSizeFor(font); size >= 44; size -= 4) {
+    const rows = fitRows(words, font, size, room, 3);
+    if (rows) return { rows, size };
+  }
+  return { rows: [words], size: 44 };
+}
+
 /**
  * Render caption lines as a complete ASS file.
  *
@@ -233,10 +361,13 @@ export function groupWordsIntoLines(words: TranscriptWord[]): CaptionLine[] {
  */
 export function buildAssFile(lines: CaptionLine[], style: CaptionStyle = {}): string {
   const font = captionFont(style.brandStyle);
-  const accent = hexToAssColor(style.accentHex, '&H0000D7FF');
+  const accent = hexToAssColor(readableAccent(style.accentHex), '&H0000D7FF');
   // The hook box fill. Falls back to a near-black box when no accent is given,
   // so the hook is still legible rather than white-on-transparent.
   const boxColor = hexToAssColor(style.accentHex, '&HDD000000');
+  // Hook text: white on a dark box, near-black on a pale one. White on a pale
+  // gold or blush box was all but invisible.
+  const hookText = (brightness(style.accentHex) ?? 0) > 0.62 ? '&H00161A1A' : '&H00FFFFFF';
 
   const header = [
     '[Script Info]',
@@ -254,13 +385,13 @@ export function buildAssFile(lines: CaptionLine[], style: CaptionStyle = {}): st
       ' BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     // Alignment 8 = top-centre, so MarginV measures down from the top edge and
     // the caption block sits where the playbook wants it regardless of length.
-    `Style: Cap,${font},96,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,` +
-      `-1,0,0,0,100,100,0,0,1,6,3,8,80,80,${MARGIN_V},1`,
+    `Style: Cap,${font},${capSizeFor(font)},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,` +
+      `-1,0,0,0,100,100,0,0,1,6,3,8,${MARGIN_H},${MARGIN_H},${MARGIN_V},1`,
     // Hook style: BorderStyle 3 draws an opaque box behind the text (the
     // OutlineColour becomes the box fill), in the brand accent — the drawtext
     // hook's boxed look, reproduced in libass. White text on the accent box.
-    `Style: Hook,${font},72,&H00FFFFFF,&H000000FF,${boxColor},&H00000000,` +
-      `-1,0,0,0,100,100,0,0,3,18,0,8,80,80,${HOOK_MARGIN_V},1`,
+    `Style: Hook,${font},${hookSizeFor(font)},${hookText},&H000000FF,${boxColor},&H00000000,` +
+      `-1,0,0,0,100,100,0,0,3,${HOOK_BOX},0,8,${MARGIN_H},${MARGIN_H},${HOOK_MARGIN_V},1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -280,31 +411,52 @@ export function buildAssFile(lines: CaptionLine[], style: CaptionStyle = {}): st
   for (const line of lines) {
     const painted = line.words.map((w) => escapeAssText(w.text)).filter(Boolean);
     if (!painted.length) continue;
+    // Fit the line to the frame. WrapStyle 2 means libass never wraps on its
+    // own, so a four-word line of long words simply ran off both edges. Break
+    // it into two balanced rows when it is too wide, and shrink the type only
+    // if a single word is wider than the frame on its own. Room is kept for
+    // the live word's 12% size bump and the outline.
+    const { rows, size } = fitCaption(painted, font);
+    const breakAfter = new Set<number>();
+    let k = 0;
+    for (const r of rows.slice(0, -1)) breakAfter.add((k += r.length) - 1);
+    const lead = size === capSizeFor(font) ? '' : `{\\fs${size}}`;
     for (let i = 0; i < line.words.length; i++) {
       const start = i === 0 ? line.start : line.words[i].start;
       const end = i < line.words.length - 1 ? line.words[i + 1].start : line.end;
       if (end <= start) continue;
       const text = painted
-        .map((w, j) =>
-          j === i
-            ? // Accent colour + a slight size bump for the live word, then \r
-              // hands the rest of the line back to the style default (white,
-              // 100%) so the highlight never bleeds forward. Colour and scale are
-              // separate blocks so each override reads cleanly.
-              `{\\c${accent}}{\\fscx112\\fscy112}${w}{\\r}`
-            : w,
-        )
-        .join(' ');
-      events.push(`Dialogue: 0,${assTime(start + off)},${assTime(end + off)},Cap,,0,0,0,,${text}`);
+        .map((w, j) => {
+          const word =
+            j === i
+              ? // Accent colour + a slight size bump for the live word, then
+                // an explicit reset to white at 100% so the highlight never
+                // bleeds forward. (\r would also reset a shrunk font size.)
+                `{\\c${accent}\\fscx112\\fscy112}${w}{\\c&H00FFFFFF&\\fscx100\\fscy100}`
+              : w;
+          return word + (j === painted.length - 1 ? '' : breakAfter.has(j) ? '\\N' : ' ');
+        })
+        .join('');
+      events.push(`Dialogue: 0,${assTime(start + off)},${assTime(end + off)},Cap,,0,0,0,,${lead}${text}`);
     }
   }
 
   // The hook goes on its own layer so it draws over a caption that happens to
   // share the opening seconds, rather than libass picking one arbitrarily.
-  const hook = style.hookText?.trim();
+  const hook = escapeAssText(style.hookText ?? '');
   if (hook) {
+    // Up to eight words at 72px is far wider than the frame, and with no
+    // auto-wrap the hook used to run off both sides. Wrap it into balanced
+    // rows (each gets its own box, like a highlighter), shrinking only if
+    // three rows still can't hold it.
+    const { rows, size } = fitHook(hook.split(/\s+/), font);
+    // Pops in rather than appearing: a quick fade with a slight scale-up
+    // gives the opening frame motion, which is what the eye catches mid-scroll.
+    const lead =
+      '{\\fad(120,200)\\fscx86\\fscy86\\t(0,160,\\fscx100\\fscy100)}' +
+      (size === hookSizeFor(font) ? '' : `{\\fs${size}}`);
     events.unshift(
-      `Dialogue: 1,${assTime(off)},${assTime(HOOK_SECS + off)},Hook,,0,0,0,,${escapeAssText(hook)}`,
+      `Dialogue: 1,${assTime(off)},${assTime(HOOK_SECS + off)},Hook,,0,0,0,,${lead}${rows.map((r) => r.join(' ')).join('\\N')}`,
     );
   }
 

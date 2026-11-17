@@ -4,10 +4,12 @@ import { randomUUID } from 'node:crypto';
 import type { Task, CalendarSlot, DraftPostResult } from '@smm/contracts';
 import { normalizePhone } from '../common/phone';
 import { PrismaService } from '../prisma/prisma.service';
+import { portalLink } from '../billing/portal-link';
 import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
 import { EmailService } from './email.service';
 import { OnboardingService, NO_WEBSITE } from './onboarding.service';
+import { ownerRequestNote } from '../operator/handlers/plan-week.handler';
 import { photoWalkInvite, photoWalkReminder } from './photo-walk';
 import { BusinessResearchService } from './business-research.service';
 import { StorageService } from '../common/storage.service';
@@ -26,10 +28,12 @@ import {
 import { ArchetypeResearchService } from '../playbook/archetype-research.service';
 import {
   formatInZone,
+  formatFull,
   inTextingWindow,
   nextTextingWindowOpen,
   tomorrowMorningInZone,
   zonedToUtc,
+  parseTimeLocally,
 } from '../common/time';
 import { z } from 'zod';
 import { strategySummary } from './strategy-summary';
@@ -149,6 +153,49 @@ const FREE_TASTE_INTRO =
   "want customers to know this week, and I'll write you a post on the spot. " +
   "Free, takes ten seconds — and that's the only question.";
 
+/**
+ * Text with nothing in it to act on, told apart before any LLM call:
+ *  - 'mash': one token with five keys in a row along a keyboard row ("asdfgh",
+ *    "qwerty") or four-plus different letters with no vowel ("sdfghj").
+ *  - 'emoji': only emoji or symbols, and not one of the yes emoji, which
+ *    the intent step reads as approval.
+ * Anything with a real word, a digit or a question mark is left alone.
+ */
+const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+const YES_EMOJI = /👍|👌|🔥|✅|💯|🙌|❤️|😍/u;
+export function inboundNoise(body: string): 'mash' | 'emoji' | null {
+  const t = body.trim();
+  if (!t || /[0-9?]/.test(t)) return null;
+  if (!/\p{L}/u.test(t)) {
+    return YES_EMOJI.test(t) || !/\p{Extended_Pictographic}/u.test(t) ? null : 'emoji';
+  }
+  const w = t.toLowerCase();
+  if (!/^[a-z]+[!.]*$/.test(w)) return null;
+  const letters = w.replace(/[!.]+$/, '');
+  if (letters.length < 4) return null;
+  const run = KEY_ROWS.some((row) => {
+    for (let i = 0; i + 5 <= row.length; i++) {
+      const seg = row.slice(i, i + 5);
+      if (letters.includes(seg) || letters.includes([...seg].reverse().join(''))) return true;
+    }
+    return false;
+  });
+  if (run) return 'mash';
+  if (!/[aeiouy]/.test(letters) && new Set(letters).size >= 4) return 'mash';
+  return null;
+}
+
+/** The intro, naming the business when the signup form already gave it. */
+function freeTasteIntro(businessName?: string | null): string {
+  const name = businessName?.trim();
+  if (!name) return FREE_TASTE_INTRO;
+  return (
+    `Hey — it's Handled ✳ Tell me what ${name} does and one thing you'd ` +
+    "want customers to know this week, and I'll write you a post on the spot. " +
+    "Free, takes ten seconds — and that's the only question."
+  );
+}
+
 const PAYWALL_REPLY =
   "Handled: You've used your free draft ✳ To get posts written, designed and " +
   'published for you every week, pick a plan at texthandled.com/billing — ' +
@@ -157,6 +204,74 @@ const PAYWALL_REPLY =
 const FREE_TASTE_CAPACITY_REPLY =
   "Handled: I'm at capacity for free drafts today — text me again tomorrow, " +
   'or skip the line and start now: texthandled.com/billing. Reply STOP to opt out.';
+
+/**
+ * The answer to "how much is it?" from someone who hasn't paid. Before this,
+ * the question either got the paywall text (no price in it) or, if their free
+ * draft was still unused, was taken as the business description and spent the
+ * draft on a caption about the word "price". Static, so it costs no LLM call.
+ * The numbers are the billing page's.
+ */
+const PRICE_REPLY =
+  'Handled plans: Starter $95/mo (3 posts a week), Growth $349/mo (5 a week, ' +
+  'plus designed carousels), Pro $699/mo (a post every day, plus reels from ' +
+  'your clips). Pick one at texthandled.com/billing.';
+const PRICE_REPLY_TASTE_LEFT =
+  " Want a free sample first? Tell me what your business is and I'll write you a post.";
+
+/**
+ * A short text asking what Handled costs. Kept to short messages so a business
+ * description that happens to mention its own prices ("our cakes cost less
+ * than the supermarket's") is still taken as the description.
+ */
+export function isPriceQuestion(body: string): boolean {
+  const t = body.trim();
+  if (!t || t.split(/\s+/).length > 8) return false;
+  return /\bhow much\b|\b(price|prices|pricing|cost|costs|plans?|rates?|monthly fee)\b|\$\s*\?/i.test(t);
+}
+
+/**
+ * A short text about Handled itself rather than about their business: asking
+ * to sign up ("sign me up for starter", "how do I pay") or what this is ("how
+ * does this work?"). Before this, the free-taste lane took either one as the
+ * business description: the lead's one free draft was spent on "sign me up",
+ * and after paying they were told that text had answered question one.
+ */
+export function aboutHandled(body: string): 'signup' | 'how' | null {
+  const t = body.trim();
+  if (!t || t.split(/\s+/).length > 10) return null;
+  // Anchored at the start (after an "ok"/"yes"/"please"), so a description
+  // like "I'm in Austin, I run a bakery" or "we help people get started with
+  // yoga" is still the description.
+  const lead = /^(?:(?:ok(?:ay)?|yes|yeah|yep|sure|great|cool|awesome|perfect|sounds good|alright|please|pls)[,.!\s]+)*/i;
+  const rest = t.replace(lead, '');
+  if (
+    // A bare "start" or "join" is a carrier keyword, handled as an opt-in.
+    (!/^(start|join)[\s.!?]*$/i.test(rest) &&
+      /^(?:(?:can you|could you|i(?:'?d| would) like to|i want to|i wanna|let me)\s+)?(?:sign (?:me )?up|signup|subscribe|join|get started|start)\b/i.test(rest)) ||
+    /^(?:how|where) (?:do|can) i (?:sign up|subscribe|join|get started|start|pay|buy|purchase)\b/i.test(rest) ||
+    /^(?:i'?m in|i am in|i'?m ready|let'?s do (?:it|this)|i'?ll take (?:it|the \w+)|i want the \w+(?: plan)?)[\s.!]*$/i.test(rest)
+  ) {
+    return 'signup';
+  }
+  if (
+    /^(?:so\s+)?(?:how (?:does|do) (?:this|it|you|handled) work|what (?:is|'?s) (?:this|handled)|what (?:exactly |actually )?(?:do|does) (?:you|handled|this)(?: guys)?(?: actually| exactly| even| really)? do|who (?:is|'?s) this|what are you)\b/i.test(rest)
+  ) {
+    return 'how';
+  }
+  return null;
+}
+
+const SIGNUP_REPLY =
+  "Love it. Pick a plan at texthandled.com/billing and I'll text you here " +
+  'the moment it goes through to get you set up.';
+const HOW_REPLY =
+  "Handled: I plan, write, design and post your business's social media. " +
+  'Each week I text you the posts, you reply yes or tell me what to change, ' +
+  'and I publish them. Plans start at $95/mo: texthandled.com/billing.';
+
+/** How the free draft text opens; also how the free draft is found again later. */
+const FREE_TASTE_LEAD = "Here's what I'd post for you:";
 
 /** How the pitch under the free draft reads. The draft itself is above it. */
 const FREE_TASTE_PITCH =
@@ -201,16 +316,28 @@ export class ConciergeService {
 
   async handleInbound(msg: InboundSms): Promise<void> {
     const { customer, conversation, created } = await this.resolveCustomer(msg.from);
-    await this.prisma.message.create({
-      data: {
-        conversationId: conversation.id,
-        direction: 'inbound',
-        channel: msg.from.includes('@') ? 'email' : 'sms',
-        body: msg.body,
-        mediaUrls: msg.mediaUrls,
-        twilioSid: msg.twilioSid,
-      },
-    });
+    try {
+      await this.prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          direction: 'inbound',
+          channel: msg.from.includes('@') ? 'email' : 'sms',
+          body: msg.body,
+          mediaUrls: msg.mediaUrls,
+          twilioSid: msg.twilioSid,
+        },
+      });
+    } catch (e) {
+      // Twilio retries a webhook it thinks failed (a slow reply counts), with
+      // the same MessageSid. The unique index on twilioSid catches the repeat;
+      // answering it would text the owner twice. Before this the repeat threw,
+      // so Twilio logged an error and retried again.
+      if (msg.twilioSid && (e as { code?: string }).code === 'P2002') {
+        this.log.warn(`duplicate inbound ${msg.twilioSid} ignored`);
+        return;
+      }
+      throw e;
+    }
 
     // 1. Kill switch (§8) — highest priority, dead simple.
     if (this.isStop(msg.body)) {
@@ -233,6 +360,63 @@ export class ConciergeService {
       );
     }
 
+    // 1b'. A paused customer. Who paused them decides what happens next:
+    //   - they texted STOP → total silence (carrier rules: nothing after an
+    //     opt-out) until they text START, which brings them straight back;
+    //   - billing → every text gets the update-your-card link, because that's
+    //     the only thing that will un-pause them (Stripe's invoice.paid does);
+    //   - admin/moderation → a hold notice; only the admin side lifts it.
+    if (customer.status === 'paused') {
+      const reason = customer.pausedReason ?? 'owner_stop';
+      if (reason === 'owner_stop') {
+        if (!this.isResume(msg.body)) return;
+        const result = await this.bus.emit(
+          this.task(customer.id, 'PAUSE_CUSTOMER', { reason: 'owner_stop', resume: true }),
+        );
+        await this.reply(this.addressOf(customer), conversation.id, result.summary_for_owner);
+        const back = result.data as { restored_posts?: number; waiting_posts?: number } | undefined;
+        if (back?.restored_posts || back?.waiting_posts) {
+          await this.presentNextDraft(customer.id, undefined, { promptedByOwner: true });
+          return;
+        }
+        // Mid-interview when they stopped → ask the next question again so
+        // the conversation has somewhere to go.
+        const prof = await this.prisma.brandProfile.findUnique({ where: { customerId: customer.id } });
+        const next = customer.stripeCustomerId ? this.onboarding.nextField(prof) : null;
+        if (next) {
+          await this.reply(this.addressOf(customer), conversation.id, this.onboarding.question(next));
+          return;
+        }
+        // Back with nothing waiting: "I'll plan your next posts" has to be
+        // true now, not next Monday.
+        void this.planIfIdle(customer.id).catch((e) => this.log.warn(`plan on resume failed: ${String(e)}`));
+        return;
+      }
+      if (reason === 'subscription_ended') {
+        const site = (process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com').replace(/\/+$/, '');
+        return this.reply(
+          this.addressOf(customer),
+          conversation.id,
+          'Your subscription has ended, so nothing is posting. If you want to pick back up, ' +
+            `choose a plan here and I'll carry on where we left off: ${site}/billing`,
+        );
+      }
+      if (reason === 'billing') {
+        return this.reply(
+          this.addressOf(customer),
+          conversation.id,
+          "Your posts are paused because the last payment didn't go through. " +
+            `Update your card here and I'll pick right back up: ${portalLink(customer.id)}`,
+        );
+      }
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        'Your account is on hold for the moment, so nothing is posting. ' +
+          'Email nasser@texthandled.com and we will sort it out.',
+      );
+    }
+
     // 1c. Text-to-join opt-in: the FIRST time a new number texts us, that
     //     inbound message is the opt-in, so confirm it with the registered
     //     compliance disclosure (frequency, rates, HELP/STOP, Terms/Privacy)
@@ -251,36 +435,48 @@ export class ConciergeService {
       return this.handleFreeTaste(customer, conversation.id, msg, created);
     }
 
-    // 2. Media in → ingest each attachment, and aim it at whatever is waiting:
-    //    the oldest open shot-list ask first, else the next upcoming post that
-    //    has no photo yet. Without this linkage every photo landed as an
+    // 1e. Ending the plan — "I want to cancel my subscription". It isn't about
+    //     a post: without this it reached the draft queue and got "Reply yes
+    //     to send that draft". Cancelling lives in their Stripe portal.
+    if (CANCEL_PLAN_RE.test(msg.body)) {
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        `You can cancel any time on your billing page: ${portalLink(customer.id)} ` +
+          "If something isn't working for you, tell me and I'll try to fix it.",
+      );
+    }
+    // "I want to cancel" with nothing after it could mean this draft or the
+    //     whole plan. It fell through to "Reply yes to send that draft" (QA
+    //     round 5), which answers neither, so ask which, with both ways out.
+    if (BARE_CANCEL_RE.test(msg.body)) {
+      const waiting = await this.prisma.post.count({ where: { customerId: customer.id, status: 'pending_approval' } });
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        waiting
+          ? `Sure. Do you mean the draft I sent? Reply "skip it" and I won't post it. To end your Handled plan, it's on your billing page: ${portalLink(customer.id)}`
+          : `You can cancel any time on your billing page: ${portalLink(customer.id)} ` +
+            "If something isn't working for you, tell me and I'll try to fix it.",
+      );
+    }
+    // 1e. Billing — "billing", "update my card". The answer is always the same
+    //     signed link to their Stripe portal, so it needs no interpretation.
+    //     The expired-link page tells owners to text exactly this.
+    if (/^\s*(billing|my billing|update (my )?(card|payment)|change (my )?(card|payment( method)?)|card)\s*[?.!]?\s*$/i.test(msg.body)) {
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        `Here's your billing page, where you can update your card or see invoices: ${portalLink(customer.id)}`,
+      );
+    }
+
+    // 2. Media in → ingest each attachment, and aim it at whatever is waiting
+    //    (photoTarget: the draft they were just shown, a newer shot-list ask,
+    //    else the next upcoming post that has no photo yet). Without this linkage every photo landed as an
     //    orphan record and the "I'll need 1 quick photo" ask was never closed.
     if (msg.mediaUrls.length > 0) {
-      let lastSummary = 'Got it — thanks for the photo! 📸';
-      for (let i = 0; i < msg.mediaUrls.length; i++) {
-        const openAsk = await this.prisma.shotListRequest.findFirst({
-          where: { customerId: customer.id, status: 'requested' },
-          orderBy: { askedAt: 'asc' },
-        });
-        const photolessPost = await this.prisma.post.findFirst({
-          where: {
-            customerId: customer.id,
-            status: { in: ['pending_approval', 'approved', 'scheduled'] },
-            mediaRefs: { isEmpty: true },
-          },
-          orderBy: { scheduledTime: 'asc' },
-        });
-        const result = await this.bus.emit(
-          this.task(customer.id, 'INGEST_MEDIA', {
-            source_url: msg.mediaUrls[i],
-            content_type: msg.mediaContentTypes[i] ?? 'image/jpeg',
-            shot_list_request_id: openAsk?.id,
-            post_id: openAsk?.postId ?? photolessPost?.id,
-          }),
-        );
-        lastSummary = result.summary_for_owner;
-      }
-      return this.reply(this.addressOf(customer), conversation.id, lastSummary);
+      return this.takePhotos(customer, conversation.id, msg);
     }
 
     // 3. Onboarding interview (§6) — resume at the next empty profile field.
@@ -293,22 +489,7 @@ export class ConciergeService {
 
     // 4. Graphic request ("make a graphic/carousel/quote card/promo...").
     if (this.isGraphicRequest(msg.body)) {
-      const slides = buildSlidesFromText(msg.body);
-      const result = await this.bus.emit(
-        this.task(customer.id, 'MAKE_GRAPHIC', { slides }),
-      );
-      // "Made your graphic" with nothing attached is a claim, not a review —
-      // the rendered slides ride along so the owner sees what was made.
-      const made = result.data as { slides?: Array<{ media_ref: string }> } | undefined;
-      const mediaUrls = (made?.slides ?? [])
-        .slice(0, 10)
-        .map((s) => (/^https?:\/\//.test(s.media_ref) ? s.media_ref : this.storage.publicUrl(s.media_ref)));
-      return this.reply(
-        this.addressOf(customer),
-        conversation.id,
-        result.summary_for_owner,
-        mediaUrls,
-      );
+      return this.makeRequestedGraphic(customer.id, this.addressOf(customer), conversation.id, msg.body);
     }
 
     // 5. Steady-state loop (§6): approve / revise / cancel / question.
@@ -342,6 +523,18 @@ export class ConciergeService {
   ): Promise<void> {
     const addr = this.addressOf(customer);
 
+    if (isPriceQuestion(msg.body)) {
+      return this.reply(
+        addr,
+        conversationId,
+        customer.freeDraftUsedAt ? PRICE_REPLY : PRICE_REPLY + PRICE_REPLY_TASTE_LEFT,
+      );
+    }
+    const about = aboutHandled(msg.body);
+    if (about) {
+      const left = customer.freeDraftUsedAt ? '' : PRICE_REPLY_TASTE_LEFT;
+      return this.reply(addr, conversationId, (about === 'signup' ? SIGNUP_REPLY : HOW_REPLY) + left);
+    }
     if (customer.freeDraftUsedAt) {
       return this.reply(addr, conversationId, PAYWALL_REPLY);
     }
@@ -422,7 +615,7 @@ export class ConciergeService {
       await this.reply(
         addr,
         conversationId,
-        `Here's what I'd post for you:\n\n“${caption.trim()}”\n\n${FREE_TASTE_PITCH}`,
+        `${FREE_TASTE_LEAD}\n\n“${caption.trim()}”\n\n${FREE_TASTE_PITCH}`,
       );
       // After the lead has their draft, never before: the alert is for
       // Nasser's follow-up, and it must not delay or endanger the sale text.
@@ -483,9 +676,9 @@ export class ConciergeService {
           tier: 'bulk',
           cachedContext: '',
           prompt: [
-            `The owner's local time right now is ${formatInZone(new Date(), tz)} (${tz}).`,
+            `The owner's local time right now is ${formatFull(new Date(), tz)} (${tz}).`,
             plannedTime
-              ? `The post under discussion is planned for ${formatInZone(plannedTime, tz)}.`
+              ? `The post under discussion is planned for ${formatFull(plannedTime, tz)}.`
               : '',
             `Their message: """${body}"""`,
             'When do they want it to go out? Return JSON:',
@@ -507,12 +700,14 @@ export class ConciergeService {
       if (parsed.when === 'none') return null;
       if (parsed.when === 'now') return { when: new Date(), scope: parsed.scope };
       const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/.exec(parsed.when);
-      if (!m) return null;
-      return { when: zonedToUtc(m[1], m[2], tz), scope: parsed.scope };
+      if (m) return { when: zonedToUtc(m[1], m[2], tz), scope: parsed.scope };
     } catch (e) {
       this.log.warn(`time parse failed: ${String(e)}`);
-      return null;
     }
+    // The model was unreachable or gave nothing usable: plain timing still
+    // works ("Thursday at 2pm"), for one post.
+    const local = parseTimeLocally(body, tz, new Date(), plannedTime);
+    return local ? { when: local, scope: 'post' } : null;
   }
 
   /**
@@ -609,6 +804,30 @@ export class ConciergeService {
   }
 
   /**
+   * Was the last thing we sent the draft itself (or a nudge about it)? A bare
+   * "ok" only approves what the owner was just shown.
+   */
+  private async lastOutboundShowsDraft(conversationId: string, caption: string | null): Promise<boolean> {
+    const lastIn = await this.prisma.message.findFirst({
+      where: { conversationId, direction: 'inbound' },
+      orderBy: { createdAt: 'desc' },
+      skip: 1, // the text being answered is already stored
+      select: { createdAt: true },
+    });
+    const since = await this.prisma.message.findMany({
+      where: {
+        conversationId,
+        direction: 'outbound',
+        ...(lastIn ? { createdAt: { gt: lastIn.createdAt } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 4,
+      select: { body: true, createdAt: true },
+    });
+    return draftIsLastAsk(since, caption);
+  }
+
+  /**
    * The everyday conversation. Almost always the owner is reacting to a draft
    * we texted them, so we resolve "the post they mean" first — the one still
    * waiting on their OK — then act on what they said.
@@ -642,6 +861,64 @@ export class ConciergeService {
       return this.fixBrandColors(customerId, phone, conversationId, body, { reasked: true });
     }
 
+    // Keyboard mash or a lone non-yes emoji: nothing to act on. Sent to the
+    // classifier it could come back as a low-confidence "revise" and rewrite a
+    // draft around "asdfgh", or reach the Q&A lane and get a confused answer.
+    const noise = inboundNoise(body);
+    if (noise === 'mash') {
+      return this.reply(
+        phone,
+        conversationId,
+        pending
+          ? "Didn't catch that one. Reply yes to post the draft, or tell me what to change."
+          : "Didn't catch that one. What can I do for you?",
+      );
+    }
+    if (noise === 'emoji') {
+      if (!pending) return; // a reaction to nothing in particular needs no answer
+      return this.reply(
+        phone,
+        conversationId,
+        'Want me to post the draft? Reply yes, or tell me what to change.',
+      );
+    }
+
+    // A bare thanks. The fallback used to answer it with "Reply yes to send
+    // that draft", which reads as a nag, and when the draft hadn't been shown
+    // yet it pointed at something they had never seen.
+    if (THANKS_RE.test(body) && !(await this.pendingConfirmation(conversationId))) {
+      if (!pending) return this.reply(phone, conversationId, 'Anytime ✳');
+      const tz =
+        (await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }))
+          ?.timezone ?? 'America/Los_Angeles';
+      const when = pending.scheduledTime ? ` for ${formatInZone(pending.scheduledTime, tz)}` : '';
+      return this.reply(phone, conversationId, `Anytime ✳ Your draft${when} is there whenever you're ready for it.`);
+    }
+
+    // "Do one about our new beard trims" while a draft waits. That is a new
+    // post, not a change to the draft: offline it fell through to "Reply yes
+    // to send that draft" and the ask was lost, and the model could read it as
+    // a revise and rewrite the draft they were looking at. Keep the draft and
+    // keep the ask for the next plan.
+    if (pending && isNewPostAsk(body)) {
+      const profile = await this.prisma.brandProfile.findUnique({ where: { customerId }, select: { postRequests: true } });
+      const ask = body.trim().slice(0, 300);
+      await this.prisma.brandProfile.update({
+        where: { customerId },
+        data: { postRequests: [...(profile?.postRequests ?? []), ask].slice(-5) },
+      });
+      const tz =
+        (await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }))
+          ?.timezone ?? 'America/Los_Angeles';
+      const when = pending.scheduledTime ? ` for ${formatInZone(pending.scheduledTime, tz)}` : '';
+      return this.reply(
+        phone,
+        conversationId,
+        "Got it. I'll build one of your next posts around that, and you'll see it before it goes out. " +
+          `Your draft${when} is still waiting: reply “yes” to schedule it, or tell me what to change.`,
+      );
+    }
+
     let { intent, feedback, confidence } = await this.intent.classify(
       body,
       Boolean(pending),
@@ -672,6 +949,27 @@ export class ConciergeService {
           "No problem — I've left everything as it is. What would you like to do?",
         );
       }
+    }
+
+    // A bare "ok" answers the last thing we said. When that was a notice (a
+    // declined card, an upgrade, a heads-up) and not the draft, "ok will do"
+    // used to approve and schedule a post the owner wasn't looking at.
+    if (
+      !justConfirmed &&
+      intent === 'approve' &&
+      pending &&
+      !STRONG_APPROVE_RE.test(body) &&
+      !(await this.lastOutboundShowsDraft(conversationId, pending.caption))
+    ) {
+      const tz =
+        (await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }))
+          ?.timezone ?? 'America/Los_Angeles';
+      const when = pending.scheduledTime ? ` for ${formatInZone(pending.scheduledTime, tz)}` : '';
+      return this.reply(
+        phone,
+        conversationId,
+        `Got it. Your draft${when} is still waiting, by the way. Reply “post it” and I'll schedule it, or tell me what to change.`,
+      );
     }
 
     // Interpretation is less certain than a keyword, so ask when the reading
@@ -783,6 +1081,13 @@ export class ConciergeService {
         return this.startOver(customerId, phone, conversationId);
     }
 
+    // Nothing waiting, and they asked for something ("can you do the next one
+    // about our $25 cuts"). That used to get "nothing's waiting on your OK"
+    // and the ask was dropped.
+    if (!pending && intent === 'revise' && looksLikePostRequest(feedback || body)) {
+      return this.takePostRequest(customerId, phone, conversationId, (feedback || body).trim().slice(0, 300));
+    }
+
     // Nothing waiting on them — don't pretend we changed something.
     if (!pending && (intent === 'approve' || intent === 'revise' || intent === 'cancel')) {
       return this.reply(
@@ -808,7 +1113,7 @@ export class ConciergeService {
           : null;
         const when =
           (timed ? new Date(Math.max(timed.when.getTime(), Date.now() + 60_000)) : null) ??
-          pending!.scheduledTime ??
+          rollForward(pending!.scheduledTime) ??
           tomorrowMorningInZone(tz);
         const result = await this.bus.emit(
           this.task(customerId, 'SCHEDULE_POST', {
@@ -1075,6 +1380,159 @@ export class ConciergeService {
   }
 
   /**
+   * "Make a graphic for our birthday packages". The graphic used to arrive on
+   * its own with "ready to review", and then nothing could be done with it:
+   * "post it" found no draft. Now it comes as a draft post with a caption, so
+   * "yes" schedules it like any other. If drafting the caption fails, the
+   * graphic still arrives on its own.
+   */
+  private async makeRequestedGraphic(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    body: string,
+  ): Promise<void> {
+    const slides = buildSlidesFromText(body);
+    const mediaOf = (result: { data?: unknown }) =>
+      ((result.data as { slides?: Array<{ media_ref: string }> } | undefined)?.slides ?? [])
+        .slice(0, 10)
+        .map((s) => (/^https?:\/\//.test(s.media_ref) ? s.media_ref : this.storage.publicUrl(s.media_ref)));
+
+    const postId = await this.draftForGraphic(customerId, body, slides[0]?.kind === 'promo').catch((e) => {
+      this.log.warn(`caption for a requested graphic failed for ${customerId}: ${String(e)}`);
+      return null;
+    });
+    const result = await this.bus.emit(
+      this.task(customerId, 'MAKE_GRAPHIC', postId ? { slides, post_id: postId } : { slides }),
+    );
+    if (!postId || result.error) {
+      return this.reply(phone, conversationId, result.summary_for_owner, mediaOf(result));
+    }
+    // Drafts are shown oldest first, so this one comes after every draft
+    // already waiting. "Next in line" was wrong with three ahead of it (QA
+    // round 5), so say how many.
+    const waiting = await this.prisma.post.count({
+      where: { customerId, status: 'pending_approval', id: { not: postId } },
+    });
+    if (waiting) {
+      const ahead = waiting === 1 ? 'the draft already waiting on you' : `the ${waiting} drafts already waiting on you`;
+      return this.reply(
+        phone,
+        conversationId,
+        `Made it ✳ It's a post now, and I'll bring it back for your yes right after ${ahead}.`,
+        mediaOf(result),
+      );
+    }
+    await this.presentNextDraft(customerId, 'Made it ✳ Here it is as a post:', {
+      promptedByOwner: true,
+      postId,
+    });
+  }
+
+  /** A draft post to carry a requested graphic, tomorrow at 10 their time. */
+  private async draftForGraphic(customerId: string, request: string, promo: boolean): Promise<string | null> {
+    const [customer, account] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }),
+      this.prisma.connectedAccount.findFirst({
+        where: { customerId, revoked: false, platform: { not: 'google_business' } },
+        select: { platform: true },
+      }),
+    ]);
+    const tz = customer?.timezone ?? 'America/Los_Angeles';
+    const tomorrow = new Date(Date.now() + 24 * 3600_000).toLocaleDateString('en-CA', { timeZone: tz });
+    const drafted = await this.bus.emit(
+      this.task(customerId, 'DRAFT_POST', {
+        platform: account?.platform ?? 'instagram',
+        archetype: promo ? 'promo' : 'product_spotlight',
+        scheduled_time: zonedToUtc(tomorrow, '10:00', tz).toISOString(),
+        needs_asset: false,
+        prompt_notes: `The owner asked for a graphic post by text: ${request.slice(0, 400)}. The caption goes with that graphic.`,
+      }),
+    );
+    const id = (drafted.data as DraftPostResult | undefined)?.post_id;
+    if (drafted.error || !id) return null;
+    const post = await this.prisma.post.findUnique({ where: { id }, select: { status: true } });
+    if (post?.status !== 'pending_approval' && post?.status !== 'approved') return null;
+    // They asked to see it, so it waits for their yes even on autopilot.
+    await this.prisma.post.update({
+      where: { id },
+      data: { status: 'pending_approval', approvalState: 'awaiting_owner' },
+    });
+    return id;
+  }
+
+  /**
+   * A post the owner asked for while nothing was waiting on them. "The next
+   * one" means the next post already scheduled: it's rewritten around the
+   * ask and shown again, since they haven't seen this version. With nothing
+   * scheduled in the coming week, the ask goes on the list the next week's
+   * plan works from, and the reply says so.
+   */
+  private async takePostRequest(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    ask: string,
+  ): Promise<void> {
+    const now = Date.now();
+    const next = await this.prisma.post.findFirst({
+      where: {
+        customerId,
+        status: 'scheduled',
+        scheduledTime: { gt: new Date(now + 30 * 60_000), lte: new Date(now + 7 * 24 * 3600_000) },
+      },
+      orderBy: { scheduledTime: 'asc' },
+    });
+    if (next) {
+      const result = await this.bus.emit(
+        this.task(customerId, 'REGENERATE_POST', {
+          post_id: next.id,
+          owner_feedback: `Make this post about what the owner asked for: ${ask}`,
+          regenerate_caption: true,
+        }),
+      );
+      if (result.error) return this.reply(phone, conversationId, result.summary_for_owner);
+      // They haven't seen this version, so it waits for their yes.
+      await this.prisma.post.update({
+        where: { id: next.id },
+        data: { status: 'pending_approval', approvalState: 'awaiting_owner' },
+      });
+      const deck =
+        next.mediaRefs.length > 0 &&
+        (await this.prisma.mediaAsset.findFirst({
+          where: { postId: next.id, source: 'assembled', kind: 'image' },
+          select: { id: true },
+        })) !== null &&
+        (await this.prisma.mediaAsset.findFirst({
+          where: { postId: next.id, source: 'owner_upload' },
+          select: { id: true },
+        })) === null;
+      if (deck) {
+        const rebuilt = await this.bus.emit(
+          this.task(customerId, 'GENERATE_CAROUSEL', { post_id: next.id, replace_existing: true, owner_feedback: ask }),
+        );
+        if (rebuilt.error) this.log.warn(`deck rebuild after a post request failed for ${next.id}`);
+      }
+      await this.presentNextDraft(customerId, 'Reworked your next post around that ✳', {
+        promptedByOwner: true,
+        postId: next.id,
+      });
+      return;
+    }
+    const profile = await this.prisma.brandProfile.findUnique({
+      where: { customerId },
+      select: { postRequests: true },
+    });
+    const list = [...(profile?.postRequests ?? []), ask].slice(-5);
+    await this.prisma.brandProfile.update({ where: { customerId }, data: { postRequests: list } });
+    return this.reply(
+      phone,
+      conversationId,
+      "Got it. I'll build one of the posts in your next plan around that, and you'll see it before it goes out.",
+    );
+  }
+
+  /**
    * Text the owner unprompted — the weekly plan landing, a draft needing a
    * look. Everything else in here reacts to an inbound message; this is the
    * one path that starts a conversation, so it resolves (or creates) the
@@ -1091,6 +1549,14 @@ export class ConciergeService {
     });
     if (!customer) {
       this.log.warn(`notify: no customer ${customerId}`);
+      return;
+    }
+    // An owner who texted STOP has opted out of texts, full stop. Nothing we
+    // start (a referral thank-you, a weekly plan, a billing notice) may reach
+    // them until they text START. Billing/admin pauses still hear from us —
+    // those texts are how they find out why posting stopped.
+    if (customer.status === 'paused' && (customer.pausedReason ?? 'owner_stop') === 'owner_stop') {
+      this.log.log(`notify: ${customerId} opted out (STOP) — not texting`);
       return;
     }
     // Quiet hours (TCPA): unprompted texts only between 8:00 and 21:00 on the
@@ -1149,7 +1615,15 @@ export class ConciergeService {
     let sent = 0;
     for (const item of due) {
       const customer = item.customer;
-      if (!customer || !['active', 'onboarding'].includes(customer.status)) {
+      // A billing pause or an ended plan still hears from us: that queued text
+      // is how they learn why posting stopped (QA round 2: the "your
+      // subscription has ended" notice, queued overnight, was dropped here).
+      // Only an owner who texted STOP, or a closed account, gets nothing.
+      const reachable =
+        customer &&
+        (['active', 'onboarding'].includes(customer.status) ||
+          (customer.status === 'paused' && (customer.pausedReason ?? 'owner_stop') !== 'owner_stop'));
+      if (!reachable) {
         await this.prisma.queuedText.delete({ where: { id: item.id } });
         this.log.log(
           `quiet-hours queue: dropped text for ${item.customerId} (status ${customer?.status ?? 'gone'})`,
@@ -1190,10 +1664,10 @@ export class ConciergeService {
     // stripeCustomerId is set, so paying customers flow straight through.
     const payer = await this.prisma.customer.findUnique({
       where: { id: customerId },
-      select: { stripeCustomerId: true },
+      include: { conversation: { select: { id: true } } },
     });
     if (!payer?.stripeCustomerId) {
-      await this.notify(customerId, FREE_TASTE_INTRO, { promptedByOwner: true });
+      await this.notify(customerId, freeTasteIntro(payer?.businessName), { promptedByOwner: true });
       return;
     }
     const profile = await this.prisma.brandProfile.findUnique({
@@ -1201,14 +1675,61 @@ export class ConciergeService {
     });
     const first = this.onboarding.nextField(profile);
     if (!first) return; // already fully onboarded (re-subscribe, plan change)
+    const email = payer.preferredChannel === 'email';
+
+    // They described the business to get their free draft. Asking them to
+    // describe it again right after they paid reads as not listening, so that
+    // description is taken as the answer to question one.
+    const conversationId = payer.conversation?.id;
+    const described =
+      first === 'business_type' && payer.freeDraftUsedAt && conversationId
+        ? await this.freeTasteBlurb(conversationId)
+        : null;
+    if (described && conversationId) {
+      await this.notify(
+        customerId,
+        this.onboarding.welcome(payer.businessName, { email, firstAnswered: true }),
+        { promptedByOwner: true },
+      );
+      return this.continueOnboarding(
+        customerId,
+        this.addressOf(payer),
+        conversationId,
+        described,
+        profile,
+        payer.businessName,
+        payer.planTier,
+      );
+    }
+
     // The owner just checked out and is watching their phone for this text.
     await this.notify(
       customerId,
       first === 'business_type'
-        ? this.onboarding.welcome()
+        ? this.onboarding.welcome(payer.businessName, { email })
         : this.onboarding.question(first),
       { promptedByOwner: true },
     );
+  }
+
+  /**
+   * What the owner wrote that their free draft was made from: the last thing
+   * they sent before it. Null when there was no free draft in this thread, or
+   * what came before it was only a greeting.
+   */
+  private async freeTasteBlurb(conversationId: string): Promise<string | null> {
+    const draft = await this.prisma.message.findFirst({
+      where: { conversationId, direction: 'outbound', body: { startsWith: FREE_TASTE_LEAD } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!draft) return null;
+    const asked = await this.prisma.message.findFirst({
+      where: { conversationId, direction: 'inbound', createdAt: { lte: draft.createdAt } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const text = asked?.body?.trim();
+    if (!text || this.onboarding.isGreetingOnly(text) || isPriceQuestion(text) || aboutHandled(text)) return null;
+    return text;
   }
 
   /**
@@ -1309,6 +1830,71 @@ export class ConciergeService {
    *
    * Returns false when the queue is empty.
    */
+  /** Photos texted in: each goes on the post it belongs to (photoTarget). */
+  async takePhotos(
+    customer: { id: string; phone: string | null; email: string | null; preferredChannel: string },
+    conversationId: string,
+    msg: InboundSms,
+  ): Promise<void> {
+    let lastSummary = 'Got it — thanks for the photo! 📸';
+    let reshow: string | null = null;
+    let target = null as { askId?: string; postId?: string; shownDraft: boolean } | null;
+    for (let i = 0; i < msg.mediaUrls.length; i++) {
+      // Several photos sent with the draft on screen all go on that draft;
+      // otherwise each one fills the next thing waiting on a photo.
+      target = target?.shownDraft ? { ...target, askId: undefined } : await this.photoTarget(customer.id);
+      const result = await this.bus.emit(
+        this.task(customer.id, 'INGEST_MEDIA', {
+          source_url: msg.mediaUrls[i],
+          content_type: msg.mediaContentTypes[i] ?? 'image/jpeg',
+          shot_list_request_id: target.askId,
+          post_id: target.postId,
+        }),
+      );
+      if (target.shownDraft && result.status !== 'failed') reshow = target.postId ?? null;
+      lastSummary = result.summary_for_owner;
+    }
+    // The photo went on the draft they're looking at: show it again with
+    // the photo in place, so the yes they give is to what will post.
+    if (reshow && (await this.presentNextDraft(customer.id, 'Added your photo ✳', { postId: reshow, promptedByOwner: true }).catch(() => false))) return;
+    return this.reply(this.addressOf(customer), conversationId, lastSummary);
+  }
+
+  /**
+   * Where a photo the owner just texted belongs. The draft we last showed
+   * them, if it has no picture, ends "text me a photo and I'll put it on this
+   * post", so a photo sent after it goes there. An open shot-list ask wins
+   * only when it was asked after that draft was shown. QA round 4: a photo
+   * sent right after the Tuesday draft landed on Monday's scheduled post,
+   * because Monday's shot-list ask was older.
+   */
+  async photoTarget(customerId: string): Promise<{ askId?: string; postId?: string; shownDraft: boolean }> {
+    const [openAsk, shown] = await Promise.all([
+      this.prisma.shotListRequest.findFirst({
+        where: { customerId, status: 'requested' },
+        orderBy: { askedAt: 'asc' },
+      }),
+      this.prisma.post.findFirst({
+        where: { customerId, status: 'pending_approval', mediaRefs: { isEmpty: true }, presentedAt: { not: null } },
+        orderBy: { presentedAt: 'desc' },
+      }),
+    ]);
+    const askFirst =
+      openAsk && (!shown || openAsk.postId === shown.id || !shown.presentedAt || openAsk.askedAt > shown.presentedAt);
+    if (openAsk && askFirst) return { askId: openAsk.id, postId: openAsk.postId ?? undefined, shownDraft: openAsk.postId === shown?.id };
+    if (shown) {
+      const askForIt = await this.prisma.shotListRequest.findFirst({
+        where: { customerId, status: 'requested', postId: shown.id },
+      });
+      return { askId: askForIt?.id, postId: shown.id, shownDraft: true };
+    }
+    const next = await this.prisma.post.findFirst({
+      where: { customerId, status: { in: ['pending_approval', 'approved', 'scheduled'] }, mediaRefs: { isEmpty: true } },
+      orderBy: { scheduledTime: 'asc' },
+    });
+    return { postId: next?.id, shownDraft: false };
+  }
+
   async presentNextDraft(
     customerId: string,
     lead?: string,
@@ -1449,8 +2035,9 @@ export class ConciergeService {
     } | null,
     /** So a novel business type can be told what the pause is for. */
     notify?: { phone: string; conversationId: string },
-  ): Promise<void> {
-    if (!profile?.businessType) return;
+  ): Promise<{ toldAboutResearch: boolean }> {
+    let toldAboutResearch = false;
+    if (!profile?.businessType) return { toldAboutResearch };
 
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
@@ -1460,7 +2047,7 @@ export class ConciergeService {
 
     if (verdict.slug && verdict.confidence >= CONFIDENT) {
       await this.playbook.attach(customerId, verdict.slug, verdict.confidence);
-      return;
+      return { toldAboutResearch };
     }
 
     // Novel business type — research it, then plan from it (Flow 2).
@@ -1478,12 +2065,14 @@ export class ConciergeService {
           "so give me about five minutes to go read up on what actually " +
           "works for your kind of business. I'll text you the second your " +
           'first week is ready.',
-      ).catch(() => undefined);
+      )
+        .then(() => (toldAboutResearch = true))
+        .catch(() => undefined);
     }
     const researched = await this.research.ensureArchetypeFor(profile.businessType);
     if (researched) {
       await this.playbook.attach(customerId, researched.slug, researched.confidence);
-      return;
+      return { toldAboutResearch };
     }
 
     // Research failed. Fall back to the closest partial match rather than
@@ -1491,6 +2080,7 @@ export class ConciergeService {
     if (verdict.slug) {
       await this.playbook.attach(customerId, verdict.slug, verdict.confidence);
     }
+    return { toldAboutResearch };
   }
 
   /**
@@ -1502,9 +2092,12 @@ export class ConciergeService {
       this.prisma.customer.findUnique({ where: { id: customerId } }),
       this.prisma.brandProfile.findUnique({ where: { customerId } }),
       this.prisma.post.findMany({
-        where: { customerId, status: { in: ['approved', 'scheduled'] } },
+        // Drafts waiting on the owner are the ones that need them, so they
+        // belong in "coming up" too (F17). The summary shows four in time
+        // order and counts the rest, so it reads them all.
+        where: { customerId, status: { in: ['pending_approval', 'approved', 'scheduled'] } },
         orderBy: { scheduledTime: 'asc' },
-        take: 3,
+        take: 30,
         select: { caption: true, scheduledTime: true, status: true },
       }),
       this.prisma.post.count({
@@ -1704,8 +2297,8 @@ export class ConciergeService {
         phone,
         conversationId,
         pending
-          ? 'Good question — I\'ll get you an answer. Meanwhile that draft is ready whenever you are: reply "yes" to send it.'
-          : "Good question — I'll check and get back to you. Anything you text me can also just become a post.",
+          ? 'I couldn\'t look that up just now, so try me again in a bit. That draft is still ready whenever you are: reply "yes" to send it.'
+          : "I couldn't look that up just now, so try me again in a bit. Anything you text me can also just become a post.",
       );
     }
   }
@@ -1778,8 +2371,8 @@ export class ConciergeService {
         phone,
         conversationId,
         outboundCount === 0
-          ? this.onboarding.welcome()
-          : this.onboarding.question('business_type'),
+          ? this.onboarding.welcome(businessName, { email: phone.includes('@') })
+          : this.onboarding.question('business_type', undefined, businessName),
       );
     }
     // One follow-up per field, ever: the marker survives in pendingIntent
@@ -1823,7 +2416,11 @@ export class ConciergeService {
           where: { customerId },
           data: { websiteUrl: website },
         });
-        if (website !== NO_WEBSITE) {
+        if (website === NO_WEBSITE) {
+          // "No site" is a complete answer. Without an ack here the reply fell
+          // through to "Sorry — didn't quite catch that." (QA, Nov 2026).
+          ack = 'No problem, plenty of great businesses run on social alone.';
+        } else {
           ack = "On it — I'll go look you up while we keep going ✳";
           void this.lookup
             .lookUp(customerId, website, {
@@ -1924,7 +2521,7 @@ export class ConciergeService {
     }
 
     if (next) {
-      const q = this.onboarding.question(next, next === 'posting_frequency' ? postsCap : undefined);
+      const q = this.onboarding.question(next, next === 'posting_frequency' ? postsCap : undefined, businessName);
       return this.reply(phone, conversationId, ack ? `${ack} ${q}` : q);
     }
 
@@ -1977,9 +2574,13 @@ export class ConciergeService {
     // (engine Flow 1). A novel business type researches its own archetype
     // first — the wait sits between two texts, so the owner reads it as the
     // machine working, and their very first plan is already specialist-grade.
-    await this.assignArchetype(customerId, done, { phone, conversationId }).catch((e) =>
-      this.log.warn(`archetype assignment failed for ${customerId}: ${String(e)}`),
-    );
+    const { toldAboutResearch } = await this.assignArchetype(customerId, done, {
+      phone,
+      conversationId,
+    }).catch((e) => {
+      this.log.warn(`archetype assignment failed for ${customerId}: ${String(e)}`);
+      return { toldAboutResearch: false };
+    });
 
     // Send the connect link, then write the first week's posts so the owner
     // has something to look at immediately. Planning alone used to be the end
@@ -1991,15 +2592,7 @@ export class ConciergeService {
     await this.reply(
       phone,
       conversationId,
-      `Next, whenever you have two minutes: connect the accounts you want ` +
-        `me to post to (secure link, we never see your passwords): ` +
-        `${site}/connect?c=${customerId}\n\n` +
-        // Optional, never a gate. A logo lets us brand every post and pull the
-        // real colours — but a signup should never stall on finding a logo file,
-        // so it's an offer, and the colour fallback covers everyone who skips.
-        `Got a logo handy? Drop it here and I'll put it on your posts: ` +
-        `${site}/upload?c=${customerId}&kind=logo\n\n` +
-        `Meanwhile I'm writing your first week — give me a moment.`,
+      connectMessage(site, customerId, toldAboutResearch),
     );
 
     // If the look-you-up research is still reading, give it a moment — the
@@ -2041,6 +2634,25 @@ export class ConciergeService {
   }
 
   /**
+   * After a pause lifts with nothing lined up, plan and draft the coming week
+   * and show the first draft. Without this, "I'll plan your next posts and
+   * send them over" meant nothing until the Monday cron, up to a week later
+   * (QA round 4, START and paying again after a cancel). Does nothing when
+   * they're not live or something is already waiting or scheduled.
+   */
+  async planIfIdle(customerId: string, opts: { promptedByOwner?: boolean } = { promptedByOwner: true }): Promise<boolean> {
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { status: true } });
+    if (customer?.status !== 'active') return false;
+    const lined = await this.prisma.post.count({
+      where: { customerId, status: { in: ['pending_approval', 'approved', 'scheduled'] }, scheduledTime: { gt: new Date() } },
+    });
+    if (lined > 0) return false;
+    const drafted = await this.draftFirstWeek(customerId);
+    if (!drafted) return false;
+    return this.presentNextDraft(customerId, "Here's the first one ✳", opts);
+  }
+
+  /**
    * Plan and draft this owner's first week, returning how many drafts landed.
    *
    * Mirrors the weekly cron's plan → draft loop, but lives here because it runs
@@ -2075,9 +2687,44 @@ export class ConciergeService {
   private async draftFirstWeek(customerId: string): Promise<number> {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
-      select: { timezone: true },
+      select: { timezone: true, planTier: true },
     });
     const tz = customer?.timezone ?? 'America/Los_Angeles';
+
+    // The regular plan starts next Monday, which left a new owner with nothing
+    // posting for up to a week after they signed up (QA round 5: a Monday-night
+    // signup's first post was the next Monday). A short starter week fills the
+    // days from tomorrow until then, drafted first so it's shown first.
+    let drafted = 0;
+    const starter = starterWeek(tz, nextMonday());
+    if (starter) {
+      const profile = await this.prisma.brandProfile.findUnique({
+        where: { customerId },
+        select: { postingFrequency: true },
+      });
+      const perWeek = Math.min(profile?.postingFrequency ?? 3, postsPerWeek(customer?.planTier ?? 'starter'));
+      const posts = Math.min(3, starter.days, Math.max(1, Math.round((perWeek * starter.days) / 7)));
+      const planned = await this.bus
+        .emit(
+          this.task(
+            customerId,
+            'PLAN_WEEK',
+            { week_start: `${starter.start}T00:00:00.000Z`, days: starter.days, posting_frequency: posts },
+            'concierge',
+          ),
+        )
+        .catch((e) => {
+          this.log.warn(`starter week plan failed for ${customerId}: ${String(e)}`);
+          return null;
+        });
+      const early = (planned?.data as { slots?: CalendarSlot[] } | null | undefined)?.slots ?? [];
+      // A slot whose time has already passed today can't be offered.
+      drafted += await this.draftSlots(
+        customerId,
+        tz,
+        early.filter((sl) => zonedToUtc(sl.date, sl.best_time, tz).getTime() > Date.now() + 3600_000),
+      );
+    }
 
     // PLAN_WEEK runs a real LLM call, and the first request to a cold backend
     // can time out and come back with zero slots. Left unretried that silently
@@ -2092,6 +2739,11 @@ export class ConciergeService {
       this.log.error(`PLAN_WEEK yielded no slots for ${customerId} after retries`);
     }
 
+    return drafted + (await this.draftSlots(customerId, tz, slots));
+  }
+
+  /** Drafts each planned slot, with its visuals; returns how many landed. */
+  private async draftSlots(customerId: string, tz: string, slots: CalendarSlot[]): Promise<number> {
     let drafted = 0;
     for (const slot of slots) {
       try {
@@ -2105,6 +2757,7 @@ export class ConciergeService {
               scheduled_time: zonedToUtc(slot.date, slot.best_time, tz).toISOString(),
               needs_asset: slot.needs_asset,
               shot_list_hint: slot.shot_list,
+              prompt_notes: ownerRequestNote(slot.owner_request),
             },
             'concierge',
           ),
@@ -2229,6 +2882,7 @@ export class ConciergeService {
   ): Promise<void> {
     const channel = to.includes('@') ? 'email' : 'sms';
     if (channel === 'email') {
+      body = forEmail(body);
       // Email has no MMS: the image rides as a link the branded HTML renders
       // clickable. Same information, channel-appropriate shape.
       const withMedia = mediaUrls?.length
@@ -2255,6 +2909,16 @@ export class ConciergeService {
   }): string {
     const primary = c.preferredChannel === 'email' ? c.email : c.phone;
     return primary ?? c.phone ?? c.email ?? '';
+  }
+
+  /**
+   * The opt-back-in words. Exactly Twilio's default opt-in keywords, on
+   * purpose: after a STOP, Twilio blocks every text to that number until it
+   * sees one of these, so resuming on anything else ("go", "resume") would
+   * restart posting while our confirmation silently fails to send.
+   */
+  private isResume(body: string): boolean {
+    return /^\s*(start|unstop|yes)\s*[!.]?\s*$/i.test(body);
   }
 
   private isStop(body: string): boolean {
@@ -2316,8 +2980,10 @@ export function buildSlidesFromText(
     return [{ kind: 'promo', headline, body: stripCommand(text) }];
   }
 
-  // Default: a title slide from the request text.
-  const headline = stripCommand(text) || 'New Post';
+  // Default: a title slide from the request text, read as a headline:
+  // "for our birthday party packages" → "Birthday party packages".
+  const topic = stripCommand(text).replace(/^(?:about|for|on)\s+/i, '').replace(/^(?:our|my|the)\s+/i, '');
+  const headline = topic ? topic[0].toUpperCase() + topic.slice(1) : 'New Post';
   return [{ kind: 'title', headline }];
 }
 
@@ -2332,6 +2998,17 @@ function stripCommand(text: string): string {
     .trim();
 }
 
+/**
+ * The days from tomorrow (the owner's tomorrow) up to the regular plan's
+ * Monday, or null when fewer than two are left, so a Saturday signup isn't
+ * handed a one-day plan.
+ */
+export function starterWeek(tz: string, planMonday: string, now = new Date()): { start: string; days: number } | null {
+  const start = new Date(now.getTime() + 86_400_000).toLocaleDateString('en-CA', { timeZone: tz });
+  const days = Math.round((Date.parse(planMonday.slice(0, 10)) - Date.parse(start)) / 86_400_000);
+  return days >= 2 && days <= 7 ? { start, days } : null;
+}
+
 function nextMonday(): string {
   const d = new Date();
   const day = d.getUTCDay();
@@ -2339,4 +3016,133 @@ function nextMonday(): string {
   d.setUTCDate(d.getUTCDate() + add);
   d.setUTCHours(0, 0, 0, 0);
   return d.toISOString();
+}
+
+/**
+ * The text that sends the connect link (and the optional logo link) as
+ * onboarding finishes. After the research note the owner has already been told
+ * the first week is coming, so saying it again would read as a second, shorter
+ * promise; the closing line only goes out when nothing has said so yet.
+ */
+export function connectMessage(site: string, customerId: string, toldAboutResearch: boolean): string {
+  return (
+    `Next, whenever you have two minutes: connect the accounts you want ` +
+    `me to post to (secure link, we never see your passwords): ` +
+    `${site}/connect?c=${customerId}\n\n` +
+    // Optional, never a gate. A logo lets us brand every post and pull the
+    // real colours — but a signup should never stall on finding a logo file,
+    // so it's an offer, and the colour fallback covers everyone who skips.
+    `Got a logo handy? Drop it here and I'll put it on your posts: ` +
+    `${site}/upload?c=${customerId}&kind=logo` +
+    (toldAboutResearch ? '' : `\n\nMeanwhile I'm writing your first week — give me a moment.`)
+  );
+}
+
+/**
+ * The owner-facing copy is written for texting. An email customer reading
+ * "text me a photo" or "I'll text you" would reasonably wonder whether to get
+ * out their phone, so the wording follows the channel the message goes out on.
+ */
+const EMAIL_WORDING: [RegExp, string][] = [
+  [/\bText me\b/g, 'Email me'],
+  [/\btext me\b/g, 'email me'],
+  [/\bI'll text you\b/g, "I'll email you"],
+  [/\bI'll text\b/g, "I'll email"],
+  [/\bmy texts\b/g, 'my emails'],
+  [/\bby text\b/g, 'by email'],
+  [/\btext back\b/g, 'email back'],
+];
+
+export function forEmail(body: string): string {
+  return EMAIL_WORDING.reduce((b, [re, to]) => b.replace(re, to), body);
+}
+
+/** Approvals that name the post, so they hold whatever we said last. */
+export const STRONG_APPROVE_RE =
+  /\b(?:post|send|ship|publish|schedule)\s+(?:it|that|this)\b|\bapproved?\b|\blooks? (?:good|great|perfect|awesome|amazing)\b|\blgtm\b|\blove (?:it|this)\b/i;
+
+/**
+ * Does this outbound message put the draft in front of the owner? True when it
+ * quotes the caption or asks for the reply that approves a draft. With nothing
+ * sent yet there is nothing to answer, so the draft is the only reading.
+ */
+/**
+ * Whether our latest texts leave the draft as the thing a plain "yes" answers.
+ * `sent` is what we sent since the owner last wrote, newest first.
+ *
+ * Usually that's just the last text. But the first draft goes out in a burst
+ * with a tip after it (the photo walk), and the draft itself says to reply
+ * "yes"; a "yes" there was turned away as an answer to the tip. So a short
+ * note sent within a minute of the text before it, asking nothing, is looked
+ * past. A notice sent later (a declined card hours on) still is the last word.
+ */
+export function draftIsLastAsk(
+  sent: Array<{ body: string | null; createdAt: Date }>,
+  caption: string | null,
+): boolean {
+  if (sent.length === 0) return true;
+  for (let i = 0; i < sent.length; i++) {
+    if (lastMessageShowsDraft(sent[i].body, caption)) return true;
+    const older = sent[i + 1];
+    const tagAlong =
+      older &&
+      sent[i].createdAt.getTime() - older.createdAt.getTime() <= 60_000 &&
+      // A link's query string ("…/photo-walk?c=…") is not a question.
+      !(sent[i].body ?? '').replace(/https?:\/\/\S+/g, '').includes('?');
+    if (!tagAlong) return false;
+  }
+  return false;
+}
+
+export function lastMessageShowsDraft(body: string | null, caption: string | null): boolean {
+  if (!body) return true;
+  const snippet = caption?.trim().slice(0, 20);
+  if (snippet && body.includes(snippet)) return true;
+  return /\bdraft\b|reply\s*[“"']?(?:yes|post it)/i.test(body);
+}
+
+/**
+ * A "revise" with nothing waiting is a post request when it names something to
+ * post about, not just a tweak to a draft that isn't there ("shorter", "less
+ * emojis"). Kept loose: the cost of a miss is the old "nothing's waiting" reply.
+ */
+export function looksLikePostRequest(text: string): boolean {
+  const t = text.trim();
+  if (t.split(/\s+/).length < 3) return false;
+  return /\b(about|post|posts|feature|highlight|promote|show(?:case)?|mention|announce|shout ?out|next one|one on|do one)\b/i.test(t);
+}
+
+/** A thank-you with nothing else in it. */
+export const THANKS_RE =
+  /^\s*(?:thanks?|thank you|thx|ty|tysm|appreciate (?:it|you)|cheers)(?:\s+(?:so much|a lot|again|man|bro|dude|boss))?[\s.!]*(?:\p{Extended_Pictographic}\s*)*$/iu;
+
+/**
+ * Asking for a new post ("do one about our beard trims", "can you make a post
+ * about Saturday"). "Next one" is left out: with a draft waiting, "make the
+ * next one about X" most likely means that draft, which revise handles.
+ */
+export function isNewPostAsk(text: string): boolean {
+  return /\b(?:do|make|write|create|put up|need)\s+(?:me\s+)?(?:a|an|one|another|some)\s+(?:new\s+)?(?:post|posts|one)?\s*(?:about|on|for|featuring|announcing)\b|\bcan you (?:also\s+)?post (?:something\s+)?(?:about|on)\b|\b(?:another|a separate|a new) (?:post|one) (?:about|on|for)\b/i.test(text);
+}
+
+/** "I want to cancel", with no word for what: the draft, or the plan. */
+export const BARE_CANCEL_RE =
+  /^\s*(?:(?:i\s*)?(?:want|wanna|would like|'d like|need)\s+(?:to\s+)?cancel|can\s+i\s+cancel|cancel\s+please|please\s+cancel|i'?m\s+cancell?ing)\s*[.!?]*\s*$/i;
+
+/** Asking to end the plan itself, not to skip a post. */
+export const CANCEL_PLAN_RE =
+  /\b(?:cancel|end|stop|quit|terminate)\s+(?:my\s+|the\s+|our\s+)?(?:subscription|membership|plan|account|service|handled)\b|\bhow (?:do|can) i cancel\b(?!\s+(?:a|the|this|that|my)\s+post)/i;
+
+/**
+ * A draft can sit unanswered past its own slot (a pause, a busy week). A "yes"
+ * then used to schedule it in the past, so it went out the moment it was
+ * approved under a "Scheduled for" date that had already gone. Keep the
+ * planned time of day and move it to the next day it's still ahead.
+ */
+export function rollForward(planned: Date | null | undefined, now = Date.now()): Date | null {
+  if (!planned) return null;
+  let t = planned.getTime();
+  const DAY = 86_400_000;
+  if (t <= now + 60_000) t += Math.ceil((now + 60_000 - t) / DAY) * DAY;
+  return new Date(t);
 }

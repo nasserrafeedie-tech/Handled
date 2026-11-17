@@ -28,7 +28,7 @@ const CORE: Shot[] = [
   {
     key: 'owner_face',
     title: 'You, at your business',
-    hint: "Yes, you. Posts with a real face get roughly double the response — this is the most valuable photo on this list.",
+    hint: "Yes, you. Posts with a real face tend to get the most response, so this is the most valuable photo on this list.",
   },
   {
     key: 'hands_at_work',
@@ -158,7 +158,7 @@ export function photoWalkInvite(siteUrl: string, customerId: string): string {
     'photos. Next time you\'re at the shop, do the 10-minute photo walk: ' +
     `${siteUrl}/photo-walk?c=${customerId} — it's a short checklist ` +
     '(you, your hands working, today\'s best). Posts made from your real ' +
-    'photos get roughly double the response of anything designed.'
+    'photos tend to get more response than anything designed.'
   );
 }
 

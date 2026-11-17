@@ -222,6 +222,10 @@ export class PublishDueHandler implements TaskHandler<'PUBLISH_DUE'> {
             status: 'published',
             externalPostId: outcome.externalPostId,
             publishedAt: new Date(),
+            // An earlier try's error (a blip, a key not yet set) no longer
+            // describes a post that went out; left in place it showed a
+            // published post as failing in the admin view.
+            failureReason: null,
           },
         });
         published++;

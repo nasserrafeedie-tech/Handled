@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -10,16 +11,28 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 import { Platform } from '@smm/contracts';
-import { ConnectService } from './connect.service';
+import { ConnectService, friendlyConnectError } from './connect.service';
+import { conflictingAccountId } from '../operator/publishing/post-for-me.service';
 
 const StartBody = z.object({
-  customerId: z.string().min(1),
+  customerId: z.string().uuid(),
   platform: Platform,
 });
 
+/** What Post for Me appended to the redirect, forwarded by the callback page. */
+const ReturnFields = {
+  isSuccess: z.boolean().optional(),
+  accountIds: z.array(z.string().max(100)).max(20).optional(),
+  failedAccountIds: z.array(z.string().max(100)).max(20).optional(),
+  error: z.string().max(1000).optional(),
+};
+
 const ReconcileBody = z.object({
-  customerId: z.string().min(1),
+  customerId: z.string().uuid(),
+  ...ReturnFields,
 });
+
+const PendingBody = z.object(ReturnFields).partial();
 
 /**
  * Public connect endpoints. The marketing site's Connect page POSTs here to get
@@ -35,24 +48,29 @@ export class ConnectController {
   /** Start authorizing one platform → returns a URL to redirect the browser. */
   @Post('start')
   async start(@Body() body: unknown) {
-    const { customerId, platform } = StartBody.parse(body);
+    const parsed = StartBody.safeParse(body);
+    if (!parsed.success) {
+      // A garbled or hand-edited connect link. A 400 the page can explain,
+      // not the 500 a thrown ZodError used to become.
+      throw new BadRequestException({ error: 'bad_request', reason: 'That connect link looks incomplete.' });
+    }
+    const { customerId, platform } = parsed.data;
     try {
       return await this.connect.startAuth({ customerId, platform });
     } catch (err) {
-      // This used to fall through as a bare 500. The owner saw "something went
-      // wrong" and so did we — the real reason (an unenabled platform, a key
-      // with a stray newline, a rejected redirect) was only ever a line in the
-      // hosting logs, and diagnosing it meant going and reading them. The
-      // upstream reason is now on the response, because the person clicking
-      // Connect is the one who has to act on it.
+      // The full upstream reason goes to OUR logs. The page gets a reason
+      // only when it's one of ours, written for the owner (plan limits); a
+      // vendor or database error used to be echoed whole — file paths,
+      // Prisma internals and all — to whoever opened the link.
       const reason = err instanceof Error ? err.message : String(err);
       this.log.error(`connect/start ${platform} for ${customerId} failed: ${reason}`);
+      const ownerFacing = /Reply UPGRADE/.test(reason);
       throw new BadGatewayException({
         error: 'connect_failed',
         platform,
-        // Trimmed, and it is our own integration talking to our own vendor —
-        // no customer data and no credentials pass through here.
-        reason: reason.slice(0, 400),
+        reason: ownerFacing
+          ? reason
+          : "We couldn't start that connection just now. Try again in a minute, or text us.",
       });
     }
   }
@@ -94,17 +112,47 @@ export class ConnectController {
    * confirm to each owner over their own channel.
    */
   @Post('reconcile-pending')
-  async reconcilePending() {
+  async reconcilePending(@Body() body: unknown) {
+    // Mobile case: no customer id survived the round trip, but Post for Me's
+    // redirect may still name the new account — and an account carries its
+    // own external_id, which IS the customer. Finish that one directly.
+    const ret = PendingBody.safeParse(body ?? {});
+    if (ret.success && ret.data.accountIds?.length) {
+      const owner = await this.connect.ownerOfAccounts(ret.data.accountIds);
+      if (owner) {
+        const out = await this.connect.finishConnect(owner, ret.data);
+        await this.connect.confirmPending();
+        return { reconciled: out.accounts.length > 0 ? 1 : 0, outcome: out.outcome, reason: out.reason };
+      }
+    }
+    // A conflict ("External Id already exists for account spc_…") carries no
+    // new account id. If exactly one owner has a connect in flight, it's
+    // theirs; with more than one we can't tell, so nobody's account moves.
+    if (ret.success && conflictingAccountId(ret.data.error)) {
+      const sole = await this.connect.soleRecentPendingCustomer();
+      if (sole) {
+        const out = await this.connect.finishConnect(sole, ret.data);
+        return { reconciled: 0, outcome: out.outcome, reason: out.reason, customerId: out.outcome === 'retry' ? sole : undefined };
+      }
+    }
     const reconciled = await this.connect.confirmPending();
+    if (ret.success && ret.data.isSuccess === false && reconciled === 0) {
+      return { reconciled, outcome: 'failed', reason: friendlyConnectError(ret.data.error) };
+    }
     return { reconciled };
   }
 
-  /** Sync connected accounts after the owner returns from authorizing. */
+  /**
+   * After the owner returns from authorizing: sync, and say plainly what
+   * happened (connected / one more tap / already linked elsewhere / failed /
+   * still waiting) using what Post for Me put on the redirect.
+   */
   @Post('reconcile')
   async reconcile(@Body() body: unknown) {
-    const { customerId } = ReconcileBody.parse(body);
-    const accounts = await this.connect.reconcile(customerId);
-    return { accounts };
+    const parsed = ReconcileBody.safeParse(body);
+    if (!parsed.success) throw new BadRequestException({ error: 'bad_request' });
+    const { customerId, ...ret } = parsed.data;
+    return this.connect.finishConnect(customerId, ret);
   }
 
   /** Read-only status: which platforms this customer has connected. */

@@ -262,7 +262,7 @@ export default function Home() {
             </div>
           </Reveal>
 
-          {/* Reels — the Growth-plan differentiator, shown small and playing */}
+          {/* Reels — a Pro feature (billing page + backend tier gate agree), shown small and playing */}
           <Reveal delay={100}>
             <div className="mx-auto mt-16 flex max-w-3xl flex-col items-center gap-8 rounded-4xl border border-ink/10 bg-white p-8 shadow-soft sm:flex-row sm:gap-10 sm:p-10">
               <div className="relative shrink-0">
@@ -281,7 +281,7 @@ export default function Home() {
                 />
               </div>
               <div>
-                <p className="eyebrow">On Growth &amp; Pro</p>
+                <p className="eyebrow">On Pro</p>
                 <h3 className="mt-3 font-display text-2xl font-semibold tracking-tight sm:text-3xl">
                   Film it. <span className="wonk italic text-clay-600">We’ll cut it.</span>
                 </h3>

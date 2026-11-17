@@ -37,6 +37,10 @@ async function bootstrap() {
 
   // Twilio posts application/x-www-form-urlencoded webhooks.
   app.use(urlencoded({ extended: false }));
+  // Inbound email arrives as JSON with any photos inside it as base64, which
+  // is far past the default 100 KB limit: an owner emailing a photo back would
+  // be turned away whole, words and all. Only this route gets the larger limit.
+  app.use('/webhooks/email', json({ limit: '40mb' }));
   // Keep the raw bytes: Stripe signs the exact payload, and a re-serialized
   // JSON body will never verify.
   app.use(

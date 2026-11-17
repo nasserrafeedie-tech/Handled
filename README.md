@@ -1,14 +1,16 @@
-# Autonomous Social Media Manager
+# Handled
 
-A subscription SaaS that runs a small business's social media almost on its own.
+Done-for-you social media for small businesses, run over text. A subscription
+that runs a business's social media almost on its own.
 The owner talks to a **Concierge over SMS**; a backend **Operator** does the real
 work (plan, write, generate media, schedule, publish, measure). The two agents
 are hard-separated and joined by a strict **Task/Result JSON contract**.
 
 The flagship visual is the **swipeable carousel** — informational posts (tips,
 product spotlights, promos) are turned into branded, correctly-spelled slides
-automatically. It's the headline Growth+ feature and the main reason to move up
-from Starter. See `GENERATE_CAROUSEL` (`operator/handlers/generate-carousel.handler.ts`)
+automatically. It's the headline Growth feature and the main reason to move up
+from Starter. Reels cut from the owner's own clips are the Pro feature
+(tier gates: `operator/tier-entitlements.ts`). See `GENERATE_CAROUSEL` (`operator/handlers/generate-carousel.handler.ts`)
 and the tier gate in `operator/graphics/carousel-content.ts`.
 
 > Full product spec: see the project brief. This repo implements the foundation
@@ -61,11 +63,12 @@ npm run prisma:generate
 npm run build:backend
 ```
 
-Run the tests / infra-free smoke of the contract + guardrails:
+Run the tests (no database, Redis or API keys needed):
 
 ```bash
-npm run test --workspace @smm/contracts
-npx tsx apps/backend/scripts/smoke.ts
+npm test                                   # every workspace
+npm test --workspace @smm/backend          # the backend suite only
+npx tsx apps/backend/scripts/smoke.ts      # infra-free smoke of contract + guardrails
 ```
 
 Booting the server needs Postgres + Redis reachable via `.env`:
@@ -81,16 +84,28 @@ Point a Twilio Messaging Service inbound webhook at
 
 ## Model routing (§2)
 
-- Bulk (Concierge chat, captions, hashtags): **Claude Haiku 4.5**
-- Voice-critical (final brand voice, weekly planning): **Claude Sonnet 5**
+- Bulk (Concierge chat, captions, hashtags): `LLM_MODEL_BULK`, default `claude-haiku-4-5`
+- Voice-critical (final brand voice, weekly planning): `LLM_MODEL_VOICE`, default `claude-opus-5`
+- Post design (carousel covers and graphics drawn as SVG, checked before use, templates as the fallback): `LLM_MODEL_DESIGN`, default `claude-fable-5-2`. `DESIGN_POSTS=0` turns it off.
 - Each customer's `brand_profile` is sent as a cached system block → ~10x cheaper input.
 
-## Integration seams (wire before production)
+## What each key turns on
 
-These are isolated, clearly-marked stubs (they throw rather than fake output):
-`LlmService.rawComplete` (Anthropic), `PostForMeService` (publish + metrics),
-`IngestMediaHandler` R2 upload, Concierge Haiku intent classification, cron
-triggers for weekly `PLAN_WEEK` / daily `PUBLISH_DUE` + `FETCH_METRICS`.
+Everything is wired. With a key unset, that part either runs in a clearly
+logged offline mode or throws rather than faking output:
+
+| Keys | Turns on |
+|---|---|
+| `ANTHROPIC_API_KEY` | Captions, planning, intent, onboarding (`LlmService`) |
+| `POST_FOR_ME_API_KEY` | Account linking, publishing and metrics (`PostForMeService`) |
+| `R2_*` | Media storage that Post for Me can fetch (`StorageService`) |
+| `TWILIO_*` | SMS in and out |
+| `POSTMARK_SERVER_TOKEN`, `EMAIL_*` | The email channel |
+| `STRIPE_*` | Checkout, plan changes, referral credits |
+| `OPENAI_API_KEY` | Transcription for reels, generated images |
+| `ENABLE_CRON` | Weekly `PLAN_WEEK`, `PUBLISH_DUE`, `FETCH_METRICS` and the Friday check-in (on unless `0`) |
+
+`.env.example` lists every variable.
 
 ## Non-goals for v0
 

@@ -55,21 +55,34 @@ export class GraphicsService {
 
   /** Render one slide spec to a PNG buffer (1080×1350 portrait). */
   renderSlide(spec: SlideSpec, theme: BrandTheme): Buffer {
-    const svg = renderSlideSvg(spec, theme);
-    const resvg = new Resvg(svg, {
-      fitTo: { mode: 'width', value: CANVAS },
+    return this.renderSvg(renderSlideSvg(spec, theme));
+  }
+
+  /** Render finished SVG (a template's or a checked design's) to a PNG. */
+  renderSvg(svg: string, width = CANVAS): Buffer {
+    return this.rasterize(svg, width).png();
+  }
+
+  /** Rasterize with the bundled fonts, for the design checks' pixel reads. */
+  rasterize(svg: string, width: number): { width: number; height: number; pixels: Uint8Array; png: () => Buffer } {
+    const img = new Resvg(svg, {
+      fitTo: { mode: 'width', value: width },
       font: {
         fontFiles: this.fontFiles,
         loadSystemFonts: this.fontFiles.length === 0, // fall back only if bundling failed
         defaultFontFamily: 'Poppins',
       },
       background: 'rgba(0,0,0,0)',
-    });
-    return Buffer.from(resvg.render().asPng());
+    }).render();
+    return { width: img.width, height: img.height, pixels: img.pixels, png: () => Buffer.from(img.asPng()) };
   }
 
   /** Render a multi-slide Instagram carousel — one PNG per slide, in order. */
   renderCarousel(specs: SlideSpec[], theme: BrandTheme): Buffer[] {
-    return specs.map((s) => this.renderSlide(s, theme));
+    // Every slide agrees on the set's text layout by deciding it from the
+    // cover's headline (see textLayoutFor), so one slide falling back can't
+    // leave the deck in two styles.
+    const cover = specs[0]?.headline;
+    return specs.map((s) => this.renderSlide({ coverHeadline: cover, ...s }, theme));
   }
 }

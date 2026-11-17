@@ -17,7 +17,7 @@ interface EmitCall {
   payload: any;
 }
 
-function makeCron(postStatus: string) {
+function makeCron(postStatus: string, alreadyPlanned = 0) {
   const emitted: EmitCall[] = [];
   const slot = {
     platform: 'instagram',
@@ -50,6 +50,7 @@ function makeCron(postStatus: string) {
       // The post as persisted by DRAFT_POST — 'approved' on autopilot,
       // 'pending_approval' on an approval plan.
       findUnique: async () => ({ status: postStatus }),
+      count: async () => alreadyPlanned,
     },
     // A stocked photo bank, so the photo-walk nudge stays quiet here.
     mediaAsset: { count: async () => 3 },
@@ -86,5 +87,13 @@ describe('runWeeklyRhythm — scheduling auto-approved posts', () => {
       false,
       'an approval-plan post must wait for the owner, not auto-schedule',
     );
+  });
+});
+
+describe('runWeeklyRhythm — a week planned at signup', () => {
+  it('is not planned again, so nobody gets every post twice', async () => {
+    const { cron, emitted } = makeCron('pending_approval', 4);
+    assert.equal(await cron.runWeeklyRhythm('cus_1'), 0);
+    assert.deepEqual(emitted, []);
   });
 });

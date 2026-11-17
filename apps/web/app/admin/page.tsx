@@ -491,6 +491,44 @@ export default function AdminPage() {
         )}
       </section>
 
+      {/* Referral credits — free months owed to people who sent us customers */}
+      {data.referralCredits?.length > 0 && (
+        <section className="mt-10">
+          <h2 className="mb-3 font-display text-xl font-medium">
+            Referral credits ({data.referralCredits.length})
+          </h2>
+          <p className="mb-3 text-[13px] text-ink/55">
+            A free month goes on the referrer’s Stripe balance automatically.
+            Anything marked “Settle by hand” needs a credit added in Stripe.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {data.referralCredits.map((r: any) => (
+              <li
+                key={r.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink/10 bg-white px-5 py-3.5 text-sm shadow-soft"
+              >
+                <span>
+                  <strong className="font-medium">{bizName(r.referrerId)}</strong>
+                  <span className="text-ink/50">
+                    {' '}
+                    · ${r.amountUsd} for bringing in {bizName(r.referredCustomerId)}
+                    {' '}· {timeAgo(r.created)}
+                    {r.status !== 'applied' && r.lastError ? ` · ${r.lastError}` : ''}
+                  </span>
+                </span>
+                {r.status === 'applied' ? (
+                  <Chip tone="good">Credited</Chip>
+                ) : r.status === 'failed' ? (
+                  <Chip tone="warn">Settle by hand</Chip>
+                ) : (
+                  <Chip tone="wait">Waiting</Chip>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* The playbook — which strategies exist, and which need a look */}
       {data.archetypes?.length > 0 && (
         <section className="mt-10">

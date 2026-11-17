@@ -11,10 +11,10 @@ import {
  * The connection_type fix, both halves. Post for Me reads connection_type
  * from platform_data.<platform> — sent at the top level (our old shape) it
  * was silently ignored, which is why every Instagram connect came back as
- * Instagram Login no matter what we asked for. And now that the field
- * actually works, the default flips to Instagram Login on purpose: no
- * Facebook Page required, and the iOS api.instagram.com workaround only
- * applies to it. PFM_INSTAGRAM_CONNECTION=facebook switches it back.
+ * Instagram Login no matter what we asked for. The default is Facebook
+ * Login, the route that completes on phones; PFM_INSTAGRAM_CONNECTION=instagram
+ * switches to Instagram Login, and so does a Post for Me project that refuses
+ * the Facebook route.
  */
 
 function buildConnect() {
@@ -27,7 +27,7 @@ function buildConnect() {
     },
     connectedAccount: { findMany: async () => [] },
   };
-  const pfm = {
+  const pfm: { configured: boolean; createAuthUrl: (r: AuthUrlRequest) => Promise<{ url: string }> } = {
     configured: true,
     createAuthUrl: async (req: AuthUrlRequest) => {
       authCalls.push(req);
@@ -35,7 +35,7 @@ function buildConnect() {
     },
   };
   const svc = new ConnectService(prisma as never, {} as never, pfm as never, {} as never);
-  return { svc, authCalls };
+  return { svc, authCalls, pfm };
 }
 
 describe('startAuth — which Instagram login flow gets requested', () => {
@@ -55,6 +55,30 @@ describe('startAuth — which Instagram login flow gets requested', () => {
     const { svc, authCalls } = buildConnect();
     await svc.startAuth({ customerId: 'c1', platform: 'instagram' });
     assert.equal(authCalls[0].connectionType, 'instagram');
+  });
+
+  it('falls back to Instagram Login when Post for Me refuses the Facebook route', async () => {
+    const { svc, authCalls, pfm } = buildConnect();
+    pfm.createAuthUrl = async (r: AuthUrlRequest) => {
+      authCalls.push(r);
+      if (r.connectionType === 'facebook') {
+        throw new Error('Post for Me POST /v1/social-accounts/auth-url → 400 Bad Request: connection type not allowed');
+      }
+      return { url: 'https://www.instagram.com/oauth/authorize?x=1' };
+    };
+    const out = await svc.startAuth({ customerId: 'c1', platform: 'instagram' });
+    assert.deepEqual(authCalls.map((c) => c.connectionType), ['facebook', 'instagram']);
+    assert.match(out.url, /^https:\/\/api\.instagram\.com\//);
+  });
+
+  it('does not retry an outage, which another login route would not fix', async () => {
+    const { svc, authCalls, pfm } = buildConnect();
+    pfm.createAuthUrl = async (r: AuthUrlRequest) => {
+      authCalls.push(r);
+      throw new Error('Post for Me POST /v1/social-accounts/auth-url → 503 Service Unavailable');
+    };
+    await assert.rejects(svc.startAuth({ customerId: 'c1', platform: 'instagram' }));
+    assert.equal(authCalls.length, 1);
   });
 
   it('non-Instagram platforms send no connection type at all', async () => {

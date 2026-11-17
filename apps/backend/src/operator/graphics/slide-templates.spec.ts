@@ -56,7 +56,7 @@ describe('a carousel is one post, so its slides look like a set', () => {
     assert.equal(surfaceOf(renderSlideSvg(slide({ seed: 3, variant: 0 }), theme)), surfaces[0]);
   });
 
-  it('floods the CTA slide in the accent, whatever the alternation', () => {
+  it('gives the CTA slide a surface none of the body slides use', () => {
     const cta = surfaceOf(renderSlideSvg(slide({ seed: 3, variant: 4, kind: 'cta' }), theme));
     const bodies = new Set(carousel(3, 4).map(surfaceOf));
     assert.ok(!bodies.has(cta), 'the closing slide pops against the body slides');

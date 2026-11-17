@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it, beforeEach } from 'node:test';
 
-import { ConciergeService, type InboundSms } from './concierge.service';
+import { ConciergeService, aboutHandled, isPriceQuestion, type InboundSms } from './concierge.service';
 
 /**
  * The paywall free taste (§ pricing): a new number gets exactly one drafted
@@ -208,6 +208,73 @@ describe('free-taste paywall', () => {
     }
     assert.equal(world.llmCalls(), 0, 'keywords must never reach the LLM');
     assert.equal(world.updates.length, 0, 'keywords must not spend the taste');
+  });
+
+  it('"how much is it?" gets the prices, not the paywall text or a wasted draft (F3)', async () => {
+    world.seed({ ...UNPAID });
+    for (const q of ['how much is it?', 'Pricing?', 'what does it cost', 'How much per month']) {
+      world.sent.length = 0;
+      await world.svc.handleInbound(sms(q));
+      assert.equal(world.sent.length, 1, q);
+      assert.match(world.sent[0], /\$95.*\$349.*\$699/, q);
+      assert.match(world.sent[0], /free sample/, `${q}: the draft is still theirs, so say so`);
+    }
+    assert.equal(world.llmCalls(), 0, 'a price question must not reach the LLM');
+    assert.equal(world.updates.length, 0, 'a price question must not spend the free draft');
+  });
+
+  it('after the free draft, the price question still gets prices, without offering another draft', async () => {
+    world.seed({ ...UNPAID, freeDraftUsedAt: new Date() });
+    await world.svc.handleInbound(sms('how much?'));
+    assert.match(world.sent[0], /\$95/);
+    assert.doesNotMatch(world.sent[0], /free sample/);
+  });
+
+  it('"sign me up" gets the plan link and keeps the free draft unspent', async () => {
+    world.seed({ ...UNPAID });
+    for (const q of ['ok sign me up for starter', 'how do I pay?', "I'm in"]) {
+      world.sent.length = 0;
+      await world.svc.handleInbound(sms(q));
+      assert.equal(world.sent.length, 1, q);
+      assert.match(world.sent[0], /texthandled\.com\/billing/, q);
+      assert.match(world.sent[0], /free sample/, q);
+    }
+    assert.equal(world.llmCalls(), 0);
+    assert.equal(world.updates.length, 0, 'asking to sign up must not spend the free draft');
+  });
+
+  it('"how does this work?" gets what Handled does, not a post about the question', async () => {
+    world.seed({ ...UNPAID });
+    await world.svc.handleInbound(sms('how does this work?'));
+    assert.match(world.sent[0], /plan, write, design and post/);
+    assert.equal(world.llmCalls(), 0);
+    assert.equal(world.updates.length, 0);
+  });
+
+  it('"what do you actually do" is the same question (QA round 6)', () => {
+    for (const q of ['what do you actually do', 'what does handled do', 'what exactly do you do', 'what does this actually do?']) {
+      assert.equal(aboutHandled(q), 'how', q);
+    }
+  });
+
+  it('a description that starts like an ask is still the description', () => {
+    for (const d of ["I'm in Austin, I run a bakery", 'we help people get started with yoga', "Buy one get one free on Tuesdays at Joe's Pizza", 'start', 'join']) {
+      assert.equal(aboutHandled(d), null, d);
+    }
+  });
+
+  it('a business description that mentions its own prices is still the description', () => {
+    assert.equal(isPriceQuestion('I run a bakery, our cakes cost less than the supermarket and everything is baked daily'), false);
+    assert.equal(isPriceQuestion('I run a bakery'), false);
+    assert.equal(isPriceQuestion('whats the price'), true);
+  });
+
+  it('an email signup that gave its name gets an intro that uses it (F18)', async () => {
+    // beginOnboarding looks the customer up by id, and the fake keys rows by
+    // phone, so the row is stored under its id.
+    world.seed({ ...UNPAID, phone: 'cust1', businessName: 'Fieldnote Florals' });
+    await world.svc.beginOnboarding('cust1');
+    assert.match(world.sent.join(' '), /what Fieldnote Florals does/);
   });
 
   it('an empty body (photo only) re-asks instead of drafting from nothing', async () => {

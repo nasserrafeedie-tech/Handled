@@ -8,7 +8,9 @@ import {
   groupWordsIntoLines,
   hexToAssColor,
   type TranscriptWord,
+  readableAccent,
 } from './captions';
+import { textWidth } from '../graphics/text-metrics';
 
 /**
  * Captions cannot be eyeballed in CI, so every craft rule the playbook states
@@ -133,17 +135,20 @@ describe('the ASS file', () => {
     assert.match(ass, /PlayResY: 1920/);
   });
 
-  it('positions captions in the upper-middle third, clear of platform UI', () => {
+  it('positions captions below faces and inside the Reels safe zone', () => {
     const ass = captionsToAss(sample);
-    // Alignment 8 (top-centre) with a 700px top margin. Anchoring to the bottom
-    // would bury the captions under Instagram's own caption and buttons.
-    assert.match(ass, /,8,80,80,700,1/);
+    // Alignment 8 (top-centre) with a 940px top margin: under where faces sit,
+    // above Instagram's own caption and buttons (bottom 35% of the frame).
+    assert.match(ass, /,8,80,80,940,1/);
   });
 
   it('paints the emphasis word in the brand accent and resets afterwards', () => {
     const ass = captionsToAss(sample, { accentHex: '#C9A227' });
-    assert.ok(ass.includes('{\\c&H0027A2C9}'), 'brand accent missing from the line');
-    assert.ok(ass.includes('{\\r}'), 'emphasis must reset, or it bleeds into later words');
+    assert.ok(ass.includes('{\\c&H0027A2C9\\fscx112\\fscy112}'), 'brand accent missing from the line');
+    assert.ok(
+      ass.includes('{\\c&H00FFFFFF&\\fscx100\\fscy100}'),
+      'emphasis must reset, or it bleeds into later words',
+    );
   });
 
   it('picks the caption font from the brand style', () => {
@@ -197,7 +202,11 @@ describe('the hook, carried in the same file', () => {
     const ass = captionsToAss(words, { hookText: 'The secret nobody tells you' });
     const hook = ass.split('\n').find((l) => l.startsWith('Dialogue:') && l.includes('Hook,'));
     assert.ok(hook, 'no Hook dialogue line emitted');
-    assert.match(hook!, /Dialogue: 1,0:00:00\.00,0:00:03\.00,Hook,.*The secret nobody tells you/);
+    assert.match(hook!, /Dialogue: 1,0:00:00\.00,0:00:03\.00,Hook,/);
+    assert.equal(
+      hook!.split(',,').pop()!.replace(/\{[^}]*\}/g, '').replace(/\\N/g, ' '),
+      'The secret nobody tells you',
+    );
   });
 
   it('draws the hook on a higher layer than the captions', () => {
@@ -234,5 +243,77 @@ describe('the hook, carried in the same file', () => {
     // Silent b-roll still gets its hook — the opening text is what earns
     // distribution, independent of whether anyone is talking.
     assert.equal(hasHookEvent(captionsToAss([], { hookText: 'Watch this' })), true);
+  });
+});
+
+const SPOKEN: TranscriptWord[] = [
+  { text: 'We', start: 0, end: 0.3 },
+  { text: 'roast', start: 0.3, end: 0.7 },
+  { text: 'every', start: 0.7, end: 1.0 },
+  { text: 'Tuesday.', start: 1.0, end: 1.5 },
+];
+
+describe('nothing runs off the frame', () => {
+  const words = SPOKEN;
+  const sample = SPOKEN;
+  const textOf = (line: string) => line.replace(/^(?:[^,]*,){9}/, '').replace(/\{[^}]*\}/g, '');
+
+  it('wraps a long hook into rows that each fit, instead of one line off both edges', () => {
+    const ass = captionsToAss(words, { hookText: 'The one thing every new customer asks us about' });
+    const hook = ass.split('\n').find((l) => l.includes(',Hook,'))!;
+    const rows = textOf(hook).split('\\N');
+    assert.ok(rows.length >= 2, `expected the hook to wrap, got "${textOf(hook)}"`);
+    const fs = Number(/\\fs(\d+)/.exec(hook)?.[1] ?? 100);
+    for (const r of rows) {
+      const w = textWidth(r, 'Poppins', fs, 700)!;
+      assert.ok(w <= 1080 - 160 - 36, `hook row "${r}" is ${w.toFixed(0)}px wide`);
+    }
+  });
+
+  it('breaks a caption line of long words into two rows', () => {
+    const long: TranscriptWord[] = [
+      { text: 'Unbelievable', start: 0, end: 0.5 },
+      { text: 'professional', start: 0.5, end: 1 },
+      { text: 'appointments', start: 1, end: 1.5 },
+      { text: 'tomorrow', start: 1.5, end: 2 },
+    ];
+    const ass = captionsToAss(long);
+    const cap = ass.split('\n').find((l) => l.includes(',Cap,'))!;
+    assert.match(cap, /\\N/);
+  });
+
+  it('shrinks the type only when one word alone is wider than the frame', () => {
+    const one: TranscriptWord[] = [{ text: 'Supercalifragilisticexpialidocious', start: 0, end: 1 }];
+    const cap = captionsToAss(one).split('\n').find((l) => l.includes(',Cap,'))!;
+    assert.match(cap, /\{\\fs\d+\}/);
+    const short = captionsToAss(sample).split('\n').find((l) => l.includes(',Cap,'))!;
+    assert.doesNotMatch(short, /\\fs\d/);
+  });
+});
+
+describe('colours stay readable', () => {
+  const words = SPOKEN;
+  const sample = SPOKEN;
+  it('lifts a dark brand colour before painting the live word with it', () => {
+    const lifted = readableAccent('#2E5B3F')!;
+    const lum = (h: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+      return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    };
+    assert.ok(lum(lifted) >= 0.55, `${lifted} is still too dark`);
+    assert.equal(readableAccent('#E7B27A'), '#E7B27A');
+  });
+
+  it('a black or grey brand gets the default caption yellow, not invisible black', () => {
+    assert.equal(readableAccent('#141414'), undefined);
+    const ass = captionsToAss(sample, { accentHex: '#141414' });
+    assert.ok(ass.includes('{\\c&H0000D7FF\\fscx112'));
+  });
+
+  it('puts dark text on a pale hook box and white text on a dark one', () => {
+    const style = (accentHex: string) =>
+      captionsToAss(words, { accentHex, hookText: 'Watch this' }).split('\n').find((l) => l.startsWith('Style: Hook'))!;
+    assert.match(style('#F2D7DE'), /Style: Hook,Poppins,100,&H00161A1A,/);
+    assert.match(style('#3B5B45'), /Style: Hook,Poppins,100,&H00FFFFFF,/);
   });
 });

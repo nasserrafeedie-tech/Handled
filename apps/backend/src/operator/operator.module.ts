@@ -12,6 +12,7 @@ import { GoogleBusinessService } from './publishing/google-business.service';
 import { PlaybookModule } from '../playbook/playbook.module';
 import { GraphicsService } from './graphics/graphics.service';
 import { ImageGenService } from './graphics/image-gen.service';
+import { DesignerService } from './graphics/designer.service';
 import { ImageSafetyService } from './graphics/image-safety.service';
 import { BrandIdentityService } from './branding/brand-identity.service';
 import { ReelService } from './video/reel.service';
@@ -46,6 +47,7 @@ import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
     PostForMeService,
     GoogleBusinessService,
     GraphicsService,
+    DesignerService,
     ImageGenService,
     ImageSafetyService,
     BrandIdentityService,

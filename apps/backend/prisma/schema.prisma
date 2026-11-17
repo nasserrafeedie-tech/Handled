@@ -143,6 +143,9 @@ model Customer {
   lastRecapAt     DateTime?
   trustLevel      TrustLevel     @default(approve_all) // §8: everyone starts here
   status          CustomerStatus @default(onboarding)
+  /// Why a paused customer is paused: owner_stop | billing | moderation | admin.
+  /// Decides what lifts it (START, a paid invoice, or an admin). Null unless paused.
+  pausedReason    String?
   stripeCustomerId String?       @unique
   // Text-to-join paywall: an unpaid lead gets exactly ONE free drafted caption
   // (the taste that converts a business-card text into a subscriber). Stamped
@@ -234,7 +237,7 @@ model PlaybookArchetype {
 // it: said once is tentative, said again is confirmed. So a throwaway comment
 // can't quietly rewrite how every future post is written.
 model CustomerPreference {
-  id         String   @id @default(uuid()) @db.Uuid
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   customerId String   @db.Uuid
   // The preference as it reads in the prompt: a short instruction.
   text       String
@@ -257,7 +260,7 @@ model CustomerPreference {
 }
 
 model LlmUsage {
-  id           String   @id @default(uuid()) @db.Uuid
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // Null for work not tied to one customer (playbook research, for instance,
   // which is paid once and reused by everyone in that trade).
   customerId   String?  @db.Uuid
@@ -290,7 +293,7 @@ model LlmUsage {
 // Pooled only in aggregate. No caption, no customer, and nothing identifying
 // crosses between businesses — just the counts.
 model ArchetypePerformance {
-  id            String   @id @default(uuid()) @db.Uuid
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // Which playbook archetype (the kind of business).
   archetypeSlug String
   // Which post format within it (promo, behind_the_scenes, …).
@@ -302,7 +305,7 @@ model ArchetypePerformance {
   engagements   BigInt   @default(0)
   updatedAt     DateTime @updatedAt
 
-  @@unique([archetypeSlug, postArchetype, platform])
+  @@unique([archetypeSlug, postArchetype, platform], map: "archetype_performance_slug_format_platform_key")
   @@index([archetypeSlug])
   @@map("archetype_performance")
 }
@@ -385,6 +388,10 @@ model BrandProfile {
   // of the core interview: { pending: string[] }. Null = not yet generated;
   // empty pending = interview truly done.
   followUps          Json?
+  // Posts the owner asked for by text while nothing was waiting on them
+  // ("can you do one about our $25 cuts"), oldest first. The next week's plan
+  // gives each its own slot and takes it off this list.
+  postRequests       String[] @default([])
   logoRef            String?
   referencePhotoRefs String[]
   // Onboarding progress is tracked as which fields are filled, not a step
@@ -623,6 +630,35 @@ model StripeWebhookEvent {
   receivedAt DateTime @default(now())
 
   @@map("stripe_webhook_events")
+}
+
+/// A "free month" owed to a customer whose referral code brought in a new
+/// paying customer. One row per referred customer — the unique key is what
+/// stops a re-checkout (cancel, come back) from paying the referrer twice.
+/// Applied as a negative Stripe customer balance, which Stripe draws down on
+/// the referrer's next invoice. Rows that can't be applied yet (Stripe
+/// offline, referrer has no Stripe customer, a Stripe error) stay pending and
+/// the daily sweep retries them; after MAX_ATTEMPTS they turn failed and show
+/// in the admin view for a human to settle.
+model ReferralCredit {
+  id                 String    @id @default(uuid()) @db.Uuid
+  referrerId         String    @db.Uuid
+  referredCustomerId String    @unique @db.Uuid
+  code               String
+  /// Frozen when the referral lands: a month of the referrer's plan then.
+  amountCents        Int
+  /// pending | applied | failed
+  status             String    @default("pending")
+  attempts           Int       @default(0)
+  lastError          String?
+  stripeBalanceTxnId String?
+  appliedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([status])
+  @@index([referrerId])
+  @@map("referral_credits")
 }
 
 model Lead {

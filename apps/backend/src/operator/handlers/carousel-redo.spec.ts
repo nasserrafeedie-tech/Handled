@@ -21,11 +21,15 @@ function makeWorld(opts?: {
   aiImagesOptIn?: boolean;
   imagesConfigured?: boolean;
   walkPhotos?: Array<{ r2Key: string; subject: string }>;
+  slides?: Array<{ kind: string; headline: string; body?: string; cta_label?: string }>;
+  designer?: { live: () => boolean; design: (req: unknown) => Promise<unknown> };
+  blockWords?: RegExp;
 }) {
   const prompts: string[] = [];
   const updates: Array<Record<string, unknown>> = [];
   const rendered: SlideSpec[][] = [];
   const stored: string[] = [];
+  const bytes: Buffer[] = [];
 
   const prisma = {
     customer: {
@@ -54,6 +58,8 @@ function makeWorld(opts?: {
       findUnique: async () => ({
         id: 'p1',
         caption: 'Fresh pan dulce every morning, baked in-house.',
+        status: 'approved',
+        riskLevel: 'low',
         // The deck being redone — four slides from the previous render.
         mediaRefs: ['c1/old/slide-1.png', 'c1/old/slide-2.png', 'c1/old/slide-3.png', 'c1/old/slide-4.png'],
         archetype: 'educational_tip',
@@ -78,7 +84,7 @@ function makeWorld(opts?: {
       // The hero path asks for a photo subject before the slides are written.
       if (!req.prompt.includes('"slides"')) return { subject: 'a latte on a wooden counter' };
       return {
-        slides: [
+        slides: opts?.slides ?? [
           { kind: 'title', headline: 'Morning pan dulce' },
           { kind: 'body', headline: 'Baked here', body: 'Every tray comes out of our own oven.' },
           { kind: 'cta', headline: 'Come by early', cta_label: 'Come by' },
@@ -94,7 +100,10 @@ function makeWorld(opts?: {
     fetchPhoto: async (url: string) => `data:image/jpeg;base64,REAL:${url}`,
   };
   const storage = {
-    put: async (key: string) => void stored.push(key),
+    put: async (key: string, b: Buffer) => {
+      stored.push(key);
+      bytes.push(b);
+    },
     get: async () => null,
     publicUrl: (k: string) => `https://cdn.test/${k}`,
   };
@@ -113,7 +122,11 @@ function makeWorld(opts?: {
     storage as never,
     images as never,
     { isPlace: async () => ({ isPlace: false }) } as never,
-    { screen: async () => ({ passed: true, reasons: [] }) } as never,
+    {
+      screen: async ({ caption }: { caption: string }) =>
+        opts?.blockWords?.test(caption) ? { passed: false, reasons: ['blocked'] } : { passed: true, reasons: [] },
+    } as never,
+    opts?.designer as never,
   );
   const task = {
     task_id: 't1',
@@ -125,7 +138,7 @@ function makeWorld(opts?: {
       ...(opts?.feedback ? { owner_feedback: opts.feedback } : {}),
     },
   } as never;
-  return { handler, task, prompts, updates, rendered, stored, generateCalls };
+  return { handler, task, prompts, updates, rendered, stored, bytes, generateCalls };
 }
 
 describe('GENERATE_CAROUSEL redo', () => {
@@ -221,5 +234,69 @@ describe('GENERATE_CAROUSEL redo', () => {
     assert.equal(r.status, 'done');
     assert.match(r.summary_for_owner, /already has a picture/i);
     assert.equal(w.rendered.length, 0);
+  });
+});
+
+describe('GENERATE_CAROUSEL reads the slides through the trust gate', () => {
+  it('sends a deck back to the owner when a slide makes a claim the caption did not', async () => {
+    const w = makeWorld({
+      replace: true,
+      slides: [
+        { kind: 'title', headline: 'The best pan dulce in town, guaranteed' },
+        { kind: 'body', headline: 'Baked here', body: 'Every tray comes out of our own oven.' },
+        { kind: 'cta', headline: 'Come by early', cta_label: 'Come by' },
+      ],
+    });
+    const r = await w.handler.handle(w.task);
+    assert.equal(r.status, 'done');
+    assert.equal(w.updates[0].riskLevel, 'high');
+    assert.equal(w.updates[0].approvalState, 'awaiting_owner');
+    assert.equal(w.updates[0].status, 'pending_approval', 'shown to the owner, not just held');
+  });
+
+  it('leaves an ordinary deck as the draft handler set it', async () => {
+    const w = makeWorld({ replace: true });
+    await w.handler.handle(w.task);
+    assert.equal(w.updates[0].riskLevel, undefined);
+    assert.equal(w.updates[0].approvalState, undefined);
+  });
+});
+
+describe('GENERATE_CAROUSEL designed cover', () => {
+  const designer = (drawnText: string, calls: unknown[] = []) => ({
+    live: () => true,
+    design: async (req: unknown) => {
+      calls.push(req);
+      return { png: Buffer.from('designed'), svg: '<svg/>', drawnText, concept: 'big type' };
+    },
+  });
+
+  it('swaps in a designed cover and keeps the template for the rest', async () => {
+    const calls: Array<{ role: string; copy: { headline: string }; slides: number }> = [];
+    const w = makeWorld({ replace: true, designer: designer('Morning pan dulce Casa Verde', calls) as never });
+    const r = await w.handler.handle(w.task);
+    assert.equal(r.status, 'done');
+    assert.equal(calls.length, 1, 'only the cover is designed');
+    assert.equal(calls[0].role, 'carousel_cover');
+    assert.equal(calls[0].copy.headline, 'Morning pan dulce');
+    assert.equal(calls[0].slides, 3);
+    assert.equal(w.bytes[0].toString(), 'designed');
+    assert.equal(w.bytes[1].toString(), 'png');
+  });
+
+  it('keeps the template cover when the design adds something the checks flag', async () => {
+    const w = makeWorld({ replace: true, designer: designer('Morning pan dulce FORBIDDEN') as never, blockWords: /FORBIDDEN/ });
+    const r = await w.handler.handle(w.task);
+    assert.equal(r.status, 'done');
+    assert.equal(w.bytes[0].toString(), 'png');
+  });
+
+  it('keeps the template cover when the designer gives up or is off', async () => {
+    const off = makeWorld({ replace: true, designer: { live: () => false, design: async () => assert.fail('not called') } });
+    await off.handler.handle(off.task);
+    assert.equal(off.bytes[0].toString(), 'png');
+    const none = makeWorld({ replace: true, designer: { live: () => true, design: async () => null } });
+    await none.handler.handle(none.task);
+    assert.equal(none.bytes[0].toString(), 'png');
   });
 });

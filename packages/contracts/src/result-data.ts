@@ -93,6 +93,8 @@ export const CalendarSlot = z
           ? undefined
           : (Array.isArray(v) ? v.join('; ') : v).slice(0, 500),
       ),
+    /** A post the owner asked for by text, which this slot carries out. */
+    owner_request: z.string().max(300).optional(),
   })
   .strict();
 export type CalendarSlot = z.infer<typeof CalendarSlot>;

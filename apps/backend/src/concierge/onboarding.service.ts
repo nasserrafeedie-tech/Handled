@@ -164,20 +164,43 @@ export class OnboardingService {
   }
 
   /** The welcome + question one, for a first contact that told us nothing yet. */
-  welcome(): string {
+  welcome(
+    businessName?: string | null,
+    opts: {
+      /** An email customer: no "texts", and no save-as-contact card. */
+      email?: boolean;
+      /**
+       * They already described the business (the free taste), so that
+       * description answers question one and the welcome asks nothing itself.
+       */
+      firstAnswered?: boolean;
+    } = {},
+  ): string {
     // Tester feedback (Nasser's mom, Aug 2026): say how long the tunnel is
     // BEFORE the first question. An interview with no stated bound reads as
     // "how many of these are coming?" — the count up front plus a running
     // "n of 7" on each question turns it into a short checklist being
     // ticked off.
+    const intro = opts.email
+      ? 'Hey — this is Handled ✳ From here on out I plan, write, design, and ' +
+        'post your social media, and you mostly just reply to my emails.'
+      : 'Hey — this is Handled ✳ From here on out I plan, write, design, and ' +
+        'post your social media, and you mostly just reply to my texts. ' +
+        'Save me as a contact so you always know it\'s me: ' +
+        'texthandled.com/contact';
+    const how = opts.email ? 'A few minutes over email' : 'A few minutes by text';
+    if (opts.firstAnswered) {
+      return (
+        `${intro}\n\n` +
+        'Setup is seven quick questions, and what you told me about the ' +
+        `business already answers the first. ${how}, then I get to work.`
+      );
+    }
     return (
-      'Hey — this is Handled ✳ From here on out I plan, write, design, and ' +
-      'post your social media, and you mostly just reply to my texts. ' +
-      'Save me as a contact so you always know it\'s me: ' +
-      'texthandled.com/contact\n\n' +
+      `${intro}\n\n` +
       'Setup is seven quick questions — plus one or two tailored to your ' +
-      'answers at the end. A few minutes by text, then I get to work.\n\n' +
-      this.question('business_type')
+      `answers at the end. ${how}, then I get to work.\n\n` +
+      this.question('business_type', undefined, businessName)
     );
   }
 
@@ -188,7 +211,7 @@ export class OnboardingService {
    * question offers exactly that instead of a generic "3–4 a week" — a Starter
    * (cap 3) must not be invited to pick 4 and then be under-served or over-served.
    */
-  question(field: ProfileField, postsCap?: number): string {
+  question(field: ProfileField, postsCap?: number, businessName?: string | null): string {
     // "n of 7:" on every prompt (tester feedback — Nasser's mom): the reader
     // always knows where they are in the tunnel. The number is the field's
     // checklist position, so a question skipped because the owner already
@@ -196,6 +219,10 @@ export class OnboardingService {
     const tag = `${REQUIRED.indexOf(field) + 1} of ${REQUIRED.length}: `;
     switch (field) {
       case 'business_type':
+        // A name they already gave (the web signup form) is not asked again.
+        if (businessName?.trim()) {
+          return `${tag}Tell me about ${businessName.trim()} — what do you do, and where are you?`;
+        }
         return (
           `${tag}Tell me about your business — what do you do, what's it ` +
           'called, and where are you?'

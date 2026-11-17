@@ -27,6 +27,13 @@ export const PlanWeekPayload = z
       .optional()
       .describe('override; otherwise read from brand_profile'),
     platforms: z.array(Platform).nonempty().optional(),
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(7)
+      .optional()
+      .describe('plan only this many days from week_start (a short starter week); default 7'),
   })
   .strict();
 export type PlanWeekPayload = z.infer<typeof PlanWeekPayload>;
@@ -218,7 +225,7 @@ export type GenerateCarouselPayload = z.infer<typeof GenerateCarouselPayload>;
 // Kill switch (§8). Halt all scheduled publishing immediately.
 export const PauseCustomerPayload = z
   .object({
-    reason: z.enum(['owner_stop', 'billing', 'moderation', 'admin']),
+    reason: z.enum(['owner_stop', 'billing', 'moderation', 'admin', 'subscription_ended']),
     resume: z
       .boolean()
       .default(false)

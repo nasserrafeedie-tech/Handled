@@ -60,10 +60,37 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
       'Return JSON: {"caption": string, "hashtags": string[]}.',
     ].join(' ');
 
-    const gen = await this.llm.completeJson(
+    let gen = await this.llm.completeJson(
       { tier: 'voice', cachedContext: context, prompt, maxTokens: 600, customerId: task.customer_id },
       CaptionLlmOutput,
     );
+    // A "rewrite" that comes back word for word is worse than no reply: the
+    // owner is told "Reworked it" and sees the same post. Try once more,
+    // asking plainly for a different version; if it is still the same, say so.
+    const same = (a?: string | null, b?: string | null) =>
+      (a ?? '').replace(/\s+/g, ' ').trim().toLowerCase() === (b ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (same(gen.caption, post.caption)) {
+      gen = await this.llm.completeJson(
+        {
+          tier: 'voice',
+          cachedContext: context,
+          prompt: `${prompt} Your last answer repeated the previous caption exactly. Write a clearly different version that follows the owner's feedback.`,
+          maxTokens: 600,
+          customerId: task.customer_id,
+        },
+        CaptionLlmOutput,
+      );
+      if (same(gen.caption, post.caption)) {
+        return fail(
+          task.task_id,
+          // No example edits here: the owner has just given one, and offering
+          // "shorter" back to someone who said shorter reads as not listening.
+          "That one came back the same, sorry. Can you tell me a bit more about what you'd like different?",
+          'revise_unchanged',
+          task.customer_id,
+        );
+      }
+    }
 
     const verdict = await this.moderation.screen({
       caption: gen.caption,
@@ -75,7 +102,10 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
     }
 
     const customer = await this.prisma.customer.findUnique({ where: { id: task.customer_id } });
-    const risk = this.gate.classifyRisk(gen.caption);
+    // Same text the draft handler gates: caption plus hashtags.
+    const risk = this.gate.classifyRisk(
+      [gen.caption, gen.hashtags.map((h) => `#${h}`).join(' ')].filter(Boolean).join(' '),
+    );
     const decision = this.gate.decide(customer!.trustLevel, risk);
 
     await this.prisma.post.update({

@@ -2,7 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Platform } from '@smm/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { TokenCryptoService } from '../operator/security/token-crypto.service';
-import { PostForMeService } from '../operator/publishing/post-for-me.service';
+import {
+  PostForMeService,
+  conflictingAccountId,
+  type RemoteAccount,
+} from '../operator/publishing/post-for-me.service';
 import { GoogleBusinessService } from '../operator/publishing/google-business.service';
 import {
   canConnectPlatform,
@@ -23,6 +27,31 @@ export interface StartAuthResult {
   /** True when running without a Post for Me key (returns a demo URL). */
   offline: boolean;
 }
+
+/**
+ * What Post for Me appends to the redirect when the owner comes back:
+ * isSuccess, accountIds, failedAccountIds, error (plus provider/projectId).
+ * The callback page forwards them. All optional — the mobile path has none.
+ */
+export interface ConnectReturn {
+  isSuccess?: boolean;
+  accountIds?: string[];
+  failedAccountIds?: string[];
+  error?: string;
+}
+
+/**
+ * connected — at least one account is linked and recorded.
+ * retry     — we cleared a stale link that was blocking this account; one
+ *             more pass through Connect finishes it.
+ * taken     — that account is linked to a different, live Handled customer.
+ * failed    — Post for Me said no (owner cancelled, personal IG, no Page…).
+ * waiting   — nothing yet; Post for Me can lag. The cron sweep keeps trying.
+ */
+export type FinishOutcome = 'connected' | 'retry' | 'taken' | 'failed' | 'waiting';
+
+/** How recent a started connect must be for its callback to move an account. */
+const PENDING_WINDOW_MS = 30 * 60_000;
 
 export interface ConnectedSummary {
   platform: Platform;
@@ -148,7 +177,7 @@ export class ConnectService {
       data: { connectPendingPlatform: req.platform, connectPendingAt: new Date() },
     });
 
-    const { url } = await this.pfm.createAuthUrl({
+    const authReq = {
       platform: req.platform,
       externalId: req.customerId,
       // Facebook Login by default. Verified live on an iPhone (Oct 2026):
@@ -164,7 +193,20 @@ export class ConnectService {
               process.env.PFM_INSTAGRAM_CONNECTION === 'instagram' ? 'instagram' : 'facebook',
           }
         : {}),
-    });
+    };
+    let url: string;
+    try {
+      ({ url } = await this.pfm.createAuthUrl(authReq));
+    } catch (err) {
+      // Whether a Post for Me project allows the Facebook route for Instagram
+      // isn't something we can check ahead of time. If Post for Me turns the
+      // request itself down (a 4xx, not an outage), fall back once to
+      // Instagram Login rather than leave the owner with no way to connect.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (authReq.connectionType !== 'facebook' || !/→ 4\d\d\b/.test(msg)) throw err;
+      this.log.warn(`Facebook Login refused for Instagram, retrying with Instagram Login: ${msg}`);
+      ({ url } = await this.pfm.createAuthUrl({ ...authReq, connectionType: 'instagram' }));
+    }
 
     // iOS hands www.instagram.com links to the Instagram app (universal
     // links), and the app's OAuth picker is broken — verified live, while
@@ -249,13 +291,172 @@ export class ConnectService {
     return results.length;
   }
 
-  async reconcile(customerId: string): Promise<ConnectedSummary[]> {
+  /**
+   * The callback page's one call. Reads what Post for Me appended to the
+   * redirect and turns it into one plain outcome for the page to show.
+   *
+   * This is where "linking never worked" came from. Post for Me registers an
+   * account once per platform user. Connect your Instagram under one Handled
+   * customer (a test signup, an earlier phone number), and every later
+   * connect of that same Instagram under a different customer fails on their
+   * side with "External Id already exists for account spc_…" and
+   * isSuccess=false. The page ignored those parameters, polled for an account
+   * that was never coming, and the owner was left on "still finishing up".
+   */
+  async finishConnect(
+    customerId: string,
+    ret: ConnectReturn = {},
+  ): Promise<{ outcome: FinishOutcome; accounts: ConnectedSummary[]; reason?: string }> {
+    if (!this.pfm.configured) {
+      return { outcome: 'connected', accounts: await this.listConnected(customerId) };
+    }
+
+    const conflictId = conflictingAccountId(ret.error);
+    if (conflictId) {
+      const adopted = await this.adoptStaleAccount(customerId, conflictId);
+      if (adopted !== 'refused') {
+        return {
+          outcome: adopted,
+          accounts: await this.listConnected(customerId),
+          reason:
+            adopted === 'taken'
+              ? 'That account is already linked to another Handled account.'
+              : undefined,
+        };
+      }
+    }
+
+    const accounts = await this.reconcile(customerId, ret.accountIds);
+    if (accounts.length > 0 && (ret.accountIds?.length || ret.isSuccess !== false)) {
+      return { outcome: 'connected', accounts };
+    }
+    if (ret.isSuccess === false) {
+      return { outcome: 'failed', accounts, reason: friendlyConnectError(ret.error) };
+    }
+    return { outcome: 'waiting', accounts };
+  }
+
+  /**
+   * Take over an account Post for Me has registered under someone else's id,
+   * when (and only when) that someone isn't really using it.
+   *
+   *  - The asking customer must have started a connect in the last 30
+   *    minutes. The callback endpoint is public; without this, anyone holding
+   *    a customer id and an spc_ id could re-point an account.
+   *  - If the current holder is a live customer actively connected to it,
+   *    nothing moves — that's a human decision (admin pfm-account/reassign).
+   *  - Otherwise (deleted test customer, cancelled, never recorded it) the
+   *    external_id moves, and the owner taps Connect once more: a reconnect
+   *    under the SAME external_id updates the account in place, with fresh
+   *    tokens, which is the one path Post for Me always accepts.
+   */
+  /** The one customer with a connect started in the last 30 minutes, or null if none or several. */
+  async soleRecentPendingCustomer(): Promise<string | null> {
+    const rows = await this.prisma.customer.findMany({
+      where: { connectPendingAt: { gte: new Date(Date.now() - PENDING_WINDOW_MS) } },
+      select: { id: true },
+      take: 2,
+    });
+    return rows.length === 1 ? rows[0].id : null;
+  }
+
+  /** The customer the first of these Post for Me accounts belongs to, if it's one of ours. */
+  async ownerOfAccounts(accountIds: string[]): Promise<string | null> {
+    if (!this.pfm.configured) return null;
+    for (const id of accountIds.filter((i) => /^spc_/.test(i)).slice(0, 5)) {
+      const acct = await this.pfm.getAccount(id).catch(() => null);
+      if (!acct?.externalId) continue;
+      const exists = await this.prisma.customer.findUnique({
+        where: { id: acct.externalId },
+        select: { id: true },
+      }).catch(() => null);
+      if (exists) return exists.id;
+    }
+    return null;
+  }
+
+  private async adoptStaleAccount(
+    customerId: string,
+    accountId: string,
+  ): Promise<'retry' | 'taken' | 'refused'> {
+    const me = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { connectPendingAt: true },
+    });
+    if (!me?.connectPendingAt || Date.now() - me.connectPendingAt.getTime() > PENDING_WINDOW_MS) {
+      this.log.warn(`adopt ${accountId} for ${customerId}: no recent connect started — refusing`);
+      return 'refused';
+    }
+    const remote = await this.pfm.getAccount(accountId);
+    if (!remote) return 'refused';
+    if (remote.externalId === customerId) return 'retry';
+
+    const holder = remote.externalId
+      ? await this.prisma.connectedAccount.findFirst({
+          where: {
+            postForMeRef: accountId,
+            customerId: remote.externalId,
+            revoked: false,
+            customer: { status: { in: ['active', 'onboarding'] } },
+          },
+          select: { id: true },
+        })
+      : null;
+    if (holder) {
+      this.log.error(
+        `connect conflict: ${accountId} (${remote.platform}) is live under customer ` +
+          `${remote.externalId}; ${customerId} also tried to connect it. Resolve with ` +
+          'POST /admin/pfm-account/reassign.',
+      );
+      return 'taken';
+    }
+
+    await this.pfm.setExternalId(accountId, customerId);
+    await this.prisma.connectedAccount.updateMany({
+      where: { postForMeRef: accountId, NOT: { customerId } },
+      data: { revoked: true },
+    });
+    this.log.log(
+      `connect: moved stale ${remote.platform} account ${accountId} from ` +
+        `${remote.externalId ?? '(none)'} to ${customerId}`,
+    );
+    return 'retry';
+  }
+
+  async reconcile(customerId: string, accountIds: string[] = []): Promise<ConnectedSummary[]> {
     if (!this.pfm.configured) {
       // Nothing to sync in demo mode.
       return this.listConnected(customerId);
     }
 
-    const remote = await this.pfm.listAccounts(customerId);
+    const listed = await this.pfm.listAccounts(customerId);
+    // Post for Me's redirect names the new account ids. Their list endpoint
+    // can trail the redirect by a beat, so fetch any it didn't return yet —
+    // but only adopt one that is genuinely registered to this customer.
+    const seen = new Set(listed.map((a) => a.id));
+    const extra: RemoteAccount[] = [];
+    for (const id of accountIds.filter((i) => /^spc_/.test(i) && !seen.has(i)).slice(0, 10)) {
+      const acct = await this.pfm.getAccount(id).catch(() => null);
+      if (acct && acct.externalId === customerId) extra.push(acct);
+    }
+    const all = [...listed, ...extra];
+
+    // A disconnected account can't be posted to. Don't import one; and if we
+    // already hold it, mark it lapsed so the reconnect reminder goes out
+    // instead of posts quietly failing.
+    const disconnected = all.filter((a) => a.status === 'disconnected');
+    for (const acct of disconnected) {
+      await this.prisma.connectedAccount.updateMany({
+        where: {
+          customerId,
+          postForMeRef: acct.id,
+          revoked: false,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        data: { expiresAt: new Date() },
+      });
+    }
+    const remote = all.filter((a) => a.status !== 'disconnected');
 
     // Enforce the tier's platform allowance HERE, where rows are actually
     // created. startAuth checks it too, but against DB state that lags the real
@@ -454,4 +655,23 @@ function expiryFor(platform: Platform, from = new Date()): Date | null {
   const days = TOKEN_LIFETIME_DAYS[platform];
   if (!days) return null;
   return new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+/**
+ * Post for Me's error, in words for the owner. Their messages are written for
+ * developers; the common ones get a translation, anything else a generic
+ * line (the raw text stays in our logs, never on the page).
+ */
+export function friendlyConnectError(error: string | null | undefined): string {
+  const e = (error ?? '').toLowerCase();
+  if (/cancel|denied|access_denied|user denied/.test(e)) {
+    return 'It looks like the connection was cancelled. You can try again any time.';
+  }
+  if (/page/.test(e) && /(no|not|without|select)/.test(e)) {
+    return 'Instagram needs to be linked to a Facebook Page, and that Page has to be picked during connect.';
+  }
+  if (/professional|business|creator|personal/.test(e)) {
+    return 'Instagram only allows posting to Professional (Business or Creator) accounts. You can switch for free in Instagram settings.';
+  }
+  return 'The connection didn’t go through. Try once more, and if it happens again just text us.';
 }

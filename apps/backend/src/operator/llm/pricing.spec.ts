@@ -66,7 +66,7 @@ describe('costOf', () => {
     const unknown = costOf(counts({ model: 'some-future-model', inputTokens: 1_000_000 }));
     const known = costOf(counts({ model: 'claude-haiku-4-5', inputTokens: 1_000_000 }));
     assert.ok(unknown > known, 'an unknown model must not be priced optimistically');
-    assert.equal(unknown, MODEL_RATES['claude-opus-4-8'].input);
+    assert.equal(unknown, Math.max(...Object.values(MODEL_RATES).map((r) => r.input)));
   });
 
   it('costs nothing when nothing was used', () => {
