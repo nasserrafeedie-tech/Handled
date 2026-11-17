@@ -266,7 +266,13 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       hashtags: gen.hashtags,
       blackoutTopics: profile.blackoutTopics,
     });
-    const risk = this.gate.classifyRisk(gen.caption);
+    // Gate the words a viewer will actually see: the caption, its hashtags,
+    // and the hook burned into the first seconds of the video.
+    const risk = this.gate.classifyRisk(
+      [gen.caption, gen.hashtags.map((h) => `#${h}`).join(' '), edl.hook || defaultHook]
+        .filter(Boolean)
+        .join(' '),
+    );
     const decision = this.gate.decide(customer.trustLevel, risk);
 
     const post = await this.prisma.post.create({

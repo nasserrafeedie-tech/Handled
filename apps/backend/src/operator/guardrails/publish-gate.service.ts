@@ -76,8 +76,16 @@ export class PublishGateService {
       // Time pressure and specific calendar dates.
       /\b(today|tomorrow|tonight|this (week|weekend)|ends|expires|grand opening)\b/,
       /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s?\d{1,2}\b/,
-      // Superlative / comparative claims.
-      /\b(guarantee|guaranteed|best|#1|cheapest|lowest price)\b/,
+      // Superlative / comparative claims. "#1" sits outside the \b group: a
+      // word boundary can't come before "#", so inside it "#1" never matched.
+      /\b(guarantee|guaranteed|best|cheapest|lowest price|number one)\b/,
+      /(^|[^\w])(#1|no\.\s?1)\b/,
+      // Health and results claims. A dentist, spa, salon, gym or groomer post
+      // promising an outcome is the claim a regulator or an unhappy customer
+      // holds the owner to, so it always waits for them.
+      /\b(cures?|heals?|treats?|prevents?|relieves?|eliminates?|reverses?)\b.{0,40}\b(pain|acne|anxiety|disease|infection|cavities|gum disease|hair loss|wrinkles|arthritis|allergies|cancer|depression|weight)\b/,
+      /\b(pain[- ]free|painless|clinically (proven|tested)|doctor recommended|fda|no side effects|risk[- ]free|permanent results|100% safe|miracle)\b/,
+      /\b(lose|drop)\s+\d+\s?(lbs?|pounds|kg|inches)\b/,
     ];
     return signals.some((re) => re.test(c)) ? 'high' : 'low';
   }

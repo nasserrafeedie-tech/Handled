@@ -100,7 +100,10 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
     }
 
     const customer = await this.prisma.customer.findUnique({ where: { id: task.customer_id } });
-    const risk = this.gate.classifyRisk(gen.caption);
+    // Same text the draft handler gates: caption plus hashtags.
+    const risk = this.gate.classifyRisk(
+      [gen.caption, gen.hashtags.map((h) => `#${h}`).join(' ')].filter(Boolean).join(' '),
+    );
     const decision = this.gate.decide(customer!.trustLevel, risk);
 
     await this.prisma.post.update({

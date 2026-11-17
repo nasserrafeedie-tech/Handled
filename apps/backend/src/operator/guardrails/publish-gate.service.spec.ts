@@ -54,6 +54,14 @@ describe('risk classification — what full_auto may NOT post unreviewed', () =>
     'Grand opening March 5th', // dated event
     'Best coffee in town, guaranteed', // claim
     'Limited time only',
+    "We're the #1 barber in Pasadena", // "#1" used to slip past the word boundary
+    'Voted No. 1 groomer',
+    'Our whitening is completely pain-free', // health / results claims
+    'Clinically proven to whiten',
+    'This facial cures acne in one visit',
+    'Laser treatment that eliminates back pain',
+    'Lose 10 lbs with our bootcamp',
+    'Totally risk-free',
   ]) {
     it(`flags "${caption}" as high risk`, () => {
       assert.equal(gate.classifyRisk(caption), 'high');
@@ -71,6 +79,9 @@ describe('risk classification — what full_auto SHOULD post on its own', () => 
     'Save this post for your next visit', // the playbook's own CTA — not a promo
     'Open till 8 on Friday', // hours, not an offer
     'A little rainy-day pour to warm you up',
+    'How we treat every dog like family', // "treat" with no health outcome
+    'Healthy gums start with flossing before you brush', // advice, not a promise
+    'Hashtag #1stday at the new shop',
   ]) {
     it(`lets "${caption}" through as low risk`, () => {
       assert.equal(gate.classifyRisk(caption), 'low');

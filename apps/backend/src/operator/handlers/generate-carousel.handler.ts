@@ -1,3 +1,4 @@
+import { PublishGateService } from '../guardrails/publish-gate.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { type Task, type Result } from '@smm/contracts';
@@ -43,6 +44,9 @@ import { TaskHandler, ok, fail } from './handler.interface';
  * gate that stays is §7 — a photo the owner actually sent wins over anything we
  * assemble.
  */
+/** Stateless; one instance reads every deck's slide text. */
+const SLIDE_GATE = new PublishGateService();
+
 @Injectable()
 export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'> {
   readonly type = 'GENERATE_CAROUSEL' as const;
@@ -466,10 +470,29 @@ export class GenerateCarouselHandler implements TaskHandler<'GENERATE_CAROUSEL'>
     // like any AI image: it is disclosed at publish (aiGeneratedMedia) and forced
     // back to the owner's eyes regardless of trust, exactly as the standalone
     // image handler does.
+    // The slides are written separately from the caption, so they can carry a
+    // price, an offer or a claim the caption never made ("Kids cuts $18").
+    // What the owner's followers will read is the slide, so the trust gate
+    // reads it too: a high-risk deck goes back to the owner at any trust level.
+    const slideRisk = SLIDE_GATE.classifyRisk(
+      slidesCopy.map((s) => [s.headline, s.body, s.cta_label].filter(Boolean).join(' ')).join(' '),
+    );
+    const escalate = slideRisk === 'high' && post.riskLevel !== 'high';
     await this.prisma.post.update({
       where: { id: post.id },
       data: {
         mediaRefs: refs,
+        ...(escalate
+          ? {
+              riskLevel: 'high' as const,
+              approvalState: 'awaiting_owner' as const,
+              // An autopilot draft may already be cleared to go; put it back in
+              // the owner's queue so it is shown to them, not just held unseen.
+              ...(post.status === 'approved' || post.status === 'scheduled'
+                ? { status: 'pending_approval' as const }
+                : {}),
+            }
+          : {}),
         // A generated hero is always DISCLOSED (aiGeneratedMedia). It is also
         // forced back to the owner's REVIEW — except on full_auto, where the
         // owner has made two explicit choices: opt into generated imagery, and

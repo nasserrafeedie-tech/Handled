@@ -21,6 +21,7 @@ function makeWorld(opts?: {
   aiImagesOptIn?: boolean;
   imagesConfigured?: boolean;
   walkPhotos?: Array<{ r2Key: string; subject: string }>;
+  slides?: Array<{ kind: string; headline: string; body?: string; cta_label?: string }>;
 }) {
   const prompts: string[] = [];
   const updates: Array<Record<string, unknown>> = [];
@@ -54,6 +55,8 @@ function makeWorld(opts?: {
       findUnique: async () => ({
         id: 'p1',
         caption: 'Fresh pan dulce every morning, baked in-house.',
+        status: 'approved',
+        riskLevel: 'low',
         // The deck being redone — four slides from the previous render.
         mediaRefs: ['c1/old/slide-1.png', 'c1/old/slide-2.png', 'c1/old/slide-3.png', 'c1/old/slide-4.png'],
         archetype: 'educational_tip',
@@ -78,7 +81,7 @@ function makeWorld(opts?: {
       // The hero path asks for a photo subject before the slides are written.
       if (!req.prompt.includes('"slides"')) return { subject: 'a latte on a wooden counter' };
       return {
-        slides: [
+        slides: opts?.slides ?? [
           { kind: 'title', headline: 'Morning pan dulce' },
           { kind: 'body', headline: 'Baked here', body: 'Every tray comes out of our own oven.' },
           { kind: 'cta', headline: 'Come by early', cta_label: 'Come by' },
@@ -221,5 +224,30 @@ describe('GENERATE_CAROUSEL redo', () => {
     assert.equal(r.status, 'done');
     assert.match(r.summary_for_owner, /already has a picture/i);
     assert.equal(w.rendered.length, 0);
+  });
+});
+
+describe('GENERATE_CAROUSEL reads the slides through the trust gate', () => {
+  it('sends a deck back to the owner when a slide makes a claim the caption did not', async () => {
+    const w = makeWorld({
+      replace: true,
+      slides: [
+        { kind: 'title', headline: 'The best pan dulce in town, guaranteed' },
+        { kind: 'body', headline: 'Baked here', body: 'Every tray comes out of our own oven.' },
+        { kind: 'cta', headline: 'Come by early', cta_label: 'Come by' },
+      ],
+    });
+    const r = await w.handler.handle(w.task);
+    assert.equal(r.status, 'done');
+    assert.equal(w.updates[0].riskLevel, 'high');
+    assert.equal(w.updates[0].approvalState, 'awaiting_owner');
+    assert.equal(w.updates[0].status, 'pending_approval', 'shown to the owner, not just held');
+  });
+
+  it('leaves an ordinary deck as the draft handler set it', async () => {
+    const w = makeWorld({ replace: true });
+    await w.handler.handle(w.task);
+    assert.equal(w.updates[0].riskLevel, undefined);
+    assert.equal(w.updates[0].approvalState, undefined);
   });
 });

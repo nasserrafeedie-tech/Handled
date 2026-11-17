@@ -11,7 +11,7 @@ Last re-ranked: 2026-11-17.
 ## 1. The core loop works end to end (blocks the first customer)
 
 - [x] **Weekly loop journey.** Ran plan → approve → publish → metrics → Friday text against a fake Post for Me. Found and fixed: a repeated rewrite said "Reworked it" (`bfab2e0`). Simulate a whole week for one customer: plan the week, draft the posts, text them for approval, the owner says yes, the posts publish, metrics come back. Mock Twilio, Stripe, Post for Me and the LLM. Fix whatever breaks.
-- [ ] **Risk gate on publishing.** Check that a post the risk check flags (health claims, prices the owner never gave, blackout topics) waits for the owner, even when they have turned on auto-approve.
+- [x] **Risk gate on publishing.** Fixed: "#1" claims never matched, health claims weren't flagged, carousel slide text and the reel's burned-in hook skipped the check.
 - [ ] **Plan changes in Stripe.** Make sure `customer.subscription.updated` (an upgrade, a downgrade or a card that is fixed) moves the customer's tier and status, not just `checkout.session.completed`.
 - [ ] **Unpaid price question (F3).** Someone who hasn't paid asks "how much is it?" and gets the paywall text with no price in it. Give them the plan prices and the link.
 - [ ] **Email signup re-asks the business name (F18).** Someone who signs up on the web with a business name gets asked for it again over text.
