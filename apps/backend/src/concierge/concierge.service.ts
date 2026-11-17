@@ -455,7 +455,7 @@ export class ConciergeService {
         this.addressOf(customer),
         conversation.id,
         waiting
-          ? `Happy to. Do you mean the draft I sent? Reply "skip it" and I won't post it. To end your Handled plan, it's on your billing page: ${portalLink(customer.id)}`
+          ? `Sure. Do you mean the draft I sent? Reply "skip it" and I won't post it. To end your Handled plan, it's on your billing page: ${portalLink(customer.id)}`
           : `You can cancel any time on your billing page: ${portalLink(customer.id)} ` +
             "If something isn't working for you, tell me and I'll try to fix it.",
       );
