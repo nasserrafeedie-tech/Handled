@@ -50,3 +50,10 @@ export function plainReelText(v: { pro: boolean; uploadUrl: string; animated: bo
 /** "before and after reel" sent with one photo, or three. */
 export const REVEAL_NEEDS_TWO =
   'For a before and after reel I need two photos in one text: the before first, then the after. Send them together with "before and after reel".';
+
+/** The owner says what they'll send later. */
+export function willSendText(kind: 'video' | 'photo'): string {
+  return kind === 'video'
+    ? "Sounds good. Send the clips whenever you're ready and I'll cut them into a reel."
+    : "Sounds good. Send them whenever you're ready and I'll work them into your posts.";
+}

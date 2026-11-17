@@ -39,6 +39,22 @@ export function isReelLook(body: string): boolean {
 }
 
 /**
+ * "I'll send you the video tomorrow", "gonna send some pics later": the owner
+ * saying what they'll send, not asking for anything. Says which kind.
+ */
+const WILL_SEND = /\b(send|text|get|shoot|film|take|snap|grab)\b/i;
+const VIDEO = /\b(videos?|clips?|footage|reels?)\b/i;
+const PHOTO = /\b(photos?|pics?|pictures?|images?|shots?)\b/i;
+export function ownerWillSend(body: string): 'video' | 'photo' | null {
+  if (body.length > 160 || /\?/.test(body) || !OWN_PLAN.test(body) || !WILL_SEND.test(body)) return null;
+  // "yes, I'll send a photo later" still answers the draft.
+  if (/\b(yes|yep|yeah|ok|okay|sure|post it|approve|looks good|change|instead|but|skip|cancel)\b/i.test(body)) return null;
+  if (VIDEO.test(body)) return 'video';
+  if (PHOTO.test(body)) return 'photo';
+  return null;
+}
+
+/**
  * "make a reel", "can you do a video for us": a reel with no kind named. A cut
  * of their own clips, so the answer is where to send them (and, when animated
  * reels are on, the two kinds that need no footage).

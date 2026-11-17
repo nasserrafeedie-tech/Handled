@@ -43,8 +43,9 @@ import { entitlementLine, upgradePitch, postsPerWeek, tierHas } from '../operato
 import { ReelQueueService } from '../scheduler/reel-queue.service';
 import { animatedReelsOn } from '../operator/video/animated/flag';
 import { ensureVisual } from '../operator/graphics/visual-safety-net';
-import { animatedReelAsk, isRevealCaption, isReelLook, isPlainReelAsk, type AnimatedAsk } from './animated-reel-ask';
-import { reelName, reelLookText, plainReelText, REVEAL_NEEDS_TWO } from './reel-replies';
+import { animatedReelAsk, isRevealCaption, isReelLook, ownerWillSend, isPlainReelAsk, type AnimatedAsk } from './animated-reel-ask';
+import { reelName, reelLookText, plainReelText, willSendText, REVEAL_NEEDS_TWO } from './reel-replies';
+import { plainQuotes } from './plain-quotes';
 import { polishCaption } from '../operator/llm/caption-polish';
 import { detectSlop, slopFeedback } from '../operator/llm/slop';
 
@@ -347,6 +348,8 @@ export class ConciergeService {
       }
       throw e;
     }
+    // Match on straight quotes; the raw text is logged above.
+    msg = { ...msg, body: plainQuotes(msg.body ?? '') };
 
     // 1. Kill switch (§8) — highest priority, dead simple.
     if (this.isStop(msg.body)) {
@@ -513,6 +516,13 @@ export class ConciergeService {
     const reelAsk = animatedReelsOn() ? animatedReelAsk(msg.body) : null;
     if (reelAsk) {
       return this.requestAnimatedReel(customer.id, customer.planTier, this.addressOf(customer), conversation.id, reelAsk);
+    }
+
+    // 4a2. "I'll send you the video tomorrow": the owner's own plan, so a
+    //      short "sounds good" instead of a nudge about the waiting draft.
+    const coming = ownerWillSend(msg.body);
+    if (coming && (coming === 'photo' || tierHas(customer.planTier, 'reel'))) {
+      return this.reply(this.addressOf(customer), conversation.id, willSendText(coming));
     }
 
     // 4b. "show me the reel": the watch link again, wherever the reel stands.

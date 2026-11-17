@@ -91,3 +91,21 @@ describe('asking to see a reel, or for a reel with no kind', () => {
     }
   });
 });
+
+describe('the owner saying what they will send', () => {
+  it('reads a plan to send footage or photos', async () => {
+    const { ownerWillSend } = await import('./animated-reel-ask');
+    assert.equal(ownerWillSend('I will send you the video tomorrow'), 'video');
+    assert.equal(ownerWillSend("I'll text you some clips later"), 'video');
+    assert.equal(ownerWillSend('gonna take some pics at the shop today'), 'photo');
+  });
+  it('leaves asks and other plans alone', async () => {
+    const { ownerWillSend } = await import('./animated-reel-ask');
+    assert.equal(ownerWillSend('can you send me the video'), null);
+    assert.equal(ownerWillSend("I'll send it?"), null);
+    assert.equal(ownerWillSend("I'll be closed Monday"), null);
+    assert.equal(ownerWillSend('make a reel'), null);
+    assert.equal(ownerWillSend("yes, I'll send a photo later"), null);
+    assert.equal(ownerWillSend("I'll send a pic but change the time to 3"), null);
+  });
+});
