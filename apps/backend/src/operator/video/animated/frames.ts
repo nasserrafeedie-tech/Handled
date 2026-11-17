@@ -213,16 +213,47 @@ function decor(look: ReelLook, t: number, seed: number): string {
 
 export const REVEAL = { wipeAt: 3.6, wipeDur: 1.3, endAt: 8.5 } as const;
 
-export function beforeAfterFrame(l: BeforeAfterLayout, look: ReelLook, photos: RevealPhotos, t: number): string {
-  const wipe = easeInOut(prog(t, REVEAL.wipeAt, REVEAL.wipeDur));
+/*
+ * The photo motion of a reveal, written twice: once as JS (for the SVG frame)
+ * and once as an ffmpeg expression (the renderer lets ffmpeg move the photos,
+ * which is many times faster than drawing a photo per frame in resvg). The
+ * spec checks that the two agree, so the curve is defined right here, once.
+ */
+const PUSH_IN = 0.05; // the before photo creeps in by 5% until the wipe ends
+const SETTLE = { from: 1.06, dur: 4.5 }; // the after photo settles from 106%
+
+/** 0 → 1 across the frame: how far the wipe has gone at `t`. */
+export const wipeAt = (t: number): number => easeInOut(prog(t, REVEAL.wipeAt, REVEAL.wipeDur));
+export const beforeZoom = (t: number): number => 1 + PUSH_IN * prog(t, 0, REVEAL.wipeAt + REVEAL.wipeDur);
+export const afterZoom = (t: number): number =>
+  SETTLE.from - (SETTLE.from - 1) * easeOut(prog(t, REVEAL.wipeAt, SETTLE.dur));
+
+/** The same three curves for ffmpeg, in its expression language (`t` in seconds). */
+export function revealExpressions(): { wipe: string; beforeZoom: string; afterZoom: string } {
+  const p = (at: number, dur: number) => `clip((t-${at})/${dur},0,1)`;
+  const wp = p(REVEAL.wipeAt, REVEAL.wipeDur);
+  const sp = p(REVEAL.wipeAt, SETTLE.dur);
+  return {
+    wipe: `if(lt(${wp},0.5),4*pow(${wp},3),1-pow(-2*${wp}+2,3)/2)`,
+    beforeZoom: `(1+${PUSH_IN}*${p(0, REVEAL.wipeAt + REVEAL.wipeDur)})`,
+    afterZoom: `(${SETTLE.from}-${r3(SETTLE.from - 1)}*(1-pow(1-${sp},3)))`,
+  };
+}
+
+/**
+ * One frame of the reveal. With `photos` null it draws everything but the
+ * photos, on a clear background: the overlay the renderer lays over the photo
+ * layer that ffmpeg moves.
+ */
+export function beforeAfterFrame(l: BeforeAfterLayout, look: ReelLook, photos: RevealPhotos | null, t: number): string {
+  const wipe = wipeAt(t);
   const x = wipe * W;
   const end = easeInOut(prog(t, REVEAL.endAt, 0.9));
-  // Slow push-in on each photo; the after photo settles as it is revealed.
-  const zb = 1 + 0.05 * prog(t, 0, REVEAL.wipeAt + REVEAL.wipeDur);
-  const za = 1.06 - 0.06 * easeOut(prog(t, REVEAL.wipeAt, 4.5));
+  const zb = beforeZoom(t);
+  const za = afterZoom(t);
   // Photos are the expensive part of a frame, so draw only what shows.
-  const showBefore = wipe < 1 && end < 1;
-  const showAfter = wipe > 0 && end < 1;
+  const showBefore = !!photos && wipe < 1 && end < 1;
+  const showAfter = !!photos && wipe > 0 && end < 1;
   const img = (href: string, z: number) => {
     const w = W * 1.08 * z;
     const h = H * 1.08 * z;
@@ -246,9 +277,9 @@ export function beforeAfterFrame(l: BeforeAfterLayout, look: ReelLook, photos: R
     <clipPath id="rev"><rect x="0" y="0" width="${r1(x)}" height="${H}"/></clipPath>
     <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000000" stop-opacity="0.62"/><stop offset="1" stop-color="#000000" stop-opacity="0"/></linearGradient>
   </defs>
-  <rect width="${W}" height="${H}" fill="${look.bgDeep}"/>
-  ${showBefore ? img(photos.before, zb) : ''}
-  ${showAfter ? `<g clip-path="url(#rev)">${img(photos.after, za)}</g>` : ''}
+  ${photos ? `<rect width="${W}" height="${H}" fill="${look.bgDeep}"/>` : ''}
+  ${showBefore ? img(photos!.before, zb) : ''}
+  ${showAfter ? `<g clip-path="url(#rev)">${img(photos!.after, za)}</g>` : ''}
   ${wipe > 0 && wipe < 1 ? `<rect x="${r1(x - 4)}" y="0" width="8" height="${H}" fill="${look.accent}"/><circle cx="${r1(x)}" cy="${H / 2}" r="34" fill="${look.accent}"/>` : ''}
   ${end < 1 ? `<rect width="${W}" height="640" fill="url(#scrim)"/>` : ''}
   ${pill('BEFORE', 1 - clamp01(wipe * 2))}${pill('AFTER', clamp01(wipe * 2 - 1) * (1 - end))}
@@ -266,9 +297,10 @@ export function frameAt(
   layout: AnimatedLayout,
   look: ReelLook,
   t: number,
-  opts: { photos?: RevealPhotos; seed?: number } = {},
+  opts: { photos?: RevealPhotos | null; seed?: number } = {},
 ): string {
   if (layout.kind === 'promo') return promoFrame(layout, look, t, opts.seed ?? 0);
-  if (!opts.photos) throw new Error('a before-and-after reel needs both photos');
+  // null asks for the overlay alone (see beforeAfterFrame); undefined is a mistake.
+  if (opts.photos === undefined) throw new Error('a before-and-after reel needs both photos');
   return beforeAfterFrame(layout, look, opts.photos, t);
 }

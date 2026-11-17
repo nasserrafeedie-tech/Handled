@@ -7,7 +7,7 @@ import { GraphicsService } from '../../graphics/graphics.service';
 import { contrast, wrapTo } from './kit';
 import { reelLook } from './look';
 import { inventedNumbers, layoutSpec, onScreenText, type PromoReelSpec } from './spec';
-import { frameAt } from './frames';
+import { afterZoom, beforeZoom, frameAt, revealExpressions, wipeAt } from './frames';
 import {
   buildSpec,
   checkSpec,
@@ -220,6 +220,47 @@ describe('animated reels: look and layout', () => {
       assert.equal(img.width, 216);
       assert.equal(img.height, 384);
     }
+  });
+});
+
+/** Evaluates the small part of ffmpeg's expression language the reveal uses. */
+function ffEval(expr: string, t: number): number {
+  const fns = {
+    clip: (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x)),
+    pow: Math.pow,
+    lt: (a: number, b: number) => (a < b ? 1 : 0),
+    if: (c: number, a: number, b: number) => (c ? a : b),
+    trunc: Math.trunc,
+  };
+  assert.ok(/^[\d\s.+\-*/(),a-z]+$/.test(expr), expr);
+  const js = expr.replace(/\bif\(/g, 'iff(');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function('t', 'clip', 'pow', 'lt', 'iff', 'trunc', `return ${js};`)(t, fns.clip, fns.pow, fns.lt, fns.if, fns.trunc);
+}
+
+describe('animated reels: the reveal photo layer', () => {
+  it("ffmpeg's photo motion matches the frames'", () => {
+    const e = revealExpressions();
+    for (let t = 0; t <= 11.5; t += 0.1) {
+      assert.ok(Math.abs(ffEval(e.wipe, t) - wipeAt(t)) < 1e-9, `wipe at ${t}`);
+      assert.ok(Math.abs(ffEval(e.beforeZoom, t) - beforeZoom(t)) < 1e-9, `before zoom at ${t}`);
+      assert.ok(Math.abs(ffEval(e.afterZoom, t) - afterZoom(t)) < 1e-9, `after zoom at ${t}`);
+    }
+  });
+
+  it('the overlay leaves the photos out and the background clear', () => {
+    const fit = fittedOfflineSpec(ctx('', { kind: 'before_after', businessType: 'dog grooming' }), look);
+    assert.ok(fit.ok);
+    if (!fit.ok) return;
+    const svg = frameAt(fit.layout, look, 2, { photos: null });
+    assert.ok(!svg.includes('<image'));
+    const img = new GraphicsService().rasterize(svg, 216);
+    // Bottom middle is photo in a reveal: clear in the overlay.
+    const at = (x: number, y: number) => img.pixels[(y * img.width + x) * 4 + 3];
+    assert.equal(at(108, 370), 0);
+    // The end card covers the photos, so it is opaque.
+    const end = new GraphicsService().rasterize(frameAt(fit.layout, look, 11, { photos: null }), 216);
+    assert.equal(end.pixels[(370 * end.width + 108) * 4 + 3], 255);
   });
 });
 
