@@ -147,9 +147,9 @@ async function captionBandBytes(mp4: Buffer, tag: string): Promise<number> {
   writeFileSync(f, mp4);
   const png = join(work, `${tag}.png`);
   // Sample a frame at 1s (inside the caption's window) and crop the band at
-  // y=700 where captions.ts positions them.
+  // y=940 where captions.ts positions them.
   await run(ffmpegPath, [
-    '-y', '-ss', '1', '-i', f, '-frames:v', '1', '-vf', 'crop=1080:300:0:640', png,
+    '-y', '-ss', '1', '-i', f, '-frames:v', '1', '-vf', 'crop=1080:300:0:900', png,
   ]);
   return statSync(png).size;
 }
@@ -168,7 +168,7 @@ describe('captions reach the frame', () => {
       ' BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle,' +
       ' BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     'Style: Cap,Anton,96,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,' +
-      '-1,0,0,0,100,100,0,0,1,6,3,8,80,80,700,1',
+      '-1,0,0,0,100,100,0,0,1,6,3,8,80,80,940,1',
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',

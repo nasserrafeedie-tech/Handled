@@ -3,7 +3,7 @@
  * ReelService.assemble), from still photos turned into short moving clips, so
  * caption placement, the hook and the end card can be looked at.
  *
- *   npx tsx scripts/render-sample-reel.ts <out.mp4> <photo1.jpg> <photo2.jpg> [photo3.jpg] [--style=bold] [--accent=#C9A227] [--name="Sharp & Co"] [--hook="..."]
+ *   npx tsx scripts/render-sample-reel.ts <out.mp4> <photo1.jpg> <photo2.jpg> [photo3.jpg] [--style=bold] [--accent=#C9A227] [--name="Sharp & Co"] [--hook="..."] [--type="barbershop"] [--site=sharpandco.com]
  *
  * The "footage" is made with ffmpeg's zoompan (slow push-ins and pans), with a
  * quiet tone for audio, and the transcript is a fixed script with hand timings
@@ -18,6 +18,7 @@ import { GraphicsService } from '../src/operator/graphics/graphics.service';
 import type { BrandStyle } from '../src/operator/graphics/slide-templates';
 import { captionsToAss, type TranscriptWord } from '../src/operator/video/captions';
 import { mapWordsToTimeline } from '../src/operator/video/edl';
+import { endCardCopy } from '../src/operator/video/end-card';
 import { ReelService } from '../src/operator/video/reel.service';
 
 const args = process.argv.slice(2);
@@ -31,6 +32,8 @@ const style = flag('style', 'editorial') as BrandStyle;
 const accent = flag('accent', '#E7B27A');
 const primary = flag('primary', '#7C3A24');
 const name = flag('name', "Rosa's Coffee");
+const type = flag('type', 'coffee shop');
+const site = flag('site', '');
 const hook = flag('hook', 'The first pour of the morning, every single day');
 const SCRIPT = flag(
   'script',
@@ -85,8 +88,9 @@ async function main() {
     brandStyle: style,
     hookText: hook,
   });
+  const copy = endCardCopy({ businessName: name, businessType: type, websiteUrl: site });
   const card = new GraphicsService().renderSlide(
-    { kind: 'cta', headline: name, body: 'We saved you a spot.', footer: '', variant: 0 },
+    { kind: 'cta', headline: copy.headline, body: copy.body, ctaLabel: copy.ctaLabel, footer: '', variant: 0 },
     { primary, secondary: accent, brandName: name, style },
   );
   const mp4 = await new ReelService().assemble({

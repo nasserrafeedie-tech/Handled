@@ -89,13 +89,15 @@ const MAX_LINE_SECS = 2.5;
 const MIN_LINE_SECS = 0.5;
 
 /**
- * 1080×1920 is the reel canvas; 700px down puts the text in the upper-middle
- * third — clear of Instagram's bottom UI (username, caption, action buttons)
- * and clear of the top corners where the platform draws its own chrome.
+ * 1080×1920 is the reel canvas. Meta's Reels safe zone keeps text out of the
+ * top 14% and bottom 35% (the platform's caption, username and buttons), so
+ * text must end by y≈1248. 940px down puts two caption rows just under the
+ * middle of the frame, inside that zone, and below where a face usually sits
+ * in phone footage — at 700px the captions covered people's faces.
  */
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
-const MARGIN_V = 700;
+const MARGIN_V = 940;
 /** Left/right margins every caption and the hook keep from the frame edge. */
 const MARGIN_H = 80;
 /** Width text may use: the canvas less both margins. */
@@ -103,12 +105,12 @@ const SAFE_W = CANVAS_W - MARGIN_H * 2;
 const CAP_SIZE = 96;
 /** Anton is condensed: at the shared size its captions read small and thin. */
 const capSizeFor = (font: string) => (font === 'Anton' ? 116 : CAP_SIZE);
-const hookSizeFor = (font: string) => (font === 'Anton' ? 100 : HOOK_SIZE);
+const hookSizeFor = (font: string) => (font === 'Anton' ? 124 : HOOK_SIZE);
 /**
  * The hook is the scroll-stopper, so it is set larger than the captions'
  * supporting role would suggest; it wraps into up to three boxed rows.
  */
-const HOOK_SIZE = 84;
+const HOOK_SIZE = 100;
 /** The hook's box reaches this far past its text on each side (BorderStyle 3 Outline). */
 const HOOK_BOX = 18;
 

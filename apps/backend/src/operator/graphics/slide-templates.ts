@@ -1198,7 +1198,10 @@ export function renderSlideSvg(spec: SlideSpec, theme: BrandTheme): string {
       // A gig poster: the headline is the picture. Huge, tight, bottom-left,
       // with the brand line pinned top-left and a hairline before the body.
       const hFs = Math.round((isTitle ? 172 : 126) * scale);
-      blocks.push(headline(spec.headline, hFs, 0.98, headMax, g(44)));
+      // All-caps faces can sit tight; lowercase needs room for descenders
+      // ("get" over "this" collided at 0.98).
+      const tight = !!t.headUpper;
+      blocks.push(headline(spec.headline, hFs, tight ? 0.98 : 1.05, headMax, g(44)));
       blocks.push({
         h: 6,
         gap: spec.body ? g(40) : 0,

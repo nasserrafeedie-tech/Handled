@@ -135,11 +135,11 @@ describe('the ASS file', () => {
     assert.match(ass, /PlayResY: 1920/);
   });
 
-  it('positions captions in the upper-middle third, clear of platform UI', () => {
+  it('positions captions below faces and inside the Reels safe zone', () => {
     const ass = captionsToAss(sample);
-    // Alignment 8 (top-centre) with a 700px top margin. Anchoring to the bottom
-    // would bury the captions under Instagram's own caption and buttons.
-    assert.match(ass, /,8,80,80,700,1/);
+    // Alignment 8 (top-centre) with a 940px top margin: under where faces sit,
+    // above Instagram's own caption and buttons (bottom 35% of the frame).
+    assert.match(ass, /,8,80,80,940,1/);
   });
 
   it('paints the emphasis word in the brand accent and resets afterwards', () => {
@@ -263,8 +263,9 @@ describe('nothing runs off the frame', () => {
     const hook = ass.split('\n').find((l) => l.includes(',Hook,'))!;
     const rows = textOf(hook).split('\\N');
     assert.ok(rows.length >= 2, `expected the hook to wrap, got "${textOf(hook)}"`);
+    const fs = Number(/\\fs(\d+)/.exec(hook)?.[1] ?? 100);
     for (const r of rows) {
-      const w = textWidth(r, 'Poppins', 84, 700)!;
+      const w = textWidth(r, 'Poppins', fs, 700)!;
       assert.ok(w <= 1080 - 160 - 36, `hook row "${r}" is ${w.toFixed(0)}px wide`);
     }
   });
@@ -312,7 +313,7 @@ describe('colours stay readable', () => {
   it('puts dark text on a pale hook box and white text on a dark one', () => {
     const style = (accentHex: string) =>
       captionsToAss(words, { accentHex, hookText: 'Watch this' }).split('\n').find((l) => l.startsWith('Style: Hook'))!;
-    assert.match(style('#F2D7DE'), /Style: Hook,Poppins,84,&H00161A1A,/);
-    assert.match(style('#3B5B45'), /Style: Hook,Poppins,84,&H00FFFFFF,/);
+    assert.match(style('#F2D7DE'), /Style: Hook,Poppins,100,&H00161A1A,/);
+    assert.match(style('#3B5B45'), /Style: Hook,Poppins,100,&H00FFFFFF,/);
   });
 });
