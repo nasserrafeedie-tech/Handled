@@ -16,6 +16,7 @@ import { MakeGraphicHandler } from './handlers/make-graphic.handler';
 import { GenerateImageHandler } from './handlers/generate-image.handler';
 import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
 import { AssembleReelHandler } from './handlers/assemble-reel.handler';
+import { AnimatedReelHandler } from './handlers/animated-reel.handler';
 
 /**
  * Agent B entry point (§3). Implements the OperatorRegistry the TaskBus calls.
@@ -42,6 +43,7 @@ export class OperatorService implements OperatorRegistry {
     generateImage: GenerateImageHandler,
     generateCarousel: GenerateCarouselHandler,
     assembleReel: AssembleReelHandler,
+    animatedReel: AnimatedReelHandler,
   ) {
     for (const h of [
       planWeek,
@@ -58,6 +60,7 @@ export class OperatorService implements OperatorRegistry {
       generateImage,
       generateCarousel,
       assembleReel,
+      animatedReel,
     ] as TaskHandler[]) {
       this.handlers.set(h.type, h);
     }

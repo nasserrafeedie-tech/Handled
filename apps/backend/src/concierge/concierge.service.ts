@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { Task, CalendarSlot, DraftPostResult } from '@smm/contracts';
@@ -38,7 +38,10 @@ import {
 import { z } from 'zod';
 import { strategySummary } from './strategy-summary';
 import { OWNER_CONSENT_COPY } from '../operator/graphics/image-prompt';
-import { entitlementLine, upgradePitch, postsPerWeek } from '../operator/tier-entitlements';
+import { entitlementLine, upgradePitch, postsPerWeek, tierHas } from '../operator/tier-entitlements';
+import { ReelQueueService } from '../scheduler/reel-queue.service';
+import { animatedReelsOn } from '../operator/video/animated/flag';
+import { animatedReelAsk, type AnimatedAsk } from './animated-reel-ask';
 import { polishCaption } from '../operator/llm/caption-polish';
 import { detectSlop, slopFeedback } from '../operator/llm/slop';
 
@@ -312,6 +315,9 @@ export class ConciergeService {
     private readonly classifier: ArchetypeClassifier,
     private readonly research: ArchetypeResearchService,
     private readonly storage: StorageService,
+    // Optional so the concierge still builds without the scheduler (tests,
+    // a process with no Redis); animated reels then render in-process.
+    @Optional() private readonly reelQueue?: ReelQueueService,
   ) {}
 
   async handleInbound(msg: InboundSms): Promise<void> {
@@ -485,6 +491,14 @@ export class ConciergeService {
     });
     if (!this.onboarding.isComplete(profile)) {
       return this.continueOnboarding(customer.id, this.addressOf(customer), conversation.id, msg.body, profile, customer.businessName, customer.planTier);
+    }
+
+    // 4a. Animated reel ("make a promo reel for kids cuts $20 on weekdays").
+    //     Before the graphic check, which would otherwise read "promo" as a
+    //     graphic. Off unless ANIMATED_REELS=1.
+    const reelAsk = animatedReelsOn() ? animatedReelAsk(msg.body) : null;
+    if (reelAsk) {
+      return this.requestAnimatedReel(customer.id, customer.planTier, this.addressOf(customer), conversation.id, reelAsk);
     }
 
     // 4. Graphic request ("make a graphic/carousel/quote card/promo...").
@@ -1377,6 +1391,44 @@ export class ConciergeService {
             : "Got it — I'll keep that in mind. Text me any time you want something posted.",
         );
     }
+  }
+
+  /**
+   * An animated reel, Pro only. It renders on the worker (the frames take the
+   * CPU for up to a minute), which texts the result when it's done; here we
+   * only say it's on the way.
+   */
+  private async requestAnimatedReel(
+    customerId: string,
+    planTier: string,
+    phone: string,
+    conversationId: string,
+    ask: AnimatedAsk,
+  ): Promise<void> {
+    if (!tierHas(planTier, 'reel')) {
+      return this.reply(
+        phone,
+        conversationId,
+        `Animated reels are part of Pro. ${upgradePitch(planTier)} Reply UPGRADE and I'll set it up.`,
+      );
+    }
+    const what = ask.kind === 'promo' ? 'promo reel' : 'before and after reel';
+    if (this.reelQueue) {
+      await this.reelQueue.enqueue({
+        customerId,
+        platform: 'instagram',
+        animated: { kind: ask.kind, ...(ask.offerText ? { offerText: ask.offerText } : {}) },
+      });
+      return this.reply(phone, conversationId, `On it 🎬 Your ${what} will be here in a couple of minutes.`);
+    }
+    const result = await this.bus.emit(
+      this.task(customerId, 'ANIMATED_REEL', {
+        kind: ask.kind,
+        platform: 'instagram',
+        ...(ask.offerText ? { offer_text: ask.offerText } : {}),
+      }),
+    );
+    return this.reply(phone, conversationId, result.summary_for_owner);
   }
 
   /**

@@ -45,20 +45,7 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
     this.worker = new Worker<ReelJobData>(
       REEL_QUEUE,
       async (job) => {
-        const task: Task = {
-          task_id: randomUUID(),
-          customer_id: job.data.customerId,
-          type: 'ASSEMBLE_REEL',
-          payload: {
-            platform: job.data.platform,
-            ...(job.data.mediaAssetIds?.length
-              ? { media_asset_ids: job.data.mediaAssetIds }
-              : {}),
-          },
-          requires_approval: false,
-          created_by: 'concierge',
-          created_at: new Date().toISOString(),
-        } as Task;
+        const task: Task = buildReelTask(job.data);
         const result = await this.bus.emit(task);
         // Tell the owner how it went (§3: the Concierge owns the thread).
         await this.concierge
@@ -100,4 +87,35 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     await this.worker?.close();
   }
+}
+
+/** The task a reel job stands for: a cut of footage, or an animated reel. */
+export function buildReelTask(data: ReelJobData): Task {
+  const envelope = {
+    task_id: randomUUID(),
+    customer_id: data.customerId,
+    requires_approval: false,
+    created_by: 'concierge' as const,
+    created_at: new Date().toISOString(),
+  };
+  if (data.animated) {
+    return {
+      ...envelope,
+      type: 'ANIMATED_REEL',
+      payload: {
+        kind: data.animated.kind,
+        platform: data.platform,
+        ...(data.animated.offerText ? { offer_text: data.animated.offerText } : {}),
+        ...(data.animated.mediaAssetIds?.length === 2 ? { media_asset_ids: data.animated.mediaAssetIds } : {}),
+      },
+    } as Task;
+  }
+  return {
+    ...envelope,
+    type: 'ASSEMBLE_REEL',
+    payload: {
+      platform: data.platform,
+      ...(data.mediaAssetIds?.length ? { media_asset_ids: data.mediaAssetIds } : {}),
+    },
+  } as Task;
 }

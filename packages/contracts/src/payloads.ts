@@ -137,6 +137,24 @@ export const AssembleReelPayload = z
   .strict();
 export type AssembleReelPayload = z.infer<typeof AssembleReelPayload>;
 
+// ── ANIMATED_REEL ──────────────────────────────────────────────────────────
+// A motion-graphics reel from Handled's own templates (no AI video, no
+// footage needed): an animated promo for an offer, or a before/after reveal
+// of two of the owner's photos. Pro only, behind ANIMATED_REELS=1.
+export const AnimatedReelPayload = z
+  .object({
+    kind: z.enum(['promo', 'before_after']),
+    /** What the promo is about, in the owner's words ("kids cuts $20 on weekdays"). */
+    offer_text: z.string().max(400).optional(),
+    /** before_after: the before photo, then the after photo. Omitted: the
+     *  newest photos the owner tagged before and after. */
+    media_asset_ids: z.array(uuid).length(2).optional(),
+    platform: Platform.default('instagram'),
+    scheduled_time: iso8601.optional(),
+  })
+  .strict();
+export type AnimatedReelPayload = z.infer<typeof AnimatedReelPayload>;
+
 // ── UPDATE_BRAND_PROFILE ───────────────────────────────────────────────────
 // Concierge learned something during onboarding / mid-relationship.
 // Partial patch — only the fields that changed. `.strip()`-free strict object.

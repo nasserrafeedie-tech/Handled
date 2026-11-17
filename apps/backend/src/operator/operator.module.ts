@@ -20,6 +20,8 @@ import { TranscriptionService } from './video/transcription.service';
 import { EdlService } from './video/edl.service';
 import { StorageService } from '../common/storage.service';
 import { AssembleReelHandler } from './handlers/assemble-reel.handler';
+import { AnimatedReelHandler } from './handlers/animated-reel.handler';
+import { AnimatedReelService } from './video/animated/animated-reel.service';
 import { PlanWeekHandler } from './handlers/plan-week.handler';
 import { DraftPostHandler } from './handlers/draft-post.handler';
 import { RegeneratePostHandler } from './handlers/regenerate-post.handler';
@@ -54,6 +56,7 @@ import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
     ReelService,
     TranscriptionService,
     EdlService,
+    AnimatedReelService,
     StorageService,
     // handlers
     PlanWeekHandler,
@@ -70,6 +73,7 @@ import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
     GenerateImageHandler,
     GenerateCarouselHandler,
     AssembleReelHandler,
+    AnimatedReelHandler,
     // registry, exposed to the TaskBus under the abstract token
     OperatorService,
     { provide: OPERATOR_REGISTRY, useExisting: OperatorService },
@@ -81,6 +85,7 @@ import { GenerateCarouselHandler } from './handlers/generate-carousel.handler';
     ReelService,
     TranscriptionService,
     EdlService,
+    AnimatedReelService,
     OPERATOR_REGISTRY,
     TokenCryptoService,
     GraphicsService,
