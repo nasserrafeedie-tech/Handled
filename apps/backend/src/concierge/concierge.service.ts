@@ -227,6 +227,9 @@ export function isPriceQuestion(body: string): boolean {
   return /\bhow much\b|\b(price|prices|pricing|cost|costs|plans?|rates?|monthly fee)\b|\$\s*\?/i.test(t);
 }
 
+/** How the free draft text opens; also how the free draft is found again later. */
+const FREE_TASTE_LEAD = "Here's what I'd post for you:";
+
 /** How the pitch under the free draft reads. The draft itself is above it. */
 const FREE_TASTE_PITCH =
   "That's a taste 🙂 Want me to add a branded image, post it for you, and " +
@@ -560,7 +563,7 @@ export class ConciergeService {
       await this.reply(
         addr,
         conversationId,
-        `Here's what I'd post for you:\n\n“${caption.trim()}”\n\n${FREE_TASTE_PITCH}`,
+        `${FREE_TASTE_LEAD}\n\n“${caption.trim()}”\n\n${FREE_TASTE_PITCH}`,
       );
       // After the lead has their draft, never before: the alert is for
       // Nasser's follow-up, and it must not delay or endanger the sale text.
@@ -1358,7 +1361,7 @@ export class ConciergeService {
     // stripeCustomerId is set, so paying customers flow straight through.
     const payer = await this.prisma.customer.findUnique({
       where: { id: customerId },
-      select: { stripeCustomerId: true, businessName: true },
+      include: { conversation: { select: { id: true } } },
     });
     if (!payer?.stripeCustomerId) {
       await this.notify(customerId, freeTasteIntro(payer?.businessName), { promptedByOwner: true });
@@ -1369,14 +1372,61 @@ export class ConciergeService {
     });
     const first = this.onboarding.nextField(profile);
     if (!first) return; // already fully onboarded (re-subscribe, plan change)
+    const email = payer.preferredChannel === 'email';
+
+    // They described the business to get their free draft. Asking them to
+    // describe it again right after they paid reads as not listening, so that
+    // description is taken as the answer to question one.
+    const conversationId = payer.conversation?.id;
+    const described =
+      first === 'business_type' && payer.freeDraftUsedAt && conversationId
+        ? await this.freeTasteBlurb(conversationId)
+        : null;
+    if (described && conversationId) {
+      await this.notify(
+        customerId,
+        this.onboarding.welcome(payer.businessName, { email, firstAnswered: true }),
+        { promptedByOwner: true },
+      );
+      return this.continueOnboarding(
+        customerId,
+        this.addressOf(payer),
+        conversationId,
+        described,
+        profile,
+        payer.businessName,
+        payer.planTier,
+      );
+    }
+
     // The owner just checked out and is watching their phone for this text.
     await this.notify(
       customerId,
       first === 'business_type'
-        ? this.onboarding.welcome(payer.businessName)
+        ? this.onboarding.welcome(payer.businessName, { email })
         : this.onboarding.question(first),
       { promptedByOwner: true },
     );
+  }
+
+  /**
+   * What the owner wrote that their free draft was made from: the last thing
+   * they sent before it. Null when there was no free draft in this thread, or
+   * what came before it was only a greeting.
+   */
+  private async freeTasteBlurb(conversationId: string): Promise<string | null> {
+    const draft = await this.prisma.message.findFirst({
+      where: { conversationId, direction: 'outbound', body: { startsWith: FREE_TASTE_LEAD } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!draft) return null;
+    const asked = await this.prisma.message.findFirst({
+      where: { conversationId, direction: 'inbound', createdAt: { lte: draft.createdAt } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const text = asked?.body?.trim();
+    if (!text || this.onboarding.isGreetingOnly(text) || isPriceQuestion(text)) return null;
+    return text;
   }
 
   /**
@@ -1953,7 +2003,7 @@ export class ConciergeService {
         phone,
         conversationId,
         outboundCount === 0
-          ? this.onboarding.welcome(businessName)
+          ? this.onboarding.welcome(businessName, { email: phone.includes('@') })
           : this.onboarding.question('business_type', undefined, businessName),
       );
     }

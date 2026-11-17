@@ -330,6 +330,23 @@ export class StripeWebhookController {
       return;
     }
 
+    // Someone who signed up with an email on the web already has a row, with
+    // the business name and their free draft on it, but no phone. Checkout
+    // collects a phone, so matching on phone alone would make a second,
+    // empty customer and onboard that one by text. Attach the phone to the
+    // email row instead, and they carry on by email as they chose.
+    const email = obj.customer_details?.email?.trim().toLowerCase();
+    const byPhone = await this.prisma.customer.findUnique({ where: { phone } });
+    if (!byPhone && email) {
+      const byEmail = await this.prisma.customer.findUnique({ where: { email } });
+      if (byEmail && !byEmail.phone) {
+        await this.prisma.customer.update({
+          where: { id: byEmail.id },
+          data: { phone, planTier: plan, stripeCustomerId: obj.customer ?? undefined },
+        });
+      }
+    }
+
     const customer = await this.prisma.customer.upsert({
       where: { phone },
       create: {

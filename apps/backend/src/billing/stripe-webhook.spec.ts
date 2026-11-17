@@ -32,12 +32,15 @@ function makeController(rows: Record<string, any>, seen = new Set<string>()) {
         rows[where.phone] = row;
         return row;
       },
-      findUnique: async () => null,
+      findUnique: async ({ where }: any) =>
+        (where.phone ? rows[where.phone] : Object.values(rows).find((r: any) => r.email && r.email === where.email)) ??
+        null,
       findFirst: async ({ where }: any) =>
         Object.values(rows).find((r: any) => r.stripeCustomerId === where.stripeCustomerId) ?? null,
       update: async ({ where, data }: any) => {
         const row: any = Object.values(rows).find((r: any) => r.id === where.id);
         if (row) Object.assign(row, data);
+        if (row && data.phone) rows[data.phone] = row;
         return row ?? {};
       },
     },
@@ -575,5 +578,41 @@ describe('Getting back on after a billing pause', () => {
     assert.equal(rows['+14244098341'].status, 'active');
     assert.match(calls.notified.at(-1), /Welcome back/);
     assert.deepEqual(calls.onboarded, [], 'no re-interview for a finished profile');
+  });
+});
+
+describe('Stripe checkout after an email signup', () => {
+  it('attaches the phone to the email customer instead of making a second one', async () => {
+    const rows: Record<string, any> = {
+      'email:juniper': { id: 'cus_email', phone: null, email: 'jo@juniper.test', businessName: 'Juniper Florals', planTier: 'starter' },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await ctrl['onCheckoutCompleted']({
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          customer: 'cus_stripe_9',
+          metadata: { plan: 'growth' },
+          customer_details: { phone: '+13105550303', email: 'Jo@Juniper.test' },
+        },
+      },
+    });
+    const ids = new Set(Object.values(rows).map((r: any) => r.id));
+    assert.deepEqual([...ids], ['cus_email']);
+    assert.equal(rows['+13105550303'].planTier, 'growth');
+    assert.deepEqual(calls.onboarded, ['cus_email']);
+  });
+
+  it('leaves an email row that already has another phone alone', async () => {
+    const rows: Record<string, any> = {
+      '+13105550000': { id: 'cus_email', phone: '+13105550000', email: 'jo@juniper.test' },
+    };
+    const { ctrl, calls } = makeController(rows);
+    await ctrl['onCheckoutCompleted']({
+      type: 'checkout.session.completed',
+      data: { object: { customer: 'c', metadata: { plan: 'starter' }, customer_details: { phone: '+13105550303', email: 'jo@juniper.test' } } },
+    });
+    assert.equal(rows['+13105550000'].phone, '+13105550000');
+    assert.notEqual(calls.onboarded[0], 'cus_email');
   });
 });
