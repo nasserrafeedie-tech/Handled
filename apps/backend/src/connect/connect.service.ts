@@ -177,7 +177,7 @@ export class ConnectService {
       data: { connectPendingPlatform: req.platform, connectPendingAt: new Date() },
     });
 
-    const { url } = await this.pfm.createAuthUrl({
+    const authReq = {
       platform: req.platform,
       externalId: req.customerId,
       // Facebook Login by default. Verified live on an iPhone (Oct 2026):
@@ -193,7 +193,20 @@ export class ConnectService {
               process.env.PFM_INSTAGRAM_CONNECTION === 'instagram' ? 'instagram' : 'facebook',
           }
         : {}),
-    });
+    };
+    let url: string;
+    try {
+      ({ url } = await this.pfm.createAuthUrl(authReq));
+    } catch (err) {
+      // Whether a Post for Me project allows the Facebook route for Instagram
+      // isn't something we can check ahead of time. If Post for Me turns the
+      // request itself down (a 4xx, not an outage), fall back once to
+      // Instagram Login rather than leave the owner with no way to connect.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (authReq.connectionType !== 'facebook' || !/→ 4\d\d\b/.test(msg)) throw err;
+      this.log.warn(`Facebook Login refused for Instagram, retrying with Instagram Login: ${msg}`);
+      ({ url } = await this.pfm.createAuthUrl({ ...authReq, connectionType: 'instagram' }));
+    }
 
     // iOS hands www.instagram.com links to the Instagram app (universal
     // links), and the app's OAuth picker is broken — verified live, while

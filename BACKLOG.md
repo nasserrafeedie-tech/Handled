@@ -22,7 +22,7 @@ Last re-ranked: 2026-11-17.
 
 - [x] **Post for Me metrics path.** The path was wrong. It now reads the account feed, as Post for Me's own SDK does, and linking asks for the "feeds" permission (`709594a`). Accounts linked before this need relinking once.
 - [x] **Weekly results text.** The Friday check-in now names the week's best post with its real views and saves, and says nothing when there are no numbers yet.
-- [ ] **Facebook connection.** Confirm whether the Post for Me Quickstart project allows the `facebook` connection type, and if it doesn't, make linking say so plainly instead of failing.
+- [x] **Facebook connection.** Fixed: if Post for Me turns down the Facebook route, linking retries once with Instagram Login instead of failing. Whether Quickstart allows it still needs one live test. Confirm whether the Post for Me Quickstart project allows the `facebook` connection type, and if it doesn't, make linking say so plainly instead of failing.
 
 ## 3. Content that is worth paying for
 
