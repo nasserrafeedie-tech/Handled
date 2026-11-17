@@ -808,7 +808,9 @@ export class AdminController {
         leads: await this.prisma.lead.count(),
         customers: await this.prisma.customer.count(),
         activeCustomers: await this.prisma.customer.count({ where: { status: 'active' } }),
-        failedPosts: failedPosts.length,
+        // A real count: failedPosts below is the 25 most recent, so its
+        // length stopped at 25 however many had failed.
+        failedPosts: await this.prisma.post.count({ where: { status: 'failed' } }),
       },
       leads,
       customers: customers.map((c) => ({
