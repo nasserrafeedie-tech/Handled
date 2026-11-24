@@ -138,6 +138,13 @@ function selectProvider(): ImageProvider | null {
   return null;
 }
 
+/** Which image model a generation would use now, for a report. Null with no key. */
+export function imageModelName(): string | null {
+  if (process.env.OPENAI_API_KEY) return `OpenAI ${process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-2'} (medium quality)`;
+  if (process.env.FAL_API_KEY) return 'FLUX dev on fal';
+  return null;
+}
+
 @Injectable()
 export class ImageGenService {
   private readonly log = new Logger(ImageGenService.name);

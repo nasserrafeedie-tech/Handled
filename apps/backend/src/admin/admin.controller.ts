@@ -6,6 +6,7 @@ import {
   Headers,
   NotFoundException,
   Header,
+  Logger,
   Post as HttpPost,
   Query,
 } from '@nestjs/common';
@@ -26,7 +27,10 @@ import { ADMIN_PAGE_HTML } from './admin-page';
 import { assertAdmin } from './admin-auth';
 import { ReferralCreditService } from '../billing/referral-credit.service';
 import { ConciergeService } from '../concierge/concierge.service';
-import { NOT_HOUSE, setUpHouseAccount } from './house-account';
+import { setUpHouseAccount } from './house-account';
+import { DEMO_BUSINESSES, demoRunning, demoView, runDemoWeek, setUpDemoAccount } from './demo-week';
+import { DEMO_PAGE_HTML } from './demo-page';
+import { DEMO_STRIPE_PREFIX, NOT_DEMO, NOT_INTERNAL } from './internal-accounts';
 
 const PublishNowBody = z.object({ postId: z.string().uuid() });
 
@@ -162,6 +166,45 @@ export class AdminController {
       connectLink: `${process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com'}/connect?c=${out.customerId}`,
       next: 'Open the connect link and log in to the Handled Instagram. The first draft is being written and will be texted to this phone for a yes.',
     };
+  }
+
+  /**
+   * A demo week (demo-week.ts): a real business's full Pro week made by the
+   * real pipeline, for the founder to look at. Starts in the background and
+   * returns at once; the demo page polls GET demo-week for progress. Spends
+   * real API money, which is why it sits behind the token and a button.
+   */
+  @HttpPost('demo-week')
+  async startDemoWeek(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
+    assertAdmin(token);
+    const slug = z.object({ business: z.string().optional() }).safeParse(body ?? {});
+    const biz = DEMO_BUSINESSES[(slug.success && slug.data.business) || 'south-bay-dental-smiles'];
+    if (!biz) return { error: 'unknown_business', known: Object.keys(DEMO_BUSINESSES) };
+    const customerId = await setUpDemoAccount(this.prisma, biz);
+    if (demoRunning(customerId)) return { started: false, customerId, detail: 'A demo week is already being made.' };
+    const log = new Logger('DemoWeek');
+    void runDemoWeek({ prisma: this.prisma, emit: (t) => this.bus.emit(t), log: (m) => log.warn(m) }, customerId, biz.slug);
+    return { started: true, customerId };
+  }
+
+  @Get('demo-week')
+  async demoWeek(@Headers('x-admin-token') token: string | undefined, @Query('business') business: string | undefined) {
+    assertAdmin(token);
+    const biz = DEMO_BUSINESSES[business || 'south-bay-dental-smiles'];
+    if (!biz) return { error: 'unknown_business', known: Object.keys(DEMO_BUSINESSES) };
+    const c = await this.prisma.customer.findUnique({
+      where: { stripeCustomerId: `${DEMO_STRIPE_PREFIX}${biz.slug}` },
+      select: { id: true },
+    });
+    if (!c) return { business: biz.businessName, source: biz.source, run: null, running: false, posts: [] };
+    return demoView(this.prisma, (k) => this.storage.publicUrl(k), c.id, biz);
+  }
+
+  /** The demo week's page: an empty shell like the operator page, token asked in the browser. */
+  @Get('demo')
+  @Header('content-type', 'text/html; charset=utf-8')
+  demoPage(): string {
+    return DEMO_PAGE_HTML;
   }
 
   /**
@@ -832,6 +875,8 @@ export class AdminController {
         include: { brandProfile: { select: { businessType: true, onboardingComplete: true, contentStrategy: true } } },
       }),
       this.prisma.post.findMany({
+        // A demo week's drafts are not an owner's to approve.
+        where: { customer: NOT_DEMO },
         orderBy: { createdAt: 'desc' },
         take: 25,
         select: { id: true, customerId: true, platform: true, status: true, approvalState: true, caption: true, scheduledTime: true, createdAt: true },
@@ -869,8 +914,8 @@ export class AdminController {
       mediaMix: await this.metrics.mediaMix(),
       counts: {
         leads: await this.prisma.lead.count(),
-        customers: await this.prisma.customer.count({ where: NOT_HOUSE }),
-        activeCustomers: await this.prisma.customer.count({ where: { status: 'active', ...NOT_HOUSE } }),
+        customers: await this.prisma.customer.count({ where: NOT_INTERNAL }),
+        activeCustomers: await this.prisma.customer.count({ where: { status: 'active', ...NOT_INTERNAL } }),
         // A real count: failedPosts below is the 25 most recent, so its
         // length stopped at 25 however many had failed.
         failedPosts: await this.prisma.post.count({ where: { status: 'failed' } }),

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { NOT_HOUSE } from './house-account';
+import { NOT_INTERNAL } from './internal-accounts';
 import { PrismaService } from '../prisma/prisma.service';
 import { costOf, formatCost } from '../operator/llm/pricing';
 import { PLAN_MONTHLY_USD } from '../billing/plan-prices';
@@ -78,7 +78,7 @@ export class BusinessMetricsService {
     const [customers, usage] = await Promise.all([
       // Handled's own account isn't revenue or a customer to count.
       this.prisma.customer.findMany({
-        where: NOT_HOUSE,
+        where: NOT_INTERNAL,
         select: {
           id: true,
           businessName: true,

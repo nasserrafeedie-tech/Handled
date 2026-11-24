@@ -34,6 +34,21 @@ export interface LlmJsonRequest {
   customerId?: string;
 }
 
+/** Which model each tier runs on, from the env with the defaults. */
+export function modelFor(tier: LlmTier): string {
+  // Voice = Opus 5: measured on real usage, all customer-facing copy on Opus
+  // costs ~$3-4/mo per active customer (~1% of Growth revenue) and writes
+  // visibly better captions — the model cost is noise next to the quality.
+  // Design = Fable 5.2: drawing a whole poster as SVG is the hardest
+  // visual-reasoning call the service makes, and the post graphic is the
+  // first thing a follower sees. A design costs roughly a quarter to a third
+  // of a dollar, a few dollars a month on the busiest plan.
+  if (tier === 'design') return process.env.LLM_MODEL_DESIGN ?? 'claude-fable-5-2';
+  return tier === 'voice'
+    ? process.env.LLM_MODEL_VOICE ?? 'claude-opus-5'
+    : process.env.LLM_MODEL_BULK ?? 'claude-haiku-4-5';
+}
+
 /**
  * Thin Claude wrapper. Two responsibilities that matter to the rest of the
  * system: (1) model routing per §2, (2) enforce "JSON only, retry once on
@@ -50,17 +65,7 @@ export class LlmService {
   constructor(private readonly prisma: PrismaService) {}
 
   private model(tier: LlmTier): string {
-    // Voice = Opus 5: measured on real usage, all customer-facing copy on Opus
-    // costs ~$3-4/mo per active customer (~1% of Growth revenue) and writes
-    // visibly better captions — the model cost is noise next to the quality.
-    // Design = Fable 5.2: drawing a whole poster as SVG is the hardest
-    // visual-reasoning call the service makes, and the post graphic is the
-    // first thing a follower sees. A design costs roughly a quarter to a third
-    // of a dollar, a few dollars a month on the busiest plan.
-    if (tier === 'design') return process.env.LLM_MODEL_DESIGN ?? 'claude-fable-5-2';
-    return tier === 'voice'
-      ? process.env.LLM_MODEL_VOICE ?? 'claude-opus-5'
-      : process.env.LLM_MODEL_BULK ?? 'claude-haiku-4-5';
+    return modelFor(tier);
   }
 
   /**

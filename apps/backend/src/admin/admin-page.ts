@@ -113,6 +113,7 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
       <span id="stamp" class="cap"></span>
       <button onclick="load()">Refresh</button>
       <button onclick="houseAccount()">Handled's own account</button>
+      <a href="/admin/demo">Demo week</a>
       <button onclick="forget()">Forget token</button>
     </div>
 
