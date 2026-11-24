@@ -5,6 +5,7 @@ import {
   Query,
   HttpCode,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { StorageService } from '../common/storage.service';
@@ -18,7 +19,8 @@ import { ConciergeService } from './concierge.service';
  *
  * Postmark gives us `StrippedTextReply` — the reply with quoted history and the
  * signature already removed — so we don't need our own email-reply parser; we
- * fall back to the full TextBody only if it's absent.
+ * fall back to the full TextBody when it's empty. On a fresh email (not a
+ * reply) Postmark sends StrippedTextReply as "", not absent.
  *
  * Secured by a shared secret in the URL (`?token=`), since anyone could POST
  * here otherwise. Fails CLOSED in production if the secret is unset — same
@@ -59,6 +61,8 @@ export function postableAttachments(
 
 @Controller('webhooks/email')
 export class EmailInboundController {
+  private readonly log = new Logger(EmailInboundController.name);
+
   constructor(
     private readonly concierge: ConciergeService,
     private readonly storage: StorageService,
@@ -79,7 +83,7 @@ export class EmailInboundController {
 
     const from = body.FromFull?.Email ?? body.From;
     if (!from) return;
-    const text = (body.StrippedTextReply ?? body.TextBody ?? '').trim();
+    const text = inboundText(body);
     // A photo emailed back is the email version of an MMS: store it where the
     // media pipeline can fetch it and hand it over like Twilio's media URLs.
     // Before this the attachment was dropped while the reply told the owner to
@@ -93,7 +97,11 @@ export class EmailInboundController {
       mediaUrls.push(this.storage.publicUrl(key));
       mediaContentTypes.push(m.contentType);
     }
-    if (!text && !mediaUrls.length) return;
+    if (!text && !mediaUrls.length) {
+      // Say so: a dropped email used to vanish without a trace in the logs.
+      this.log.warn(`inbound email from ${from} had no text or photo — ignored`);
+      return;
+    }
 
     await this.concierge.handleInbound({
       from,
@@ -105,4 +113,15 @@ export class EmailInboundController {
       twilioSid: body.MessageID ? `email:${body.MessageID}` : undefined,
     });
   }
+}
+
+/**
+ * The words of an inbound email. Postmark sends StrippedTextReply as "" on a
+ * fresh email (only replies have quoted history to strip), and `??` keeps an
+ * empty string — so the first email anyone sent us was read as blank and
+ * silently dropped. Fall through on empty, ending with the subject for an
+ * email that says everything in its subject line.
+ */
+export function inboundText(body: Pick<PostmarkInbound, 'StrippedTextReply' | 'TextBody' | 'Subject'>): string {
+  return body.StrippedTextReply?.trim() || body.TextBody?.trim() || body.Subject?.trim() || '';
 }
