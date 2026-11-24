@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { Task, CalendarSlot, DraftPostResult } from '@smm/contracts';
@@ -34,11 +34,18 @@ import {
   tomorrowMorningInZone,
   zonedToUtc,
   parseTimeLocally,
+  openSlot,
 } from '../common/time';
 import { z } from 'zod';
 import { strategySummary } from './strategy-summary';
 import { OWNER_CONSENT_COPY } from '../operator/graphics/image-prompt';
-import { entitlementLine, upgradePitch, postsPerWeek } from '../operator/tier-entitlements';
+import { entitlementLine, upgradePitch, postsPerWeek, tierHas } from '../operator/tier-entitlements';
+import { ReelQueueService } from '../scheduler/reel-queue.service';
+import { animatedReelsOn } from '../operator/video/animated/flag';
+import { ensureVisual } from '../operator/graphics/visual-safety-net';
+import { animatedReelAsk, isRevealCaption, isReelLook, ownerWillSend, isPlainReelAsk, type AnimatedAsk } from './animated-reel-ask';
+import { reelName, reelLookText, plainReelText, willSendText, REVEAL_NEEDS_TWO } from './reel-replies';
+import { plainQuotes } from './plain-quotes';
 import { polishCaption } from '../operator/llm/caption-polish';
 import { detectSlop, slopFeedback } from '../operator/llm/slop';
 
@@ -231,6 +238,32 @@ export function isPriceQuestion(body: string): boolean {
 }
 
 /**
+ * A paying owner asking what the plans cost ("how much is pro", "what does
+ * growth cost"). Narrower than isPriceQuestion: "what's my plan" is about
+ * their strategy, and "how much should I charge" is about their business, so
+ * it has to name a plan or Handled itself.
+ */
+export function isPaidPriceQuestion(body: string): boolean {
+  const t = body.trim();
+  if (!t || t.split(/\s+/).length > 10) return false;
+  return (
+    /\bhow much\b|\b(price|prices|pricing|cost|costs|monthly fee)\b/i.test(t) &&
+    /\b(starter|growth|pro|plans?|upgrade|upgrading|handled|subscription|tiers?)\b/i.test(t)
+  );
+}
+
+/** The three prices, then where they stand and the next step up. */
+export function paidPriceText(planTier: string | null): string {
+  const tier = (planTier ?? '').toLowerCase();
+  const name = tier === 'pro' ? 'Pro' : tier === 'growth' ? 'Growth' : 'Starter';
+  const list =
+    'Starter is $95/mo (3 posts a week), Growth $349/mo (5 a week, plus designed carousels) ' +
+    'and Pro $699/mo (a post every day, plus reels).';
+  if (tier === 'pro') return `${list} You're on Pro, the top plan.`;
+  return `${list} You're on ${name}. Reply UPGRADE and I'll move you to ${tier === 'growth' ? 'Pro' : 'Growth'}.`;
+}
+
+/**
  * A short text about Handled itself rather than about their business: asking
  * to sign up ("sign me up for starter", "how do I pay") or what this is ("how
  * does this work?"). Before this, the free-taste lane took either one as the
@@ -312,6 +345,9 @@ export class ConciergeService {
     private readonly classifier: ArchetypeClassifier,
     private readonly research: ArchetypeResearchService,
     private readonly storage: StorageService,
+    // Optional so the concierge still builds without the scheduler (tests,
+    // a process with no Redis); animated reels then render in-process.
+    @Optional() private readonly reelQueue?: ReelQueueService,
   ) {}
 
   async handleInbound(msg: InboundSms): Promise<void> {
@@ -338,6 +374,8 @@ export class ConciergeService {
       }
       throw e;
     }
+    // Match on straight quotes; the raw text is logged above.
+    msg = { ...msg, body: plainQuotes(msg.body ?? '') };
 
     // 1. Kill switch (§8) — highest priority, dead simple.
     if (this.isStop(msg.body)) {
@@ -476,6 +514,17 @@ export class ConciergeService {
     //    else the next upcoming post that has no photo yet). Without this linkage every photo landed as an
     //    orphan record and the "I'll need 1 quick photo" ask was never closed.
     if (msg.mediaUrls.length > 0) {
+      // Two photos sent with "before and after reel": those two are the reel,
+      // in the order sent, rather than photos for the waiting draft.
+      // One photo, or three, with those words: say what the reveal needs
+      // instead of quietly putting the photo on the waiting draft.
+      const reveal = animatedReelsOn() && tierHas(customer.planTier, 'reel') && isRevealCaption(msg.body ?? '');
+      if (reveal) {
+        if (msg.mediaUrls.length === 2) {
+          return this.takeRevealPhotos(customer.id, customer.planTier, this.addressOf(customer), conversation.id, msg);
+        }
+        return this.reply(this.addressOf(customer), conversation.id, REVEAL_NEEDS_TWO);
+      }
       return this.takePhotos(customer, conversation.id, msg);
     }
 
@@ -485,6 +534,49 @@ export class ConciergeService {
     });
     if (!this.onboarding.isComplete(profile)) {
       return this.continueOnboarding(customer.id, this.addressOf(customer), conversation.id, msg.body, profile, customer.businessName, customer.planTier);
+    }
+
+    // 4a. Animated reel ("make a promo reel for kids cuts $20 on weekdays").
+    //     Before the graphic check, which would otherwise read "promo" as a
+    //     graphic. Off unless ANIMATED_REELS=1.
+    const reelAsk = animatedReelsOn() ? animatedReelAsk(msg.body) : null;
+    if (reelAsk) {
+      return this.requestAnimatedReel(customer.id, customer.planTier, this.addressOf(customer), conversation.id, reelAsk);
+    }
+
+    // 4a2. "I'll send you the video tomorrow": the owner's own plan, so a
+    //      short "sounds good" instead of a nudge about the waiting draft.
+    const coming = ownerWillSend(msg.body);
+    if (coming && (coming === 'photo' || tierHas(customer.planTier, 'reel'))) {
+      return this.reply(this.addressOf(customer), conversation.id, willSendText(coming));
+    }
+
+    // 4b. "show me the reel": the watch link again, wherever the reel stands.
+    //     With no reel yet it falls through to the usual handling.
+    if (isReelLook(msg.body) && (await this.showLatestReel(customer.id, this.addressOf(customer), conversation.id))) {
+      return;
+    }
+    // 4c. "make a reel" with no kind: where to send clips (and, with animated
+    //     reels on, the kinds that need no footage). Used to get "Reply yes to
+    //     send that draft".
+    if (isPlainReelAsk(msg.body)) {
+      const site = (process.env.PUBLIC_SITE_URL ?? 'https://texthandled.com').replace(/\/+$/, '');
+      return this.reply(
+        this.addressOf(customer),
+        conversation.id,
+        plainReelText({
+          pro: tierHas(customer.planTier, 'reel'),
+          uploadUrl: `${site}/upload?c=${customer.id}`,
+          animated: animatedReelsOn(),
+          upgrade: upgradePitch(customer.planTier),
+        }),
+      );
+    }
+
+    // 4d. A paying owner asking what the plans cost. Used to reach the open
+    //     question path, which has no price list and could guess.
+    if (isPaidPriceQuestion(msg.body)) {
+      return this.reply(this.addressOf(customer), conversation.id, paidPriceText(customer.planTier));
     }
 
     // 4. Graphic request ("make a graphic/carousel/quote card/promo...").
@@ -838,12 +930,20 @@ export class ConciergeService {
     conversationId: string,
     body: string,
   ): Promise<void> {
-    // Oldest first: this is the one we last showed them, so "yes" resolves
-    // the draft they are actually looking at.
-    const pending = await this.prisma.post.findFirst({
-      where: { customerId, status: 'pending_approval' },
-      orderBy: { createdAt: 'asc' },
-    });
+    // The draft they're looking at: the one we showed them last. Usually
+    // that's the oldest, since drafts come one at a time, but a graphic or
+    // reel they asked for is shown straight away, ahead of the queue. Before,
+    // "yes" always took the oldest, so a carousel asked for during onboarding
+    // waited behind eight drafts (QA, Nov 17). Nothing shown yet: the oldest.
+    const pending =
+      (await this.prisma.post.findFirst({
+        where: { customerId, status: 'pending_approval', presentedAt: { not: null } },
+        orderBy: { presentedAt: 'desc' },
+      })) ??
+      (await this.prisma.post.findFirst({
+        where: { customerId, status: 'pending_approval' },
+        orderBy: { createdAt: 'asc' },
+      }));
 
     // A color question we asked is answered by whatever comes next —
     // intercept before intent classification sends "oxblood and cream" to
@@ -961,15 +1061,7 @@ export class ConciergeService {
       !STRONG_APPROVE_RE.test(body) &&
       !(await this.lastOutboundShowsDraft(conversationId, pending.caption))
     ) {
-      const tz =
-        (await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }))
-          ?.timezone ?? 'America/Los_Angeles';
-      const when = pending.scheduledTime ? ` for ${formatInZone(pending.scheduledTime, tz)}` : '';
-      return this.reply(
-        phone,
-        conversationId,
-        `Got it. Your draft${when} is still waiting, by the way. Reply “post it” and I'll schedule it, or tell me what to change.`,
-      );
+      return this.yesOffTheDraft(customerId, phone, conversationId, pending);
     }
 
     // Interpretation is less certain than a keyword, so ask when the reading
@@ -1114,7 +1206,9 @@ export class ConciergeService {
         const when =
           (timed ? new Date(Math.max(timed.when.getTime(), Date.now() + 60_000)) : null) ??
           rollForward(pending!.scheduledTime) ??
-          tomorrowMorningInZone(tz);
+          // A post with no slot of its own (a reel, a graphic) takes the
+          // first open time, not tomorrow 9:00 on top of a planned post.
+          openSlot(await this.takenTimes(customerId, pending!.id), tz);
         const result = await this.bus.emit(
           this.task(customerId, 'SCHEDULE_POST', {
             post_id: pending!.id,
@@ -1380,6 +1474,50 @@ export class ConciergeService {
   }
 
   /**
+   * An animated reel, Pro only. It renders on the worker (the frames take the
+   * CPU for up to a minute), which texts the result when it's done; here we
+   * only say it's on the way.
+   */
+  private async requestAnimatedReel(
+    customerId: string,
+    planTier: string,
+    phone: string,
+    conversationId: string,
+    ask: AnimatedAsk,
+  ): Promise<void> {
+    if (!tierHas(planTier, 'reel')) {
+      return this.reply(
+        phone,
+        conversationId,
+        `Animated reels are part of Pro. ${upgradePitch(planTier)} Reply UPGRADE and I'll set it up.`,
+      );
+    }
+    const what = ask.kind === 'promo' ? 'promo reel' : 'before and after reel';
+    if (this.reelQueue) {
+      await this.reelQueue.enqueue({
+        customerId,
+        platform: 'instagram',
+        animated: {
+          kind: ask.kind,
+          ...(ask.offerText ? { offerText: ask.offerText } : {}),
+          ...(ask.mediaAssetIds?.length === 2 ? { mediaAssetIds: ask.mediaAssetIds } : {}),
+        },
+      });
+      return this.reply(phone, conversationId, `On it 🎬 Your ${what} will be here in a couple of minutes.`);
+    }
+    const result = await this.bus.emit(
+      this.task(customerId, 'ANIMATED_REEL', {
+        kind: ask.kind,
+        platform: 'instagram',
+        ...(ask.offerText ? { offer_text: ask.offerText } : {}),
+        ...(ask.mediaAssetIds?.length === 2 ? { media_asset_ids: ask.mediaAssetIds } : {}),
+        owner_asked: true,
+      }),
+    );
+    return this.reply(phone, conversationId, result.summary_for_owner);
+  }
+
+  /**
    * "Make a graphic for our birthday packages". The graphic used to arrive on
    * its own with "ready to review", and then nothing could be done with it:
    * "post it" found no draft. Now it comes as a draft post with a caption, so
@@ -1402,27 +1540,36 @@ export class ConciergeService {
       this.log.warn(`caption for a requested graphic failed for ${customerId}: ${String(e)}`);
       return null;
     });
+    // "Make a carousel about…" on a plan with carousels: a real deck written
+    // from the post, not a single title card (QA, Nov 17). If the deck can't
+    // be made, the single graphic below still goes out.
+    if (postId && /\b(carousel|slides|slideshow|swipe)\b/i.test(body)) {
+      const owner = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { planTier: true } });
+      if (tierHas(owner?.planTier ?? 'starter', 'carousel')) {
+        const deck = await this.bus
+          .emit(
+            this.task(customerId, 'GENERATE_CAROUSEL', {
+              post_id: postId,
+              owner_feedback: `The owner asked for this carousel by text: ${body.slice(0, 400)}`,
+            }),
+          )
+          .catch((e) => ({ error: { code: 'threw', message: String(e) } }) as { error: unknown });
+        if (!deck.error) {
+          await this.presentNextDraft(customerId, 'Made it ✳ Here it is as a post:', { promptedByOwner: true, postId });
+          return;
+        }
+        this.log.warn(`requested carousel failed for ${customerId}, sending a single graphic`);
+      }
+    }
     const result = await this.bus.emit(
       this.task(customerId, 'MAKE_GRAPHIC', postId ? { slides, post_id: postId } : { slides }),
     );
     if (!postId || result.error) {
       return this.reply(phone, conversationId, result.summary_for_owner, mediaOf(result));
     }
-    // Drafts are shown oldest first, so this one comes after every draft
-    // already waiting. "Next in line" was wrong with three ahead of it (QA
-    // round 5), so say how many.
-    const waiting = await this.prisma.post.count({
-      where: { customerId, status: 'pending_approval', id: { not: postId } },
-    });
-    if (waiting) {
-      const ahead = waiting === 1 ? 'the draft already waiting on you' : `the ${waiting} drafts already waiting on you`;
-      return this.reply(
-        phone,
-        conversationId,
-        `Made it ✳ It's a post now, and I'll bring it back for your yes right after ${ahead}.`,
-        mediaOf(result),
-      );
-    }
+    // They asked for it, so it's shown now and "yes" answers it; the drafts
+    // already waiting come back after (handleSteadyState takes the draft
+    // shown last).
     await this.presentNextDraft(customerId, 'Made it ✳ Here it is as a post:', {
       promptedByOwner: true,
       postId,
@@ -1830,6 +1977,86 @@ export class ConciergeService {
    *
    * Returns false when the queue is empty.
    */
+  /** The two photos of a before-and-after ask: banked, then made into the reel. */
+  private async takeRevealPhotos(
+    customerId: string,
+    planTier: string,
+    phone: string,
+    conversationId: string,
+    msg: InboundSms,
+  ): Promise<void> {
+    const ids: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const result = await this.bus.emit(
+        this.task(customerId, 'INGEST_MEDIA', {
+          source_url: msg.mediaUrls[i],
+          content_type: msg.mediaContentTypes[i] ?? 'image/jpeg',
+        }),
+      );
+      const id = (result.data as { media_asset_id?: string | null } | null)?.media_asset_id;
+      if (id) ids.push(id);
+    }
+    if (ids.length < 2) {
+      return this.reply(phone, conversationId, "One of those photos didn't come through. Mind sending both again?");
+    }
+    return this.requestAnimatedReel(customerId, planTier, phone, conversationId, { kind: 'before_after', mediaAssetIds: ids });
+  }
+
+  /**
+   * A bare "yes" or "ok" whose last text from us wasn't the draft (a reel
+   * that's ready, a notice). Show the draft that "yes" would schedule, so the
+   * next yes has something to answer. It used to say "Got it. Your draft is
+   * still waiting", without the draft, and the owner's yes did nothing twice
+   * in a row (QA round 9, after a reel arrived).
+   */
+  private async yesOffTheDraft(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    pending: { id: string; scheduledTime: Date | null },
+  ): Promise<void> {
+    if (await this.presentNextDraft(customerId, 'Here’s the draft that’s up first ✳', { promptedByOwner: true, postId: pending.id })) {
+      return;
+    }
+    const tz =
+      (await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } }))?.timezone ??
+      'America/Los_Angeles';
+    const when = pending.scheduledTime ? ` for ${formatInZone(pending.scheduledTime, tz)}` : '';
+    return this.reply(
+      phone,
+      conversationId,
+      `Your draft${when} is still waiting. Reply “post it” and I'll schedule it, or tell me what to change.`,
+    );
+  }
+
+  /** The newest reel post and where it stands. False when they have no reel yet. */
+  private async showLatestReel(customerId: string, phone: string, conversationId: string): Promise<boolean> {
+    const video = await this.prisma.mediaAsset.findFirst({
+      where: { customerId, kind: 'video', source: 'assembled', postId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { r2Key: true, post: { select: { id: true, status: true, archetype: true, scheduledTime: true, createdAt: true } } },
+    });
+    const post = video?.post;
+    if (!video || !post || post.status === 'cancelled' || post.status === 'failed' || post.status === 'draft') return false;
+    const tz = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { timezone: true } });
+    await this.reply(
+      phone,
+      conversationId,
+      reelLookText({
+        what: reelName(post.archetype, video.r2Key),
+        url: /^https?:\/\//.test(video.r2Key) ? video.r2Key : this.storage.publicUrl(video.r2Key),
+        status: post.status,
+        when: post.scheduledTime ? formatInZone(post.scheduledTime, tz?.timezone ?? 'America/Los_Angeles') : null,
+      }),
+    );
+    // A waiting reel they just asked to see is the draft in front of them,
+    // so "yes" now answers it.
+    if (post.status === 'pending_approval') {
+      await this.prisma.post.update({ where: { id: post.id }, data: { presentedAt: new Date() } });
+    }
+    return true;
+  }
+
   /** Photos texted in: each goes on the post it belongs to (photoTarget). */
   async takePhotos(
     customer: { id: string; phone: string | null; email: string | null; preferredChannel: string },
@@ -1895,6 +2122,20 @@ export class ConciergeService {
     return { postId: next?.id, shownDraft: false };
   }
 
+  /** When this customer's other live posts go out, for finding an open slot. */
+  private async takenTimes(customerId: string, exceptPostId: string): Promise<Date[]> {
+    const rows = await this.prisma.post.findMany({
+      where: {
+        customerId,
+        id: { not: exceptPostId },
+        status: { in: ['scheduled', 'approved', 'pending_approval'] },
+        scheduledTime: { gte: new Date() },
+      },
+      select: { scheduledTime: true },
+    });
+    return rows.map((r) => r.scheduledTime).filter((t): t is Date => !!t);
+  }
+
   async presentNextDraft(
     customerId: string,
     lead?: string,
@@ -1926,6 +2167,19 @@ export class ConciergeService {
     // (it lands on THIS post) or approve as text-only. Posts that already have
     // a carousel or photo skip the ask.
     const needsPhoto = next.mediaRefs.length === 0;
+    // A reel is approved by watching it: give the link and say what it is.
+    // Not attached: a video over MMS is cut down or dropped by many carriers.
+    const reel = next.mediaRefs.find((k) => /\.mp4($|\?)/i.test(k));
+    if (reel) {
+      const url = /^https?:\/\//.test(reel) ? reel : this.storage.publicUrl(reel);
+      const reelBody =
+        (lead ? `${lead}\n\n` : '') +
+        `Reel${when} 🎬 Watch it here: ${url}\n\nCaption:\n\n“${(next.caption ?? '').trim()}”\n\n` +
+        'Reply “yes” to schedule it, or tell me what to change.';
+      await this.notify(customerId, reelBody, { ...opts });
+      await this.prisma.post.update({ where: { id: next.id }, data: { presentedAt: new Date() } });
+      return true;
+    }
     // The whole carousel travels with the draft — the owner is approving the
     // deck, not its cover. MMS caps at 10 attachments / ~5MB; slides are flat
     // PNGs well under that, and the catch below degrades to slide 1 if a
@@ -2745,6 +2999,7 @@ export class ConciergeService {
   /** Drafts each planned slot, with its visuals; returns how many landed. */
   private async draftSlots(customerId: string, tz: string, slots: CalendarSlot[]): Promise<number> {
     let drafted = 0;
+    const plan = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { planTier: true } });
     for (const slot of slots) {
       try {
         const result = await this.bus.emit(
@@ -2777,6 +3032,17 @@ export class ConciergeService {
           await this.bus
             .emit(this.task(customerId, 'GENERATE_IMAGE', { post_id: d.post_id, aspect: '1:1' }, 'concierge'))
             .catch((e) => this.log.warn(`first-week image failed: ${String(e)}`));
+        }
+        // Nothing came out of that (no image key, a declined photo): a
+        // carousel rather than a bare text post, as the Monday plan does.
+        if (d?.post_id) {
+          await ensureVisual(
+            {
+              findMedia: (id) => this.prisma.post.findUnique({ where: { id }, select: { mediaRefs: true } }),
+              makeCarousel: (id) => this.bus.emit(this.task(customerId, 'GENERATE_CAROUSEL', { post_id: id }, 'concierge')),
+            },
+            { id: d.post_id, needsAsset: slot.needs_asset, planTier: plan?.planTier ?? 'starter' },
+          ).catch((e) => this.log.warn(`first-week fallback carousel failed: ${String(e)}`));
         }
       } catch (e) {
         // One bad draft must not cost the owner their whole first week.
@@ -2987,13 +3253,20 @@ export function buildSlidesFromText(
   return [{ kind: 'title', headline }];
 }
 
-/** Remove the leading "make a graphic/carousel ... that says/about" command. */
-function stripCommand(text: string): string {
+/**
+ * Remove the ask around the subject: "can you make a carousel about our nail
+ * trims please?" → "our nail trims". The slide shows what's left, so a polite
+ * ask used to print "Can you make a carousel about…" on the graphic (QA,
+ * Nov 17).
+ */
+export function stripCommand(text: string): string {
   return text
+    .replace(/^\s*(?:hey|hi|ok|okay|so)\b[\s,!.]*/i, '')
     .replace(
-      /^\s*(please\s+)?(make|create|build|design)\s+(me\s+)?a\s+(graphic|carousel|slide|quote card|promo(?:\s+post|\s+graphic)?|flyer|post)\s*(that says|saying|about|for|:)?\s*/i,
+      /^\s*(?:(?:please|pls|plz)\s+)?(?:(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+|pls\s+)?|i\s+(?:need|want|would like|'?d like)\s+(?:you\s+to\s+)?|let'?s\s+)?(?:make|create|build|design|do|whip up|put together|get)?\s*(?:me\s+|us\s+)?(?:a|an|another|one|some)?\s*(?:new\s+)?(?:graphic|carousel|slides?|slideshow|quote card|promo(?:\s+post|\s+graphic)?|flyer|post|image|banner|story)s?\s*(?:that says|saying|about|for|on|of|:)?\s*/i,
       '',
     )
+    .replace(/[\s,]*(?:please|pls|plz|thanks|thank you|thx)?[\s?.!]*$/i, '')
     .replace(/^["“]|["”]$/g, '')
     .trim();
 }

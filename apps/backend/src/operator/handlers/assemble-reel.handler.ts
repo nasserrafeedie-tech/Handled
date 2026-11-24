@@ -21,6 +21,7 @@ import { probeMotion } from '../video/motion';
 import { mapWordsToTimeline, edlDuration } from '../video/edl';
 import { captionsToAss } from '../video/captions';
 import { TaskHandler, ok, fail } from './handler.interface';
+import { reelReadyText } from './reel-ready';
 import { StorageService } from '../../common/storage.service';
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { toSvgColors } from '../graphics/color.util';
@@ -310,9 +311,18 @@ export class AssembleReelHandler implements TaskHandler<'ASSEMBLE_REEL'> {
       },
     });
 
+    const waitingAhead = await this.prisma.post.count({
+      where: { customerId: task.customer_id, status: 'pending_approval', id: { not: post.id } },
+    });
+    // Shown now when nothing is ahead, or when the owner sent the clips: then
+    // this text is the draft in front of them and "yes" answers it.
+    const ownerAsked = !!task.payload.owner_asked;
+    if ((!waitingAhead || ownerAsked) && verdict.passed) {
+      await this.prisma.post.update({ where: { id: post.id }, data: { presentedAt: new Date() } });
+    }
     return ok(
       task.task_id,
-      `Your reel is ready 🎬 (${clipPaths.length} clips) — watch it here: ${this.storage.publicUrl(r2Key)}\n\nReply “yes” to schedule it, or tell me what to change.`,
+      reelReadyText('reel', this.storage.publicUrl(r2Key), waitingAhead, ownerAsked),
       'pending_approval',
       {
         post_id: post.id,

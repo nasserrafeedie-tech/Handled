@@ -101,7 +101,7 @@ const CANCEL_RE =
 /* Word alternatives need a trailing \b so "ok" doesn't match "okra"; emoji
    must NOT have one, since \b never matches after a non-word character. */
 const APPROVE_RE =
-  /^\s*(?:(?:yes|yep|yeah|yup|ya|sure|ok|okay|kk?|perfect|great|awesome|beautiful|lovely|nice|love it|looks (?:good|great|perfect|awesome|amazing)|lgtm|sounds (?:good|great)|send it|post it|ship it|publish it|go ahead|go for it|do it|approved?)\b|👍|👌|🔥|✅|💯|🙌|❤️|😍)/i;
+  /^\s*(?:(?:(?:that'?s|this is|it'?s|that is|thats)\s+(?:perfect|great|awesome|good|fine|lovely|beautiful|fire|it)|that works|works for me|all good|yes|yep|yeah|yup|ya|sure|ok|okay|kk?|perfect|great|awesome|beautiful|lovely|nice|love it|looks (?:good|great|perfect|awesome|amazing)|lgtm|sounds (?:good|great)|send it|post it|ship it|publish it|go ahead|go for it|do it|approved?)\b|👍|👌|🔥|✅|💯|🙌|❤️|😍)/i;
 /* Timing, not content. Tested before REVISE because "change the schedule"
    contains revise-words, and before APPROVE because "post it right now" is
    an approval WITH a time — the reschedule handler honors both halves. */

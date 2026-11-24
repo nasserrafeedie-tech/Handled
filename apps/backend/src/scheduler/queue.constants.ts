@@ -23,6 +23,21 @@ export interface ReelJobData {
    * (banked clips get claimed by the first reel), without a re-upload.
    */
   mediaAssetIds?: string[];
+  /**
+   * An animated reel (ANIMATED_REEL) instead of a cut of footage. Same queue,
+   * because the frames are drawn on the CPU for ~20-60s and must never block
+   * the web process's event loop.
+   */
+  /**
+   * Made by the Monday plan, not asked for: its own job slot (so it never
+   * replaces a reel the owner asked for) and quiet unless nothing else waits.
+   */
+  weekly?: boolean;
+  animated?: {
+    kind: 'promo' | 'before_after';
+    offerText?: string;
+    mediaAssetIds?: string[];
+  };
 }
 
 /**
@@ -30,7 +45,8 @@ export interface ReelJobData {
  * two reels; same customerId → same jobId → the later enqueue replaces the
  * earlier pending one. Hyphen, not colon (BullMQ reserves ":").
  */
-export const reelJobId = (customerId: string) => `reel-${customerId}`;
+export const reelJobId = (customerId: string, animated = false, weekly = false) =>
+  weekly ? `reel-weekly-${customerId}` : animated ? `reel-anim-${customerId}` : `reel-${customerId}`;
 
 /**
  * Deterministic jobId so scheduling a post is idempotent (§12).

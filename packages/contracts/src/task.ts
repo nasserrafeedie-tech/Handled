@@ -12,6 +12,7 @@ import {
   PauseCustomerPayload,
   MakeGraphicPayload,
   AssembleReelPayload,
+  AnimatedReelPayload,
   GenerateImagePayload,
   GenerateCarouselPayload,
 } from './payloads';
@@ -30,6 +31,7 @@ export const TaskType = z.enum([
   'PAUSE_CUSTOMER',
   'MAKE_GRAPHIC',
   'ASSEMBLE_REEL',
+  'ANIMATED_REEL',
   'GENERATE_IMAGE',
   'GENERATE_CAROUSEL',
 ]);
@@ -72,6 +74,7 @@ export const Task = z.discriminatedUnion('type', [
   z.object({ ...TaskEnvelope, type: z.literal('GENERATE_IMAGE'), payload: GenerateImagePayload }),
   z.object({ ...TaskEnvelope, type: z.literal('GENERATE_CAROUSEL'), payload: GenerateCarouselPayload }),
   z.object({ ...TaskEnvelope, type: z.literal('ASSEMBLE_REEL'), payload: AssembleReelPayload }),
+  z.object({ ...TaskEnvelope, type: z.literal('ANIMATED_REEL'), payload: AnimatedReelPayload }),
 ]);
 export type Task = z.infer<typeof Task>;
 

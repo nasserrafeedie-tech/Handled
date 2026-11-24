@@ -30,10 +30,12 @@ export class ReelQueueService implements OnModuleDestroy {
 
   /** Idempotent per customer: a new upload replaces any pending reel job. */
   async enqueue(data: ReelJobData): Promise<void> {
-    const jobId = reelJobId(data.customerId);
+    // An animated reel has its own slot, so asking for one never cancels a
+    // pending cut of the owner's footage (or the other way round).
+    const jobId = reelJobId(data.customerId, !!data.animated, !!data.weekly);
     await this.queue.remove(jobId).catch(() => undefined);
-    await this.queue.add('assemble', data, { jobId });
-    this.log.log(`queued reel for ${data.customerId}`);
+    await this.queue.add(data.animated ? 'animated' : 'assemble', data, { jobId });
+    this.log.log(`queued ${data.weekly ? 'weekly ' : ''}${data.animated ? 'animated ' : ''}reel for ${data.customerId}`);
   }
 
   async onModuleDestroy() {

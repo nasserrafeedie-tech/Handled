@@ -20,6 +20,8 @@ import { isValidTimeZone } from '../common/time';
 import { tierHasCarousel } from '../operator/graphics/carousel-content';
 import { StorageService } from '../common/storage.service';
 import { ReelQueueService } from '../scheduler/reel-queue.service';
+import { animatedReelsOn } from '../operator/video/animated/flag';
+import { tierHas } from '../operator/tier-entitlements';
 import { ADMIN_PAGE_HTML } from './admin-page';
 import { assertAdmin } from './admin-auth';
 import { ReferralCreditService } from '../billing/referral-credit.service';
@@ -253,6 +255,40 @@ export class AdminController {
    * same handler the upload path uses; the only difference is what pushed the
    * button. Returns immediately; the reel arrives over the owner's thread.
    */
+  /**
+   * Queue an animated reel (promo or before/after) for a customer, for QA and
+   * for making a first one by hand. Same checks as the text ask: the flag must
+   * be on and the customer on Pro, and the worker texts them the result.
+   */
+  @HttpPost('reel/animated')
+  async enqueueAnimatedReel(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    assertAdmin(token);
+    const parsed = z
+      .object({
+        customerId: z.string().uuid(),
+        kind: z.enum(['promo', 'before_after']),
+        offerText: z.string().min(3).max(400).optional(),
+        mediaAssetIds: z.array(z.string().uuid()).length(2).optional(),
+        platform: z.string().min(1).optional(),
+      })
+      .safeParse(body);
+    if (!parsed.success) return { error: 'bad_request', detail: parsed.error.issues };
+    if (!animatedReelsOn()) return { error: 'feature_off', detail: 'set ANIMATED_REELS=1 on the web and worker services' };
+    const customer = await this.prisma.customer.findUnique({ where: { id: parsed.data.customerId } });
+    if (!customer) return { error: 'unknown_customer' };
+    if (!tierHas(customer.planTier, 'reel')) return { error: 'plan_gate', planTier: customer.planTier };
+    const { kind, offerText, mediaAssetIds } = parsed.data;
+    await this.reelQueue.enqueue({
+      customerId: customer.id,
+      platform: parsed.data.platform ?? 'instagram',
+      animated: { kind, ...(offerText ? { offerText } : {}), ...(mediaAssetIds ? { mediaAssetIds } : {}) },
+    });
+    return { enqueued: true, customerId: customer.id, kind };
+  }
+
   @HttpPost('reel/enqueue')
   async enqueueReel(
     @Headers('x-admin-token') token: string | undefined,

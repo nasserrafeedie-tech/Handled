@@ -1,5 +1,5 @@
 import { bestPostLine } from './best-post';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomUUID } from 'node:crypto';
 import type { Task } from '@smm/contracts';
@@ -10,7 +10,7 @@ import { ConciergeService } from '../concierge/concierge.service';
 import { ArchetypeResearchService } from '../playbook/archetype-research.service';
 import { ReauthService } from '../connect/reauth.service';
 import { ConnectService } from '../connect/connect.service';
-import { tierHasCarousel } from '../operator/graphics/carousel-content';
+import { ensureVisual } from '../operator/graphics/visual-safety-net';
 import { ReconcileService } from './reconcile.service';
 import { RecapService } from '../concierge/recap.service';
 import { ReferralCreditService } from '../billing/referral-credit.service';
@@ -19,6 +19,10 @@ import { ArchetypePerformanceService } from '../playbook/archetype-performance.s
 import { zonedToUtc } from '../common/time';
 import { resolveStrategy, reelClipsFor } from '../operator/llm/vertical-playbook';
 import { ownerRequestNote } from '../operator/handlers/plan-week.handler';
+import { ReelQueueService } from './reel-queue.service';
+import { animatedReelsOn } from '../operator/video/animated/flag';
+import { tierHas } from '../operator/tier-entitlements';
+import { weekNumber, weeklyPromoOffer } from './weekly-animated';
 
 /** Shape of the PLAN_WEEK Result we care about. */
 type PlanResult = { data?: { slots?: CalendarSlot[] } };
@@ -58,6 +62,7 @@ export class CronService {
     private readonly performance: ArchetypePerformanceService,
     private readonly recap: RecapService,
     private readonly referrals: ReferralCreditService,
+    @Optional() private readonly reelQueue?: ReelQueueService,
   ) {}
 
   private get enabled(): boolean {
@@ -205,29 +210,15 @@ export class CronService {
           }
         }
 
-        // Carousel safety net. A post that should have had a visual but ended
-        // up with none — an AI image the place-guard declined, a photo-first
-        // archetype the owner never opted into imagery for, an archetype the
-        // carousel set does not recognise — used to ship as bare text. On a
-        // carousel-capable plan that is never the right answer: a carousel needs
-        // no photo, no image API and cannot be declined. So if the post is still
-        // empty after its intended treatment, make one. Photo-ask slots are left
-        // alone — they are meant to wait for the owner's real shot.
-        if (
-          drafted_?.post_id &&
-          !slot.needs_asset &&
-          tierHasCarousel(customer?.planTier ?? 'starter')
-        ) {
-          const persisted = await this.prisma.post.findUnique({
-            where: { id: drafted_.post_id },
-            select: { mediaRefs: true },
-          });
-          if (persisted && persisted.mediaRefs.length === 0) {
-            await this.emit(customerId, 'GENERATE_CAROUSEL', { post_id: drafted_.post_id })
-              .catch((e) =>
-                this.log.warn(`fallback carousel for ${drafted_.post_id} failed: ${e.message}`),
-              );
-          }
+        // Carousel safety net (see ensureVisual).
+        if (drafted_?.post_id) {
+          await ensureVisual(
+            {
+              findMedia: (id) => this.prisma.post.findUnique({ where: { id }, select: { mediaRefs: true } }),
+              makeCarousel: (id) => this.emit(customerId, 'GENERATE_CAROUSEL', { post_id: id }),
+            },
+            { id: drafted_.post_id, needsAsset: slot.needs_asset, planTier: customer?.planTier ?? 'starter' },
+          ).catch((e) => this.log.warn(`fallback carousel for ${drafted_.post_id} failed: ${e.message}`));
         }
 
         // Auto-approved posts must be scheduled here — nothing else does it.
@@ -330,8 +321,45 @@ export class CronService {
       }
     }
 
+    await this.queueWeeklyAnimatedPromo(customerId, customer?.planTier ?? 'starter').catch((e) =>
+      this.log.warn(`weekly animated promo for ${customerId} failed: ${String(e)}`),
+    );
+
     this.log.log(`${customerId}: planned ${slots.length}, drafted ${drafted}`);
     return drafted;
+  }
+
+  /**
+   * Pro, with animated reels switched on: one promo reel a week from one of
+   * the owner's own offers, made in the background. It lands behind the
+   * week's drafts and comes up for its yes in turn, so Monday brings no extra
+   * text. Skipped when the profile has no offers (the reel's words only ever
+   * come from the owner) or a promo reel was made in the last six days.
+   */
+  async queueWeeklyAnimatedPromo(customerId: string, planTier: string, now = new Date()): Promise<boolean> {
+    if (!this.reelQueue || !animatedReelsOn() || !tierHas(planTier, 'reel')) return false;
+    const profile = await this.prisma.brandProfile.findUnique({
+      where: { customerId },
+      select: { offers: true },
+    });
+    const offer = weeklyPromoOffer(profile?.offers, weekNumber(now));
+    if (!offer) return false;
+    const recent = await this.prisma.mediaAsset.count({
+      where: {
+        customerId,
+        kind: 'video',
+        r2Key: { endsWith: 'animated-reel.mp4' },
+        createdAt: { gte: new Date(now.getTime() - 6 * 86_400_000) },
+      },
+    });
+    if (recent > 0) return false;
+    await this.reelQueue.enqueue({
+      customerId,
+      platform: 'instagram',
+      weekly: true,
+      animated: { kind: 'promo', offerText: offer },
+    });
+    return true;
   }
 
   /**

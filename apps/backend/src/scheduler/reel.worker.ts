@@ -14,6 +14,7 @@ import { REEL_QUEUE, type ReelJobData } from './queue.constants';
 import { TaskBus } from '../tasks/task-bus.service';
 import { ConciergeService } from '../concierge/concierge.service';
 import { isWorkerRole } from '../common/service-role';
+import { reelNotice } from './weekly-animated';
 
 /**
  * Consumes the reel queue and does the heavy assembly — but ONLY on the worker
@@ -45,26 +46,16 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
     this.worker = new Worker<ReelJobData>(
       REEL_QUEUE,
       async (job) => {
-        const task: Task = {
-          task_id: randomUUID(),
-          customer_id: job.data.customerId,
-          type: 'ASSEMBLE_REEL',
-          payload: {
-            platform: job.data.platform,
-            ...(job.data.mediaAssetIds?.length
-              ? { media_asset_ids: job.data.mediaAssetIds }
-              : {}),
-          },
-          requires_approval: false,
-          created_by: 'concierge',
-          created_at: new Date().toISOString(),
-        } as Task;
+        const task: Task = buildReelTask(job.data);
         const result = await this.bus.emit(task);
         // Tell the owner how it went (§3: the Concierge owns the thread).
+        const notice = reelNotice(job.data, result);
+        if (!notice) {
+          this.log.log(`weekly reel for ${job.data.customerId}: ${result.status}, no text`);
+          return;
+        }
         await this.concierge
-          .notify(job.data.customerId, result.summary_for_owner, {
-            promptedByOwner: true,
-          })
+          .notify(job.data.customerId, notice.text, { promptedByOwner: notice.promptedByOwner })
           .catch((e) => this.log.warn(`reel notice failed: ${String(e)}`));
       },
       {
@@ -85,7 +76,7 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
     this.worker.on('failed', (job, err) => {
       this.log.error(`reel job ${job?.id} failed: ${err.message}`);
       // On the final attempt, tell the owner rather than leaving them waiting.
-      if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      if (job && !job.data.weekly && job.attemptsMade >= (job.opts.attempts ?? 1)) {
         void this.concierge
           .notify(
             job.data.customerId,
@@ -100,4 +91,37 @@ export class ReelWorker implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     await this.worker?.close();
   }
+}
+
+/** The task a reel job stands for: a cut of footage, or an animated reel. */
+export function buildReelTask(data: ReelJobData): Task {
+  const envelope = {
+    task_id: randomUUID(),
+    customer_id: data.customerId,
+    requires_approval: false,
+    created_by: 'concierge' as const,
+    created_at: new Date().toISOString(),
+  };
+  if (data.animated) {
+    return {
+      ...envelope,
+      type: 'ANIMATED_REEL',
+      payload: {
+        kind: data.animated.kind,
+        platform: data.platform,
+        ...(data.animated.offerText ? { offer_text: data.animated.offerText } : {}),
+        ...(data.animated.mediaAssetIds?.length === 2 ? { media_asset_ids: data.animated.mediaAssetIds } : {}),
+        ...(data.weekly ? {} : { owner_asked: true }),
+      },
+    } as Task;
+  }
+  return {
+    ...envelope,
+    type: 'ASSEMBLE_REEL',
+    payload: {
+      platform: data.platform,
+      ...(data.mediaAssetIds?.length ? { media_asset_ids: data.mediaAssetIds } : {}),
+      ...(data.weekly ? {} : { owner_asked: true }),
+    },
+  } as Task;
 }

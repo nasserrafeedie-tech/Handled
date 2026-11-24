@@ -27,6 +27,15 @@ describe('photo walk shot list', () => {
     assert.match(detailer.find((s) => s.key === 'before')!.title, /filthiest/i);
   });
 
+  it('asks for the after right after the before, so the pair can become a reveal', () => {
+    for (const type of ['some brand new kind of business', 'mobile car detailing', 'barber shop']) {
+      const keys = shotListFor(type).map((s) => s.key);
+      const b = keys.indexOf('before');
+      assert.ok(b >= 0, `${type}: no before`);
+      assert.equal(keys[b + 1], 'after', `${type}: after should follow before`);
+    }
+  });
+
   it('shot keys are stable identifiers (no spaces, lowercase)', () => {
     for (const s of shotListFor('barber shop')) {
       assert.match(s.key, /^[a-z_]+$/, `key "${s.key}" is not a stable identifier`);
