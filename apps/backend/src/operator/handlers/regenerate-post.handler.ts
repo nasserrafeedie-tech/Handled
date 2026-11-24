@@ -57,6 +57,13 @@ export class RegeneratePostHandler implements TaskHandler<'REGENERATE_POST'> {
       '110 characters that creates tension (only ~125 chars show in feed) —',
       'never a greeting, the business name, or a summary. Write as the owner',
       'speaking (I/we). End with exactly ONE ask.',
+      // Same substance bar as a first draft (llm/post-craft.ts): a redo that
+      // comes back polite and empty is the complaint we are fixing.
+      'Keep or sharpen one concrete payload the reader did not have — a named',
+      'item and its real detail, a step they can do, the exact offer — never',
+      'only mood or "come see us". Never open with "Did you know", "Looking',
+      'for", a greeting, or "[season] is here". Never invent facts, numbers',
+      'or events.',
       'Return JSON: {"caption": string, "hashtags": string[]}.',
     ].join(' ');
 

@@ -12,6 +12,15 @@ import { CustomerContextService } from '../llm/customer-context.service';
 import { playbookFor, ALT_TEXT_RULE } from '../llm/playbook';
 import { polishCaption } from '../llm/caption-polish';
 import { detectSlop, shouldRegenerate, slopFeedback } from '../llm/slop';
+import {
+  pickAngle,
+  captionBudget,
+  craftRules,
+  concreteAnchors,
+  detectThin,
+  craftFeedback,
+} from '../llm/post-craft';
+import { scrollTest, scrollFeedback } from '../llm/scroll-test';
 import { detectFabrication, fabricationFeedback } from '../guardrails/fabrication';
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { isCarouselArchetype, tierHasCarousel } from '../graphics/carousel-content';
@@ -92,6 +101,17 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
         )
       : null;
 
+    // Which shape this post takes, rotated against what this business already
+    // posted, and how much room that shape gets. See llm/post-craft.ts.
+    const angle = pickAngle(archetype, recent.map((r) => r.archetype));
+    const budget = captionBudget(platform, angle);
+    const anchors = concreteAnchors(
+      profile.offers,
+      profile.businessResearch,
+      task.payload.prompt_notes,
+      factBlock,
+    );
+
     const prompt = [
       `Write one ${archetype} post for ${platform}.`,
       // Without this the model has no idea what day it is and writes whatever
@@ -150,11 +170,11 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
       'what the brand profile states. If the profile names a thing without',
       'details, the caption may name it and invite people to ask — it may not',
       'invent the details.',
-      // Opus writes long by default; every draft is also delivered over SMS
-      // for approval, where a 6-segment text gets carrier-filtered. One idea
-      // per post, said tight, beats an essay — on every platform.
-      'Keep the caption under 280 characters. One idea per post, said tight —',
-      'a strong short caption beats a thorough long one every single time.',
+      // The payload, the angle, the hook shapes and the length budget. Owner
+      // feedback was that posts were clean but empty; this is the fix. The
+      // budget stays tight (drafts are read over SMS too) except for list
+      // angles on long-form surfaces, where substance needs the room.
+      craftRules(angle, budget),
       'Cut preamble and wind-down; start at the point.',
       // Feed truncation is a hard platform fact: ~125 chars show, the rest
       // hides behind "…more". The only RCT-grade evidence on hooks says
@@ -192,48 +212,84 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     // Voice fixes the prompt can't enforce reliably — see caption-polish.
     gen.caption = polishCaption(gen.caption);
 
-    // The prompt asks for a voice; this checks whether it got one. Prompt rules
-    // are a request, and measured across sampled generations some of them did
-    // nothing — so a draft that still reads as machine-written gets one more
-    // attempt with its specific problems named. One retry, not a loop: if the
-    // second is no better the first was not a fluke, and an owner waiting on a
-    // text should not pay for us to keep trying.
+    // The prompt asks for a voice and for substance; this checks whether it
+    // got them. Prompt rules are a request, and measured across sampled
+    // generations some of them did nothing — so a draft that still reads as
+    // machine-written, or opens on a stock line, or names nothing in
+    // particular, gets one more attempt with its specific problems named. One
+    // retry, not a loop: if the second is no better the first was not a
+    // fluke, and an owner waiting on a text should not pay for us to keep
+    // trying.
+    const thinOpts = { anchors, businessName: customer.businessName };
+    const trade = profile.businessType ?? 'local business';
     const findings = detectSlop(gen.caption);
-    if (shouldRegenerate(findings)) {
+    const thin = detectThin(gen.caption, thinOpts);
+    // The pattern checks catch stock phrasing; the scroll test catches the
+    // polite, empty post that uses none (see llm/scroll-test.ts). Skipped
+    // when the patterns already failed it — the rewrite is coming anyway.
+    const verdict0 =
+      shouldRegenerate(findings) || thin.length
+        ? null
+        : await scrollTest(this.llm, gen.caption, trade, task.customer_id);
+    const judged = scrollFeedback(verdict0);
+    if (shouldRegenerate(findings) || thin.length > 0 || judged) {
       this.log.warn(
-        `slop in ${platform} draft for ${task.customer_id} ` +
-          `(${findings.map((f) => f.name).join(', ')}) — regenerating`,
+        `weak ${platform} draft for ${task.customer_id} ` +
+          `(${[...findings, ...thin].map((f) => f.name).concat(judged ? ['scroll-test'] : []).join(', ')}) — regenerating`,
       );
+      const craftLines = [...craftFeedback(thin), ...(judged ? [judged] : [])];
+      const feedback = findings.length
+        ? [slopFeedback(findings, gen.caption), ...(craftLines.length ? ['Also fix:', ...craftLines] : [])].join('\n')
+        : [
+            'Your previous draft was:',
+            '"""',
+            gen.caption,
+            '"""',
+            '',
+            'It would not stop anyone scrolling. Write it again and fix these specifically:',
+            ...craftLines,
+            'Same rules as before: no invented facts, numbers or events. Return the same JSON shape as before.',
+          ].join('\n');
       try {
         const retry = await this.llm.completeJson(
           {
             tier: 'voice',
             cachedContext: context,
-            prompt: `${prompt}\n\n${slopFeedback(findings, gen.caption)}`,
+            prompt: `${prompt}\n\n${feedback}`,
             maxTokens: 600,
             customerId: task.customer_id,
           },
           CaptionLlmOutput,
         );
         retry.caption = polishCaption(retry.caption);
-        const after = detectSlop(retry.caption);
+        const after: Array<{ name: string }> = [
+          ...detectSlop(retry.caption),
+          ...detectThin(retry.caption, thinOpts),
+        ];
+        // A draft the judge failed is judged again; one the patterns failed
+        // is held to the patterns. Either way the retry must beat the first.
+        const before = findings.length + thin.length + (judged ? 1 : 0);
+        if (judged && after.length === 0) {
+          const v = await scrollTest(this.llm, retry.caption, trade, task.customer_id);
+          if (v && !v.stops) after.push({ name: 'scroll-test' });
+        }
         // Keep the retry only if it actually improved on the original —
         // a second draft that trades one tell for two is not progress.
-        if (after.length < findings.length) {
+        if (after.length < before) {
           gen.caption = retry.caption;
           gen.hashtags = retry.hashtags;
           gen.alt_text = retry.alt_text ?? gen.alt_text;
         }
         if (after.length > 0) {
           this.log.warn(
-            `slop survived the retry for ${task.customer_id}: ` +
+            `weakness survived the retry for ${task.customer_id}: ` +
               `${after.map((f) => f.name).join(', ')}`,
           );
         }
       } catch (e) {
         // A failed retry must not cost the owner their post — the first draft
         // is publishable, just not as good as we wanted.
-        this.log.warn(`slop retry failed for ${task.customer_id}: ${String(e)}`);
+        this.log.warn(`quality retry failed for ${task.customer_id}: ${String(e)}`);
       }
     }
 
@@ -284,7 +340,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     // prompt names, and a 550-char caption is both weaker copy and (presented
     // over SMS) a multi-segment approval text. One corrective rewrite; keep
     // whichever is shorter so a failed tighten can't make things worse.
-    if (gen.caption.length > 380) {
+    if (gen.caption.length > budget.ceiling) {
       this.log.warn(
         `caption ran ${gen.caption.length} chars for ${task.customer_id} — tightening`,
       );
@@ -295,8 +351,8 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
             cachedContext: context,
             prompt:
               `${prompt}\n\nYour draft was ${gen.caption.length} characters — too long. ` +
-              'Rewrite THIS caption under 280 characters: keep the single strongest ' +
-              'idea and the call to action, cut everything else. No new claims.\n\n' +
+              `Rewrite THIS caption under ${budget.target} characters: keep the hook, ` +
+              'the concrete payload and the call to action, cut everything else. No new claims.\n\n' +
               `Draft to tighten: """${gen.caption}"""`,
             maxTokens: 600,
             customerId: task.customer_id,
