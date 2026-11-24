@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
 import { forEmail } from './concierge.service';
-import { postableAttachments } from './email-inbound.controller';
+import { postableAttachments, inboundText, EmailInboundController } from './email-inbound.controller';
 
 describe('copy sent by email talks about email', () => {
   it('turns texting words into emailing words', () => {
@@ -33,5 +33,37 @@ describe('photos emailed back are kept like an MMS', () => {
 
   it('handles an email with no attachments', () => {
     assert.deepEqual(postableAttachments(undefined), []);
+  });
+});
+
+describe('the words of an inbound email', () => {
+  it('reads a fresh email, where Postmark sends StrippedTextReply as ""', () => {
+    assert.equal(inboundText({ StrippedTextReply: '', TextBody: 'Hi, can you post about our sale?\n' }), 'Hi, can you post about our sale?');
+  });
+  it('prefers the stripped reply when there is one', () => {
+    assert.equal(inboundText({ StrippedTextReply: 'YES', TextBody: 'YES\n\nOn Mon, Handled wrote: ...' }), 'YES');
+  });
+  it('falls back to the subject when the body is empty', () => {
+    assert.equal(inboundText({ StrippedTextReply: '', TextBody: '  ', Subject: 'Post the new menu' }), 'Post the new menu');
+  });
+  it('is empty only when there is nothing at all', () => {
+    assert.equal(inboundText({}), '');
+  });
+
+  it('hands a fresh email to the concierge instead of dropping it', async () => {
+    const handled: Array<{ from: string; body: string }> = [];
+    const c = new EmailInboundController(
+      { handleInbound: async (m: { from: string; body: string }) => void handled.push(m) } as never,
+      { put: async () => undefined, publicUrl: (k: string) => k } as never,
+    );
+    const prev = process.env.EMAIL_INBOUND_SECRET;
+    process.env.EMAIL_INBOUND_SECRET = 's';
+    try {
+      await c.inbound('s', { From: 'owner@example.com', StrippedTextReply: '', TextBody: 'hello there', MessageID: 'm1' });
+    } finally {
+      if (prev === undefined) delete process.env.EMAIL_INBOUND_SECRET;
+      else process.env.EMAIL_INBOUND_SECRET = prev;
+    }
+    assert.deepEqual(handled.map((h) => [h.from, h.body]), [['owner@example.com', 'hello there']]);
   });
 });
