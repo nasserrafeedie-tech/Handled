@@ -75,8 +75,13 @@ describe('detectThin — the posts nobody stops for', () => {
 
   it('flags a draft that touches nothing concrete the business gave us', () => {
     const anchors = concreteAnchors(['Cardamom bun $4.50', 'Sourdough loaf'], 'Open 7-3 Tue-Sun');
-    const c = 'Mornings are better with something warm in your hands.\nCome say hi.';
+    const c = 'Mornings are better with something warm in your hands.\nStop by and say hi.';
     assert.ok(names(c, { anchors }).includes('no-payload'));
+  });
+
+  it('leaves an empty post with no stock phrasing to the scroll test', () => {
+    const anchors = concreteAnchors(['Cardamom bun $4.50']);
+    assert.deepEqual(names('Mornings are better with something warm in your hands.', { anchors }), []);
   });
 
   it('does not count the closing "stop by" as advice', () => {
@@ -84,13 +89,39 @@ describe('detectThin — the posts nobody stops for', () => {
     assert.ok(names('Something warm for your morning. Stop by.', { anchors }).includes('no-payload'));
   });
 
-  it('does not demand specifics a bare profile never gave', () => {
-    const c = 'Mornings are better with something warm in your hands.';
-    assert.ok(!names(c, { anchors: new Set() }).includes('no-payload'));
+  it('on a bare profile asks for know-how, not for specifics it never gave', () => {
+    const c = 'Mornings are better with something warm in your hands. See you soon.';
+    const f = detectThin(c, { anchors: new Set() }).find((x) => x.name === 'no-payload');
+    assert.ok(f);
+    assert.match(f!.fix, /know-how/);
+    assert.match(f!.fix, /no invented numbers/);
   });
+
+  // Hand-written in the style of the drafts the owner called boring: clean,
+  // no AI tells, and nothing in them. All three passed the checks before.
+  const boring: [string, string, string][] = [
+    ['coffee', "Your morning deserves better than drive-thru coffee. Our espresso is pulled on beans roasted just eight blocks away. Grab the corner table by the window and stay a while.", 'weak-hook'],
+    ['hvac', "Phoenix summers are no joke. Don't let a broken AC ruin your week. Regular maintenance keeps your system running smoothly all year. Text us to book your tune-up today.", 'weak-hook'],
+    ['nails', "Behind every perfect set is a lot of love and care. We take pride in every detail so you can leave feeling your best. Come see us, we can't wait to pamper you!", 'generic-filler'],
+    ['yoga', 'New to yoga? Still Point is a calm, welcoming space for every body. Our beginner classes are the perfect place to start your practice. Book your first class today!', 'weak-hook'],
+  ];
+  boring.push(['promo', "Big savings this week only! Don't miss out on our amazing deals.", 'generic-filler']);
+  for (const [label, c, expect] of boring) {
+    it(`catches the boring ${label} draft (${expect})`, () => assert.ok(names(c).includes(expect), names(c).join(',')));
+  }
 });
 
 describe('detectThin — leaves real posts alone', () => {
+  const bare = new Set<string>();
+  const goodBare = [
+    'Most July AC breakdowns start with a filter nobody changed in April.\nA clogged filter makes the unit run longer and hotter. Swap it every 1 to 3 months in summer.',
+    "We never file a natural nail back and forth. One direction only.\nSawing splits the layers, and that's how a nail starts peeling a week later.",
+  ];
+  goodBare.push('Every cut here starts with a straight razor line-up, not clippers. A razor gets the edge sharper and it lasts a few days longer.');
+  for (const c of goodBare) {
+    it(`bare profile: ${c.slice(0, 40)}`, () => assert.deepEqual(names(c, { anchors: bare }), [], c));
+  }
+
   const anchors = concreteAnchors(['Cardamom bun $4.50', 'Sourdough loaf'], 'Open 7-3 Tue-Sun');
   const good = [
     'Most people store sourdough in the fridge. That is what makes it stale by Wednesday.\nKeep it cut-side down on the board. Save this for your next loaf.',

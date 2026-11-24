@@ -20,6 +20,7 @@ import {
   detectThin,
   craftFeedback,
 } from '../llm/post-craft';
+import { scrollTest, scrollFeedback } from '../llm/scroll-test';
 import { detectFabrication, fabricationFeedback } from '../guardrails/fabrication';
 import { resolveStrategy } from '../llm/vertical-playbook';
 import { isCarouselArchetype, tierHasCarousel } from '../graphics/carousel-content';
@@ -220,15 +221,25 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
     // fluke, and an owner waiting on a text should not pay for us to keep
     // trying.
     const thinOpts = { anchors, businessName: customer.businessName };
+    const trade = profile.businessType ?? 'local business';
     const findings = detectSlop(gen.caption);
     const thin = detectThin(gen.caption, thinOpts);
-    if (shouldRegenerate(findings) || thin.length > 0) {
+    // The pattern checks catch stock phrasing; the scroll test catches the
+    // polite, empty post that uses none (see llm/scroll-test.ts). Skipped
+    // when the patterns already failed it — the rewrite is coming anyway.
+    const verdict0 =
+      shouldRegenerate(findings) || thin.length
+        ? null
+        : await scrollTest(this.llm, gen.caption, trade, task.customer_id);
+    const judged = scrollFeedback(verdict0);
+    if (shouldRegenerate(findings) || thin.length > 0 || judged) {
       this.log.warn(
         `weak ${platform} draft for ${task.customer_id} ` +
-          `(${[...findings, ...thin].map((f) => f.name).join(', ')}) — regenerating`,
+          `(${[...findings, ...thin].map((f) => f.name).concat(judged ? ['scroll-test'] : []).join(', ')}) — regenerating`,
       );
+      const craftLines = [...craftFeedback(thin), ...(judged ? [judged] : [])];
       const feedback = findings.length
-        ? [slopFeedback(findings, gen.caption), ...(thin.length ? ['Also fix:', ...craftFeedback(thin)] : [])].join('\n')
+        ? [slopFeedback(findings, gen.caption), ...(craftLines.length ? ['Also fix:', ...craftLines] : [])].join('\n')
         : [
             'Your previous draft was:',
             '"""',
@@ -236,7 +247,7 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
             '"""',
             '',
             'It would not stop anyone scrolling. Write it again and fix these specifically:',
-            ...craftFeedback(thin),
+            ...craftLines,
             'Same rules as before: no invented facts, numbers or events. Return the same JSON shape as before.',
           ].join('\n');
       try {
@@ -251,10 +262,20 @@ export class DraftPostHandler implements TaskHandler<'DRAFT_POST'> {
           CaptionLlmOutput,
         );
         retry.caption = polishCaption(retry.caption);
-        const after = [...detectSlop(retry.caption), ...detectThin(retry.caption, thinOpts)];
+        const after: Array<{ name: string }> = [
+          ...detectSlop(retry.caption),
+          ...detectThin(retry.caption, thinOpts),
+        ];
+        // A draft the judge failed is judged again; one the patterns failed
+        // is held to the patterns. Either way the retry must beat the first.
+        const before = findings.length + thin.length + (judged ? 1 : 0);
+        if (judged && after.length === 0) {
+          const v = await scrollTest(this.llm, retry.caption, trade, task.customer_id);
+          if (v && !v.stops) after.push({ name: 'scroll-test' });
+        }
         // Keep the retry only if it actually improved on the original —
         // a second draft that trades one tell for two is not progress.
-        if (after.length < findings.length + thin.length) {
+        if (after.length < before) {
           gen.caption = retry.caption;
           gen.hashtags = retry.hashtags;
           gen.alt_text = retry.alt_text ?? gen.alt_text;

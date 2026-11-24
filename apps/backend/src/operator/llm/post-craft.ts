@@ -225,6 +225,10 @@ const WEAK_OPENERS: RegExp[] = [
   /^(?:(?:fall|autumn|winter|spring|summer|the holidays?|holiday season|[a-z]+ season)\s+(?:is|are|has)\s+(?:here|coming|upon us|almost here|officially here|arrived))/i,
   /^(?:it'?s (?:that time|officially)|that time of (?:year|the year))/i,
   /^(?:we(?:'?re| are) (?:open|here|back)\b|come (?:see|visit|check out)|stop by|swing by)/i,
+  // The ad-copy openers found in real "boring" drafts: true of every business
+  // in the trade, so they tell the reader nothing.
+  /^(?:your [a-z]+ deserves?|you deserve|behind every|new to [a-z ]{2,20}\?|[a-z]+ (?:summers?|winters?|mornings?|mondays?|weekends?) (?:are|is|can be) (?:no joke|rough|tough|hard))/i,
+  /^(?:we(?:'?re| are) (?:so )?(?:proud|passionate|dedicated)|at [a-z' ]{2,30}, we\b|we believe\b)/i,
 ];
 
 /** Phrases that fill space without saying anything. */
@@ -243,6 +247,19 @@ const FILLER: RegExp[] = [
   /\bwe'?ve got (?:just )?what you need\b/i,
   /\bthe perfect (?:way|spot|place|gift|treat)\b/i,
   /\b(?:mouth.?watering|tastes? (?:amazing|incredible))\b/i,
+  /\bwe take (?:great )?pride\b/i,
+  /\bstay a while\b/i,
+  /\b(?:a lot of|so much|with) love and care\b/i,
+  /\b(?:leave|walk out|feel(?:ing)?) (?:feeling )?(?:your|you're) best\b/i,
+  /\bpamper(?:ed|ing)? you\b/i,
+  /\bdon'?t let [a-z ]{2,30} ruin\b/i,
+  /\b(?:running|run) smoothly\b/i,
+  /\bthe perfect place to\b/i,
+  /\b(?:book|call|order|come in) (?:your [a-z ]{0,20})?today!/i,
+  /\bfor every body\b/i,
+  /\bso you can (?:relax|sit back|enjoy|focus)\b/i,
+  /\blet us (?:take care|handle|do the)\b/i,
+  /\b(?:big|huge|amazing|incredible|great|unbeatable) (?:savings|deals?|sales?|prices)\b/i,
 ];
 
 const STOP = new Set([
@@ -291,6 +308,10 @@ const ADVICE_VERBS = new Set([
   'replace', 'put', 'set', 'add', 'cut', 'trim', 'brush', 'floss', 'water', 'warm', 'cool',
   'test', 'measure', 'write', 'pick', 'choose', 'bring', 'wear', 'stretch', 'drink', 'eat',
   'don\'t', 'dont', 'stand', 'pull', 'push', 'hold', 'press', 'soak', 'dry',
+  'reheat', 'heat', 'cook', 'bake', 'freeze', 'thaw', 'apply', 'wipe', 'scrub', 'fold',
+  'tighten', 'loosen', 'unplug', 'open', 'close', 'cover', 'flip', 'shake', 'stir', 'mix',
+  'feed', 'walk', 'pump', 'spray', 'sleep', 'unclog', 'reset', 'restart', 'charge',
+  'chill', 'refrigerate', 'unwrap', 'wrap', 'moisturize', 'sharpen', 'size', 'tip', 'salt',
 ]);
 function givesAdvice(caption: string): boolean {
   const sentences = caption.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter(Boolean);
@@ -301,6 +322,9 @@ function givesAdvice(caption: string): boolean {
     if (!w) return false;
     if (w === 'stop' && next && !['by', 'in'].includes(next)) return true;
     if (w === 'check' && next && !['out', 'us'].includes(next)) return true;
+    if ((w === "don't" || w === 'dont') && next === 'miss') return false;
+    if (w === 'let' && (next === 'us' || next === 'me')) return false;
+    if (w === 'try' && next && !['our', 'us', 'it', 'the', 'something', 'a', 'one'].includes(next)) return true;
     return ADVICE_VERBS.has(w) && !ASK_VERBS.has(w);
   });
 }
@@ -355,19 +379,40 @@ export function detectThin(
     });
   }
 
-  // Only demand an anchor when we have some to demand: a bare profile with no
-  // research gives the model nothing to name, and failing it for that would
-  // just push it to invent.
-  const anchors = opts.anchors;
-  if (anchors && anchors.size > 0) {
+  // With anchors, a post must touch one of them (or carry a number, steps or
+  // advice). With none — a bare profile, no research — it can still give
+  // advice, and the feedback asks for exactly that rather than for specifics
+  // we never gave it, which would only push it to invent.
+  const anchors = opts.anchors ?? new Set<string>();
+  {
     const words = caption.toLowerCase().match(/[a-z][a-z'-]{4,}/g) ?? [];
     const touches = words.some((w) => anchors.has(w.replace(/'s$/, '')));
-    const hasNumber = /\d/.test(caption);
+    // A quantity written in words counts as much as one in digits.
+    const hasNumber =
+      /\d/.test(caption) ||
+      /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|thirty|sixty|a few|a couple of)\s+(?:minutes?|hours?|days?|weeks?|months?|years?|times?|inches|degrees|layers?|coats?|cups?|drops?|steps?|sets?|reps?)\b|\b(?:twice|once|three times) (?:a|per) (?:day|week|month|year)\b/i.test(caption);
     const hasSteps = /(?:^|\n)\s*(?:\d[.)]|[-•])\s+\S/.test(caption);
-    if (!touches && !hasNumber && !hasSteps && !givesAdvice(caption)) {
+    // The honest reason behind something is a payload too ("…that's how a
+    // nail starts peeling") — it tells the reader something they didn't know.
+    const explains =
+      /\b(?:that'?s (?:how|why|what)|because|which is why|otherwise)\b/i.test(caption) ||
+      // A specific choice, "order the espresso, not the drip".
+      /\b[a-z]+, not (?:a |an |the )?[a-z]+/i.test(caption) ||
+      /\b(?:instead of|rather than)\b/i.test(caption) ||
+      // An order to do things in, "walk before breakfast, feed after".
+      /\bbefore [a-z' ]{2,30}, [a-z]+ after\b/i.test(caption);
+    // Only call it empty when it ALSO leans on a stock opener or filler. Good
+    // know-how posts are too varied for a word list to recognise reliably
+    // (eight hand-made rounds kept finding new ones it missed), so on its own
+    // the absence of a signal is left to the scroll-test judge in the drafter.
+    const stock = out.some((f) => f.name === 'weak-hook') || filler >= 1;
+    if (stock && !touches && !hasNumber && !hasSteps && !explains && !givesAdvice(caption)) {
       out.push({
         name: 'no-payload',
-        fix: 'The draft names nothing specific. Build it on one concrete thing from the brand profile, the notes or the researched material — the real item and its detail, the exact offer, the fact — and say it plainly.',
+        fix:
+          anchors.size > 0
+            ? 'The draft names nothing specific. Build it on one concrete thing from the brand profile, the notes or the researched material — the real item and its detail, the exact offer, the fact — and say it plainly.'
+            : 'The draft gives the reader nothing to take away. Build it on one piece of practical know-how a professional in this trade would confirm — a step, a check, the reason something is done a certain way — said as general advice, with no invented numbers or results.',
       });
     }
   }
