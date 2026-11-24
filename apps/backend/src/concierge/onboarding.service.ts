@@ -46,11 +46,12 @@ type Patch = UpdateBrandProfilePayload['patch'];
  * behalf. Asked just before posting_frequency so "last one" stays true.
  */
 const REQUIRED: ProfileField[] = [
-  'business_type',
-  // Right after "what are you": a link lets the research pass run in the
-  // background WHILE the rest of the interview proceeds, so the findings are
-  // ready by the time week one is planned.
+  // The link comes first (Nov 2026). One link answers most of the interview:
+  // the research pass reads the site and fills what the business is, how it
+  // sounds, who it's for and what it sells, and the owner is then asked only
+  // what it couldn't find. "No site" falls back to every question below.
   'website',
+  'business_type',
   'voice_tone',
   'target_customer',
   'offers',
@@ -113,11 +114,22 @@ export class OnboardingService {
 
   /** The next unanswered required field, or null when we can start posting. */
   nextField(profile: BrandProfile | null): ProfileField | null {
-    if (!profile) return 'business_type';
+    if (!profile) return 'website';
     for (const field of REQUIRED) {
       if (this.isEmpty(profile, field)) return field;
     }
     return null;
+  }
+
+  /** How many required fields are still empty. */
+  remaining(profile: BrandProfile | null): number {
+    if (!profile) return REQUIRED.length;
+    return REQUIRED.filter((f) => this.isEmpty(profile, f)).length;
+  }
+
+  /** The full interview, before anything is answered. */
+  get fullLength(): number {
+    return REQUIRED.length;
   }
 
   isComplete(profile: BrandProfile | null): boolean {
@@ -189,19 +201,19 @@ export class OnboardingService {
         'Save me as a contact so you always know it\'s me: ' +
         'texthandled.com/contact';
     const how = opts.email ? 'A few minutes over email' : 'A few minutes by text';
+    // Say how long the tunnel is before the first question. With the link
+    // first, the honest length depends on what the link turns up, so the
+    // welcome says that instead of a number it can't promise.
+    const setup =
+      'Setup starts with your link. I read up on you, then ask only what I ' +
+      `couldn't find, usually a few quick questions. ${how}, then I get to work.`;
     if (opts.firstAnswered) {
       return (
-        `${intro}\n\n` +
-        'Setup is seven quick questions, and what you told me about the ' +
-        `business already answers the first. ${how}, then I get to work.`
+        `${intro}\n\n${setup} What you told me about the business already ` +
+        'covers part of it.'
       );
     }
-    return (
-      `${intro}\n\n` +
-      'Setup is seven quick questions — plus one or two tailored to your ' +
-      `answers at the end. ${how}, then I get to work.\n\n` +
-      this.question('business_type', undefined, businessName)
-    );
+    return `${intro}\n\n${setup}\n\n` + this.question('website', undefined, businessName);
   }
 
   /**
@@ -211,12 +223,23 @@ export class OnboardingService {
    * question offers exactly that instead of a generic "3–4 a week" — a Starter
    * (cap 3) must not be invited to pick 4 and then be under-served or over-served.
    */
-  question(field: ProfileField, postsCap?: number, businessName?: string | null): string {
-    // "n of 7:" on every prompt (tester feedback — Nasser's mom): the reader
-    // always knows where they are in the tunnel. The number is the field's
-    // checklist position, so a question skipped because the owner already
-    // answered it early just advances the count — which reads as progress.
-    const tag = `${REQUIRED.indexOf(field) + 1} of ${REQUIRED.length}: `;
+  question(
+    field: ProfileField,
+    postsCap?: number,
+    businessName?: string | null,
+    /**
+     * Where the owner is in THEIR interview: how many questions it has in all
+     * (set once the link has been read, so it counts only what's left to ask)
+     * and how many fields are still empty, this one included.
+     */
+    tally?: { total: number; remaining: number },
+  ): string {
+    // "n of N:" on every prompt (tester feedback — Nasser's mom): the reader
+    // always knows where they are in the tunnel. A question skipped because
+    // the owner already answered it early just advances the count, which
+    // reads as progress. The link question has no number: until the link is
+    // read, nobody knows how many questions are left.
+    const tag = field === 'website' ? '' : tallyTag(field, tally);
     switch (field) {
       case 'business_type':
         // A name they already gave (the web signup form) is not asked again.
@@ -228,11 +251,14 @@ export class OnboardingService {
           'called, and where are you?'
         );
       case 'website':
-        return (
-          `${tag}Got a website, Instagram, or Google listing? Drop me a link ` +
-          "and I'll go look you up so you don't have to type it all — or " +
-          'say "no site".'
-        );
+        // A name they already gave (the web signup form) is not asked again.
+        return businessName?.trim()
+          ? `First: does ${businessName.trim()} have a website, Instagram or Google ` +
+              "listing? Send me the link and I'll read up on you, so you barely " +
+              'have to type. No site? Just say "no site".'
+          : "First: what's the business called, and do you have a website, " +
+              "Instagram or Google listing? Send me the link and I'll read up on " +
+              'you, so you barely have to type. No site? Just say "no site".';
       case 'voice_tone':
         return (
           `${tag}How should your posts sound? Describe it like a person — ` +
@@ -266,6 +292,27 @@ export class OnboardingService {
       bits.push(`${patch.brand_colors.join(' + ')} colors`);
     if (bits.length === 0) return 'Got it.';
     return `Got it — ${bits.join(', ')} ✓`;
+  }
+
+  /**
+   * What the link turned up, read back in one text before the next question,
+   * so a wrong guess gets corrected now instead of showing up in a caption.
+   * Empty when the research filled nothing.
+   */
+  foundReadBack(
+    filled: Partial<Record<'business_name' | 'business_type' | 'voice_tone' | 'target_customer' | 'offers', string | string[]>>,
+  ): string {
+    const lines = [
+      filled.business_name ? `Name: ${filled.business_name}` : null,
+      filled.business_type ? `What you do: ${filled.business_type}` : null,
+      filled.voice_tone ? `How you sound: ${filled.voice_tone}` : null,
+      filled.target_customer ? `Who it's for: ${filled.target_customer}` : null,
+      Array.isArray(filled.offers) && filled.offers.length
+        ? `What I'd show off: ${filled.offers.slice(0, 5).join(', ')}`
+        : null,
+    ].filter(Boolean);
+    if (lines.length === 0) return '';
+    return `Read up on you ✳ Here's what I found:\n${lines.join('\n')}\n\nIf any of that's off, just tell me and I'll fix it.`;
   }
 
   /**
@@ -668,6 +715,28 @@ export class OnboardingService {
         return !profile.postingFrequency;
     }
   }
+}
+
+/**
+ * "3 of 5: ". The number counts from the end: with `remaining` fields still
+ * empty (this one included) out of `total`, this is question
+ * total - remaining + 1. Without a tally (or a nonsensical one) it falls back
+ * to the field's place in the full checklist.
+ */
+export function tallyTag(field: ProfileField, tally?: { total: number; remaining: number }): string {
+  if (tally && tally.remaining >= 1 && tally.remaining < tally.total) {
+    return `${tally.total - tally.remaining + 1} of ${tally.total}: `;
+  }
+  return `${REQUIRED.indexOf(field) + 1} of ${REQUIRED.length}: `;
+}
+
+/**
+ * The interview's length as last told to the owner: the N in the newest
+ * "n of N:" they were sent. Null when no numbered question has gone out yet.
+ */
+export function toldTotal(body: string | null | undefined): number | null {
+  const m = /\b\d+ of (\d+): /.exec(body ?? '');
+  return m ? Number(m[1]) : null;
 }
 
 /** "lattes, pastries and our patio" → ["lattes", "pastries", "our patio"] */

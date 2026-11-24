@@ -28,8 +28,54 @@ const Findings = z.object({
   offers: z.array(z.string().max(120)).max(12).default([]),
   /** 2-3 highlights worth reading back to the owner over SMS. */
   highlights: z.array(z.string().max(160)).max(4).default([]),
+  // Interview answers the link can give, so the owner isn't asked them. Each
+  // only when the pages actually show it; the owner is asked whatever is left.
+  business_name: z.string().max(120).nullish(),
+  business_type: z.string().max(200).nullish(),
+  voice_tone: z.string().max(300).nullish(),
+  target_customer: z.string().max(300).nullish(),
 });
-export type BusinessFindings = z.infer<typeof Findings>;
+export type BusinessFindings = z.infer<typeof Findings> & {
+  /** What the research filled in that was empty, to read back to the owner. */
+  filled?: FilledFromLink;
+};
+
+/** The interview fields a lookup filled, with the values it used. */
+export type FilledFromLink = {
+  business_name?: string;
+  business_type?: string;
+  voice_tone?: string;
+  target_customer?: string;
+  offers?: string[];
+};
+
+/**
+ * Merge findings into the profile without overwriting anything: research
+ * fills gaps, and the owner's own words always win. Returns the profile and
+ * customer writes, and what was filled, for the read-back.
+ */
+export function mergeFindings(
+  profile: { businessType: string | null; voiceTone: string | null; targetCustomer: string | null; offers: string[] },
+  businessName: string | null | undefined,
+  findings: z.infer<typeof Findings>,
+): { profile: Record<string, unknown>; customer: Record<string, unknown>; filled: FilledFromLink } {
+  const clean = (v: string | null | undefined) => (v ?? '').trim() || undefined;
+  const filled: FilledFromLink = {};
+  const data: Record<string, unknown> = { businessResearch: findings.summary };
+  const type = clean(findings.business_type);
+  if (!profile.businessType && type) data.businessType = filled.business_type = type;
+  const tone = clean(findings.voice_tone);
+  if (!profile.voiceTone && tone) data.voiceTone = filled.voice_tone = tone;
+  const who = clean(findings.target_customer);
+  if (!profile.targetCustomer && who) data.targetCustomer = filled.target_customer = who;
+  if (profile.offers.length === 0 && findings.offers.length > 0) {
+    data.offers = filled.offers = findings.offers.slice(0, 8);
+  }
+  const name = clean(findings.business_name);
+  const customer: Record<string, unknown> = {};
+  if (!businessName?.trim() && name) customer.businessName = filled.business_name = name;
+  return { profile: data, customer, filled };
+}
 
 @Injectable()
 export class BusinessResearchService {
@@ -84,6 +130,14 @@ export class BusinessResearchService {
       '- specials, signature items, what reviewers repeatedly praise',
       '- hours/location details worth mentioning in posts',
       '- how the business describes itself (their own phrases are gold)',
+      'Also fill these interview answers, each ONLY when the pages show it',
+      '(omit or null otherwise, never guess):',
+      '- business_name: its proper name',
+      '- business_type: what it is and where ("family dental office in',
+      '  Torrance"), not the name',
+      '- voice_tone: how its own copy and posts sound, in a few personality',
+      '  words ("warm, plain-spoken, a little playful")',
+      '- target_customer: who it serves, as the pages say or show it',
       'Rules: facts you actually found only — never pad with guesses; if the',
       'link yields nothing, say so in summary and keep arrays empty. The',
       'summary is a tight brief (under 1500 chars) a caption writer will',
@@ -91,7 +145,9 @@ export class BusinessResearchService {
       'found" lines to text the owner, each concrete enough to prove we',
       'really looked ("Your carnitas plate gets named in half your reviews").',
       'Return JSON: {"summary": string, "offers": string[], "highlights":',
-      'string[]} and nothing after it.',
+      'string[], "business_name": string|null, "business_type": string|null,',
+      '"voice_tone": string|null, "target_customer": string|null} and',
+      'nothing after it.',
     ].join('\n');
 
     const prompt = [
@@ -119,20 +175,20 @@ export class BusinessResearchService {
     );
 
     // Merge non-destructively: research fills gaps, never overwrites the
-    // owner's own answers. offers only when the interview hasn't filled them.
+    // owner's own answers.
     const profile = await this.prisma.brandProfile.findUnique({
       where: { customerId },
     });
     if (!profile) return findings;
-    await this.prisma.brandProfile.update({
-      where: { customerId },
-      data: {
-        businessResearch: findings.summary,
-        ...(profile.offers.length === 0 && findings.offers.length > 0
-          ? { offers: findings.offers.slice(0, 8) }
-          : {}),
-      },
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { businessName: true },
     });
-    return findings;
+    const merged = mergeFindings(profile, customer?.businessName, findings);
+    await this.prisma.brandProfile.update({ where: { customerId }, data: merged.profile });
+    if (Object.keys(merged.customer).length) {
+      await this.prisma.customer.update({ where: { id: customerId }, data: merged.customer });
+    }
+    return { ...findings, filled: merged.filled };
   }
 }

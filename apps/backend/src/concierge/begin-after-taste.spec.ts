@@ -11,7 +11,7 @@ import { OnboardingService } from './onboarding.service';
  */
 function harness(opts: { channel: 'sms' | 'email'; taste?: { asked: string } }) {
   const sent: string[] = [];
-  const continued: { answer: string; to: string }[] = [];
+  const continued: { answer: string; to: string; asked?: string }[] = [];
   const t0 = new Date('2026-11-16T10:00:00Z');
   const messages = opts.taste
     ? [
@@ -59,8 +59,9 @@ function harness(opts: { channel: 'sms' | 'email'; taste?: { asked: string } }) 
     {} as never,
   );
   (svc as any).notify = async (_id: string, body: string) => void sent.push(body);
-  (svc as any).continueOnboarding = async (_id: string, to: string, _c: string, answer: string) =>
-    void continued.push({ answer, to });
+  (svc as any).continueOnboarding = async (
+    _id: string, to: string, _c: string, answer: string, _p: unknown, _n: unknown, _t: unknown, o?: { asked?: string },
+  ) => void continued.push({ answer, to, asked: o?.asked });
   return { svc, sent, continued };
 }
 
@@ -69,16 +70,16 @@ describe('starting the interview after a free draft', () => {
     const h = harness({ channel: 'sms', taste: { asked: 'Flower shop in Silver Lake, weddings and events' } });
     await h.svc.beginOnboarding('c1');
     assert.equal(h.sent.length, 1);
-    assert.match(h.sent[0], /already answers the first/);
-    assert.doesNotMatch(h.sent[0], /1 of 7/);
-    assert.deepEqual(h.continued, [{ answer: 'Flower shop in Silver Lake, weddings and events', to: '+13105550000' }]);
+    assert.match(h.sent[0], /covers part of it/);
+    assert.doesNotMatch(h.sent[0], /\d of \d/);
+    assert.deepEqual(h.continued, [{ answer: 'Flower shop in Silver Lake, weddings and events', to: '+13105550000', asked: 'business_type' }]);
   });
 
   it('asks question one as usual with no free draft, or when they only said hi', async () => {
     for (const taste of [undefined, { asked: 'hey!' }, { asked: 'ok sign me up for starter' }]) {
       const h = harness({ channel: 'sms', taste });
       await h.svc.beginOnboarding('c1');
-      assert.match(h.sent[0], /1 of 7: Tell me about Juniper Florals/);
+      assert.match(h.sent[0], /First: does Juniper Florals have a website, Instagram or Google listing/);
       assert.equal(h.continued.length, 0);
     }
   });

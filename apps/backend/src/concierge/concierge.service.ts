@@ -8,7 +8,7 @@ import { portalLink } from '../billing/portal-link';
 import { TaskBus } from '../tasks/task-bus.service';
 import { TwilioService } from './twilio.service';
 import { EmailService } from './email.service';
-import { OnboardingService, NO_WEBSITE } from './onboarding.service';
+import { OnboardingService, NO_WEBSITE, toldTotal, type ProfileField } from './onboarding.service';
 import { ownerRequestNote } from '../operator/handlers/plan-week.handler';
 import { photoWalkInvite, photoWalkReminder } from './photo-walk';
 import { BusinessResearchService } from './business-research.service';
@@ -48,6 +48,13 @@ import { reelName, reelLookText, plainReelText, willSendText, REVEAL_NEEDS_TWO }
 import { plainQuotes } from './plain-quotes';
 import { polishCaption } from '../operator/llm/caption-polish';
 import { detectSlop, slopFeedback } from '../operator/llm/slop';
+
+/** How long the first question waits on the owner's link being read. */
+export const LOOKUP_WAIT_MS = 90_000;
+
+/** A filler reply while they wait for the link to be read. */
+const WAITING_FILLER =
+  /^\s*(?:ok(?:ay)?|k+|cool|thanks?|thank you|ty|sure|sounds good|great|perfect|awesome|got it|nice|👍)\s*[!.]*\s*$/i;
 
 /**
  * Intents that DO something, as opposed to being answered. Only these are
@@ -1829,7 +1836,7 @@ export class ConciergeService {
     // description is taken as the answer to question one.
     const conversationId = payer.conversation?.id;
     const described =
-      first === 'business_type' && payer.freeDraftUsedAt && conversationId
+      !profile?.businessType && payer.freeDraftUsedAt && conversationId
         ? await this.freeTasteBlurb(conversationId)
         : null;
     if (described && conversationId) {
@@ -1846,13 +1853,14 @@ export class ConciergeService {
         profile,
         payer.businessName,
         payer.planTier,
+        { asked: 'business_type' },
       );
     }
 
     // The owner just checked out and is watching their phone for this text.
     await this.notify(
       customerId,
-      first === 'business_type'
+      first === 'website'
         ? this.onboarding.welcome(payer.businessName, { email })
         : this.onboarding.question(first),
       { promptedByOwner: true },
@@ -2459,7 +2467,7 @@ export class ConciergeService {
     return this.reply(
       phone,
       conversationId,
-      `Fresh start ✳ ${this.onboarding.question('business_type')}`,
+      `Fresh start ✳ ${this.onboarding.question('website')}`,
     );
   }
 
@@ -2582,8 +2590,17 @@ export class ConciergeService {
     profile: Awaited<ReturnType<PrismaService['brandProfile']['findUnique']>>,
     businessName?: string | null,
     planTier = 'starter',
+    /** The field this answer is for, when the caller knows better than the
+     *  checklist (the free-draft description answers what the business is). */
+    opts: { asked?: ProfileField } = {},
   ): Promise<void> {
     const postsCap = postsPerWeek(planTier);
+    // Reading their link right now: a bare "ok" or "thanks" while they wait is
+    // not an answer to anything, so it gets a word and no question. Anything
+    // more is handled as usual.
+    if (this.lookup.pending(customerId) && WAITING_FILLER.test(answer)) {
+      return this.reply(phone, conversationId, "Still reading up on you. I'll text you what I found in a moment ✳");
+    }
     // First contact with just a hello → welcome + question one. But a first
     // message that actually describes the business IS the first answer —
     // throwing it away and greeting them anyway reads as not listening.
@@ -2610,6 +2627,7 @@ export class ConciergeService {
     // deterministic parsing covers the asked field offline).
     const asked =
       clarifiedField ??
+      opts.asked ??
       (outboundCount === 0
         ? ('business_type' as const)
         : this.onboarding.nextField(profile));
@@ -2620,13 +2638,13 @@ export class ConciergeService {
     // business name. Re-check whenever we are still waiting on business_type:
     // re-welcome on a cold start, otherwise re-ask the question, rather than
     // storing the greeting.
-    if (asked === 'business_type' && this.onboarding.isGreetingOnly(answer)) {
+    if ((asked === 'business_type' || asked === 'website') && this.onboarding.isGreetingOnly(answer)) {
       return this.reply(
         phone,
         conversationId,
         outboundCount === 0
           ? this.onboarding.welcome(businessName, { email: phone.includes('@') })
-          : this.onboarding.question('business_type', undefined, businessName),
+          : this.onboarding.question(asked, undefined, businessName),
       );
     }
     // One follow-up per field, ever: the marker survives in pendingIntent
@@ -2636,6 +2654,9 @@ export class ConciergeService {
 
     let ack = '';
     let clarify: string | undefined;
+    // A link was just given: the next text comes from afterLookUp, once the
+    // link has been read, not from here.
+    let readingLink = false;
     if (asked) {
       const {
         clarify: followUp,
@@ -2675,36 +2696,14 @@ export class ConciergeService {
           // through to "Sorry — didn't quite catch that." (QA, Nov 2026).
           ack = 'No problem, plenty of great businesses run on social alone.';
         } else {
-          ack = "On it — I'll go look you up while we keep going ✳";
-          void this.lookup
-            .lookUp(customerId, website, {
-              businessType: profile?.businessType,
-              businessName,
-            })
-            .then((findings) => {
-              if (!findings || findings.highlights.length === 0) return;
-              // The lookup fills the offers field when the interview hasn't,
-              // which SKIPS the offers question. An assumption the owner never
-              // saw reads as a question that vanished (QA, Sep 2026) — so say
-              // what was noted and invite the correction, in one line.
-              const assumedOffers =
-                (profile?.offers ?? []).length === 0 && findings.offers.length > 0
-                  ? `\n\nI've noted what you offer as: ${findings.offers
-                      .slice(0, 5)
-                      .join(', ')}. Text me if that's off or missing something.`
-                  : '';
-              return this.notify(
-                customerId,
-                `Went and looked you up ✳\n` +
-                  findings.highlights.map((h) => `— ${h}`).join('\n') +
-                  assumedOffers +
-                  `\n\nAll of that feeds into your posts now.`,
-                { promptedByOwner: true },
-              );
-            })
-            .catch((e) =>
-              this.log.warn(`lookup notify failed for ${customerId}: ${String(e)}`),
-            );
+          ack = "On it, reading up on you now. Give me a minute and I'll text you what I found ✳";
+          readingLink = true;
+          void this.afterLookUp(customerId, conversationId, website, {
+            businessType: profile?.businessType,
+            businessName: patch.business_name ?? businessName,
+            postsCap,
+            startedAt: new Date(),
+          }).catch((e) => this.log.warn(`after-lookup failed for ${customerId}: ${String(e)}`));
         }
       }
       // Belt and suspenders against re-emission: a "new" value identical to
@@ -2748,6 +2747,8 @@ export class ConciergeService {
     });
     const next = this.onboarding.nextField(fresh);
 
+    if (readingLink) clarify = undefined;
+
     // The model has ONE specific follow-up worth asking — ask it before
     // moving on. This fires even when something WAS stored: "we have 3
     // tiers" is stored as-is AND still needs "what are the tiers?", or every
@@ -2774,11 +2775,114 @@ export class ConciergeService {
       });
     }
 
+    if (readingLink) return this.reply(phone, conversationId, ack);
+
     if (next) {
-      const q = this.onboarding.question(next, next === 'posting_frequency' ? postsCap : undefined, businessName);
+      const q = this.onboarding.question(
+        next,
+        next === 'posting_frequency' ? postsCap : undefined,
+        businessName,
+        await this.tally(conversationId, fresh),
+      );
       return this.reply(phone, conversationId, ack ? `${ack} ${q}` : q);
     }
 
+    return this.closeInterview(customerId, phone, conversationId, fresh, answer, businessName, ack);
+  }
+
+  /**
+   * Where the owner is in their interview, for the "n of N" on the next
+   * question: N is the length they were last told (it shrinks once their link
+   * has been read), and the fields still empty say how far along they are.
+   */
+  private async tally(
+    conversationId: string,
+    profile: Awaited<ReturnType<PrismaService['brandProfile']['findUnique']>>,
+  ): Promise<{ total: number; remaining: number } | undefined> {
+    try {
+      const recent = await this.prisma.message.findMany({
+        where: { conversationId, direction: 'outbound' },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: { body: true },
+      });
+      const told = recent.map((m) => toldTotal(m.body)).find((n) => n !== null);
+      return { total: told ?? this.onboarding.fullLength, remaining: this.onboarding.remaining(profile) };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The text after their link was read: what it turned up, then the first
+   * question it couldn't answer, numbered against the shorter list. Waits a
+   * bounded time for the research, so a slow page never strands the owner.
+   */
+  private async afterLookUp(
+    customerId: string,
+    conversationId: string,
+    url: string,
+    ctx: { businessType?: string | null; businessName?: string | null; postsCap?: number; startedAt: Date },
+  ): Promise<void> {
+    const job = this.lookup.lookUp(customerId, url, { businessType: ctx.businessType, businessName: ctx.businessName });
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<'late'>((r) => {
+      timer = setTimeout(() => r('late'), LOOKUP_WAIT_MS);
+      timer.unref?.();
+    });
+    const found = await Promise.race([job, late]);
+    clearTimeout(timer);
+
+    const readBack = found && found !== 'late' ? this.onboarding.foundReadBack(found.filled ?? {}) : '';
+    // They kept going while it read (said something real and got a numbered
+    // question): don't ask a second question on top. Just say what was found.
+    const recent = await this.prisma.message.findMany({
+      where: { conversationId, direction: 'outbound', createdAt: { gt: ctx.startedAt } },
+      select: { body: true },
+    });
+    if (recent.some((m) => toldTotal(m.body) !== null)) {
+      if (readBack) await this.notify(customerId, readBack, { promptedByOwner: true });
+      return;
+    }
+
+    const [fresh, customer] = await Promise.all([
+      this.prisma.brandProfile.findUnique({ where: { customerId } }),
+      this.prisma.customer.findUnique({ where: { id: customerId } }),
+    ]);
+    if (!customer) return;
+    const lead =
+      readBack ||
+      (found === 'late'
+        ? "Still reading your page, so let's keep going while it finishes."
+        : "I couldn't find much on that link, so a few quick questions instead.");
+    const next = this.onboarding.nextField(fresh);
+    if (!next) {
+      // Their first text already covered the rest. Finish as if they'd
+      // answered the last question.
+      return this.closeInterview(customerId, this.addressOf(customer), conversationId, fresh, '', customer.businessName, lead);
+    }
+    const remaining = this.onboarding.remaining(fresh);
+    // The link question, plus what's left. Every later question counts
+    // against this number.
+    const q = this.onboarding.question(
+      next,
+      next === 'posting_frequency' ? ctx.postsCap : undefined,
+      customer.businessName,
+      { total: 1 + remaining, remaining },
+    );
+    await this.notify(customerId, `${lead}\n\n${q}`, { promptedByOwner: true });
+  }
+
+  /** The checklist is done: follow-ups, read-back, go live, first week. */
+  private async closeInterview(
+    customerId: string,
+    phone: string,
+    conversationId: string,
+    fresh: Awaited<ReturnType<PrismaService['brandProfile']['findUnique']>>,
+    answer: string,
+    businessName: string | null | undefined,
+    ack: string,
+  ): Promise<void> {
     // Core checklist done — the bespoke round (§ adaptive onboarding): up to
     // three questions Opus writes for THIS business. Pauses the interview
     // while questions remain; falls through once the queue drains.
